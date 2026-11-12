@@ -19,9 +19,9 @@ from muezzin.backends import BackendError, CastBackend
 from muezzin.config import OutputConfig
 
 
-def kitchen() -> CastBackend:
-    return CastBackend(OutputConfig(name="kitchen", kind="google_cast",
-                                    target="Kitchen speaker"))
+def study() -> CastBackend:
+    return CastBackend(OutputConfig(name="study", kind="google_cast",
+                                    target="Study speaker"))
 
 
 def status(player_state, idle_reason=None):
@@ -29,32 +29,32 @@ def status(player_state, idle_reason=None):
 
 
 def test_a_clip_the_speaker_played_to_the_end_counts_as_played():
-    kitchen()._check_finished("Kitchen speaker", Path("fajr.wav"), status("IDLE", "FINISHED"))
+    study()._check_finished("Study speaker", Path("fajr.wav"), status("IDLE", "FINISHED"))
 
 
 def test_a_dead_stream_is_not_reported_as_a_played_adhan():
     """The receiver says ERROR when it cannot fetch or decode the file. Reporting
     that as success is how a wrong media URL becomes silence at 5 am."""
     with pytest.raises(BackendError, match="could not finish"):
-        kitchen()._check_finished("Kitchen speaker", Path("fajr.wav"), status("IDLE", "ERROR"))
+        study()._check_finished("Study speaker", Path("fajr.wav"), status("IDLE", "ERROR"))
 
 
 def test_a_clip_still_playing_past_the_limit_is_a_failure():
     with pytest.raises(BackendError, match="still playing"):
-        kitchen()._check_finished("Kitchen speaker", Path("dua.wav"), status("PLAYING"))
+        study()._check_finished("Study speaker", Path("dua.wav"), status("PLAYING"))
 
 
 def test_someone_else_taking_over_the_speaker_is_a_warning_not_an_error(caplog):
     """Interrupted means another source grabbed the speaker mid-adhan: worth a
     log line, but nothing went wrong in muezzin and the rest of the profile runs."""
-    kitchen()._check_finished("Kitchen speaker", Path("fajr.wav"), status("IDLE", "CANCELINTERRUPTED"))
+    study()._check_finished("Study speaker", Path("fajr.wav"), status("IDLE", "CANCELINTERRUPTED"))
     assert "stopped fajr.wav early" in caplog.text
 
 
 def test_a_speaker_that_reported_nothing_is_not_claimed_to_have_finished():
     """A media status of [] is what a Nest sends right after a load; the caller
     has already waited, so it is neither a success claim nor a crash."""
-    kitchen()._check_finished("Kitchen speaker", Path("fajr.wav"), None)
+    study()._check_finished("Study speaker", Path("fajr.wav"), None)
 
 
 @pytest.mark.parametrize("name,expected", [
@@ -98,9 +98,9 @@ def test_a_speaker_that_never_sends_a_status_fails_cleanly(monkeypatch):
             calls.append("disconnect")
 
     monkeypatch.setattr(backends, "find_cast", lambda target, tries=2: (
-        device("Kitchen speaker", id="0e5a9d4f-3f2f-4a4b-9e1c-1f3b2c8d9e0a"), []))
+        device("Study speaker", id="0e5a9d4f-3f2f-4a4b-9e1c-1f3b2c8d9e0a"), []))
     monkeypatch.setattr(pychromecast, "get_chromecast_from_host", lambda info: Asleep())
-    b = kitchen()
+    b = study()
     b.READY_SECONDS = 0.2
     with pytest.raises(BackendError, match="sent no receiver status"):
         b.play([Path("fajr.wav")])
@@ -161,15 +161,15 @@ def test_a_speaker_the_helper_wrote_off_still_gets_the_audio(monkeypatch, tmp_pa
     clip = tmp_path / "fajr.wav"
     clip.write_bytes(b"RIFF")
     monkeypatch.setattr(backends, "find_cast", lambda target, tries=2: (
-        device("Kitchen speaker", id="0e5a9d4f-3f2f-4a4b-9e1c-1f3b2c8d9e0a"), []))
+        device("Study speaker", id="0e5a9d4f-3f2f-4a4b-9e1c-1f3b2c8d9e0a"), []))
     monkeypatch.setattr(pychromecast, "get_chromecast_from_host", lambda info: Speaker())
-    b = kitchen()
+    b = study()
     b.poll_seconds = 0.01
     b.max_play_seconds = 2.0
-    b.media_server = SimpleNamespace(url_for=lambda p: "http://192.168.0.8:8010/" + p.name)
+    b.media_server = SimpleNamespace(url_for=lambda p: "http://192.0.2.10:8010/" + p.name)
     b.play([clip])
     assert [c[0] for c in sent[:2]] == ["volume", "media"], sent
-    assert sent[1][1:] == ("http://192.168.0.8:8010/fajr.wav", "audio/wav", "BUFFERED"), sent
+    assert sent[1][1:] == ("http://192.0.2.10:8010/fajr.wav", "audio/wav", "BUFFERED"), sent
     assert "quit" in sent and "disconnect" in sent, "the connection was left lying around"
 
 
@@ -177,7 +177,7 @@ def test_a_speaker_that_never_says_playing_is_reported_as_unproven(caplog):
     """A four-second chime can be over before the first poll lands, so the receiver
     never shows PLAYING to us. Claiming it played would be a guess; claiming it
     failed would be wrong just as often. Say which of the two is unknown."""
-    kitchen()._check_finished("Kitchen speaker", Path("fajr.wav"), status("IDLE"), started=False)
+    study()._check_finished("Study speaker", Path("fajr.wav"), status("IDLE"), started=False)
     assert "never reported playing fajr.wav" in caplog.text
     assert "did not finish" not in caplog.text
 
@@ -198,9 +198,9 @@ def test_the_devices_list_prints_who_is_inside_a_group(monkeypatch, capsys):
 
     def fake(timeout=5.0, ask_members=True):
         return {
-            "speakers": [device("Bedroom speaker")],
+            "speakers": [device("Landing speaker")],
             "groups": [
-                device("Home group", group=True, members=["Bedroom speaker"],
+                device("Whole-house group", group=True, members=["Landing speaker"],
                        membership_known=True, silent=[]),
                 device("Quiet group", group=True, members=[], membership_known=False,
                        silent=["nobody"]),
@@ -211,6 +211,6 @@ def test_the_devices_list_prints_who_is_inside_a_group(monkeypatch, capsys):
     monkeypatch.setattr("muezzin.backends.scan_speakers", fake)
     assert cli.cmd_devices(1.0) == 0
     printed = capsys.readouterr().out
-    assert "members: Bedroom speaker" in printed
+    assert "members: Landing speaker" in printed
     assert "Quiet group" in printed
     assert "members: unknown, those speakers did not answer" in printed
