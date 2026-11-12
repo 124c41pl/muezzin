@@ -1,0 +1,49 @@
+# A profile to look at, not to run: it writes to a folder instead of to a
+# speaker, so it is safe everywhere, including inside a container.
+# Copy it, set location, and replace the output with your own speakers.
+
+location:
+  latitude: 25.7123            # Tehran
+  longitude: 51.0753
+  timezone: Asia/Tehran
+
+# Any of the 18 presets, or a preset with the angles you actually use.
+# `muezzin methods` lists them; `muezzin times -c thisfile.yaml -d 2027-01-01`
+# shows what they produce before anything is asked to speak.
+method:
+  preset: qom                 # fajr 19, isha 14, Jafari midnight
+  isha_angle: 15
+
+asr: standard                 # or: hanafi
+
+# Display only: shifts the Hijri date the page shows, never a prayer time.
+# The arithmetic calendar can sit a day either side of a sighting, so set this
+# to whatever lines it up with the calendar you follow.
+hijri_offset: 0
+
+# Who to credit on the page. A credit should name a person, because a person is
+# who answers when someone has a question about the code.
+# attribution: "your name or handle"
+
+media_dir: /app/media
+
+# The only folder `kind: file` outputs may write into. Naming one root keeps a
+# friendly-looking config from being a way to write anywhere on the machine.
+out_dir: /app/out
+
+outputs:
+  - name: paper-trail
+    kind: file                # writes a copy of what it would have played
+    host: /app/out
+
+events:
+  - name: fajr-adhan
+    at: fajr
+    media: [test-tone.wav]
+    targets: [paper-trail]
+  - name: jumuah-reminder
+    at: dhuhr                # the same Dhuhr, a different recording, once a week
+    offset_min: -10
+    days: [fri]
+    media: [test-tone.wav]
+    targets: [paper-trail]

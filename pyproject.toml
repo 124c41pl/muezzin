@@ -1,0 +1,37 @@
+[project]
+name = "muezzin"
+version = "0.1.0"
+description = "Prayer times and audio for your speakers - any calculation method, any speaker. Config-first, self-hosted."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "pychromecast>=13.0",
+    "zeroconf>=0.130",
+    "PyYAML>=6.0",
+    # Windows has no system tz database; zoneinfo needs this for IANA zone names
+    "tzdata>=2024.1; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+# microphone / loopback capture and non-Windows playback experiments
+audio = ["PyAudioWPatch>=0.2.12"]
+# test-only: an independent implementation used purely as a cross-check oracle
+dev = ["pytest>=8", "adhan==0.1.1"]
+
+[project.scripts]
+muezzin = "muezzin.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+# Where the tests live. Without this, `pytest` with no arguments also walks any
+# scratch copy of the repo in the working directory, and two files both named
+# test_calc.py in different folders make collection die with a confusing
+# "use a unique basename" hint before a single test has run.
+testpaths = ["tests"]

@@ -1,0 +1,41 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# runtime leftovers
+out/
+media/*
+!media/README.md
+# two short tones generated for testing, not recordings of anyone's voice or
+# recitation. They are checked in on purpose: the README walks a first-time user
+# through "play this and listen", and a clone without them cannot follow it.
+!media/test-tone.wav
+!media/test-chime.wav
+
+# personal configs: these name real speakers and real IPs on someone's LAN
+muezzin.yaml
+_livecast.yaml
+_box.yaml
+_smoke.yaml
+
+# reverse-engineering material. Smart Azan's installer and its unpacked binaries
+# are someone else's proprietary work: they belong in your working copy, never in
+# this repository. FINDINGS.md is the part worth keeping.
+SmartAzanSetup.exe
+extracted/
+extracted2/
+issdir/
+tools/
+research/logs/
+
+# the installer script unpacked from Smart Azan's setup.exe: it is a byproduct of
+# someone else's proprietary work, so the note in FINDINGS.md stays and this does not
+research/installer_script.txt
+
+# the old name, in case a config file still carries it
+azankit.yaml
