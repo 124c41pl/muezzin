@@ -49,15 +49,33 @@ On Windows, if `python -m venv .venv` appears to do nothing, you are hitting the
 ## Five minutes to adhan on a speaker
 
 ```bash
-muezzin init                       # starter profile
-$EDITOR muezzin.yaml               # latitude, longitude, timezone — nothing else is required
+muezzin init                       # starter profile: five prayers, no speakers yet
+$EDITOR muezzin.yaml               # latitude, longitude, timezone — the three lines that matter
 muezzin times                      # sanity check: does this look like your local timetable?
 cp ~/Downloads/fajr.mp3 media/     # your own audio; any file, any qari
 muezzin devices                    # speakers, groups and boxes found on the LAN
+```
+
+The starter lists no speakers on purpose: an output pointed at a speaker you do
+not own is an error at every prayer time. `muezzin devices` only reports, and a
+scan never writes anything to your profile, so the speaker list is only ever what
+you chose. Add the first one from the page — **look again**, then **use** beside a
+device — or by deleting the `# ` marks on the example under `outputs:` in
+`muezzin.yaml`. Then:
+
+```bash
 muezzin play-now media/fajr.mp3    # make a noise, so you know the wiring is right
 muezzin next                       # what the daemon will fire, when, and to whom
 muezzin daemon --web               # leave it running, with the browser page on :8020
 ```
+
+The two mistakes a starter makes easy both produce no error at all: a city nobody
+chose, and a schedule with nowhere to play. So until you fix them, `times` and
+`daemon` say so — that the location is still the starter's New York placeholder,
+and that no speaker is configured. Change one of the three location lines and the
+first note stops, because a household that typed its own coordinates has already
+said what it needs. An event with no `targets:` reaches every enabled output,
+which is why adding a speaker to a working household needs no edit to the events.
 
 `muezzin next` is the one to trust: it shows the schedule as the daemon sees it —
 wall clock, weekday filter, and which output each event resolves to.
@@ -67,7 +85,7 @@ wall clock, weekday filter, and which output each event resolves to.
 `muezzin daemon --web` also serves one page on port 8020 (`--web 8080` for a
 different port). Open `http://<the machine's LAN address>:8020` — from a phone on
 the same wifi, which is how you stand in the kitchen and find out whether the
-study speaker is actually reachable.
+speaker you just added is actually reachable.
 
 * three days of times for the method in the profile, with the marker kept on a
   prayer that falls after midnight (`00:28 +1`)
@@ -563,7 +581,10 @@ user rather than root.
 
 ```bash
 docker run --rm -v "$PWD/config:/app/config" muezzin:0.1.0 init -c /app/config/muezzin.yaml
-# edit location, method, outputs
+# edit location and method. The starter's `media_dir: media` is relative to the
+# profile, so in the container it means ./config/media; set it to /app/media to
+# use the ./media volume compose mounts. Starters have no outputs — see "speakers
+# on your network" for what casting from a container needs.
 docker compose up
 ```
 
