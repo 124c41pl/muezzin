@@ -1,0 +1,59 @@
+# Build the container image for amd64 and arm64 and publish it to this
+# repository's ghcr.io package, on a tag push. No personal token: the workflow
+# signs in to the registry with GITHUB_TOKEN, which is scoped to this run.
+name: image
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository }}     # ghcr.io/<owner>/<repo>, lowercase already
+
+jobs:
+  build:
+    name: build and publish (amd64, arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: the tag and pyproject must agree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          want="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
+          if [ "$tag" != "$want" ]; then
+            echo "tag is v$tag but pyproject.toml says $want; fix the version first" >&2
+            exit 1
+          fi
+          # The image is tagged with the version, not with the git tag. The
+          # README tells people to pull :0.1.0, and publishing ${{ github.ref_name }}
+          # would put :v0.1.0 on the registry instead: every documented pull
+          # command then fails for a stranger, and nothing in the build complains.
+          echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: sign in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ env.IMAGE_TAG }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
