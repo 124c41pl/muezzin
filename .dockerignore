@@ -1,0 +1,26 @@
+# What the image does not need. The reverse-engineering material in this repo is
+# a Windows installer someone unpacked: it has no business being in an image, and
+# an image that ships someone else's proprietary binary is not MIT's to ship.
+.git/
+.gitignore
+.venv/
+out/
+research/
+tests/
+tools/
+extracted/
+extracted2/
+issdir/
+SmartAzanSetup.exe
+FINDINGS.md
+__pycache__/
+*.pyc
+.pytest_cache_/
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Your profile and your audio are mounted at run time. Baking them in would put
+# your house, your speakers and your schedule inside a redistributable image.
+*.yaml
+media/

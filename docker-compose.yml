@@ -1,0 +1,44 @@
+# One service: the daemon, the panel and the media server are the same process.
+#
+# network_mode: host is not decoration. Speakers are *found* with mDNS
+# (_cast._tcp and, for muezzin boxes, _muezzin._tcp), and mDNS announcements do
+# not travel through a Docker bridge network. On Linux, host mode is what makes
+# `muezzin devices` see anything at all.
+#
+# Docker Desktop on Windows and macOS runs containers inside a VM, so host
+# networking there does not put you on the LAN either - the speakers will stay
+# invisible. If that is your machine, run muezzin natively (or on the Pi) and use
+# the container for the parts that do not need to talk to a speaker: times,
+# schedules, the panel, and a `file` output you can inspect.
+
+services:
+  muezzin:
+    build: .
+    image: muezzin:0.1.0
+    network_mode: host            # required for speaker discovery
+    volumes:
+      - ./config:/app/config      # your muezzin.yaml lives here
+      - ./media:/app/media        # your audio lives here
+      - muezzin-out:/app/out      # where kind: file outputs land
+    environment:
+      # Times come from `location.timezone` in the profile, not from TZ; this
+      # only makes the log lines read like your day.
+      TZ: America/New_York
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  # The bridge variant, for when you only want the timetable and the page.
+  # Speakers are deliberately left out: the container gets an address like
+  # 172.17.0.2, which your speaker has no route to, and discovery never runs.
+  #
+  # muezzin-lookup-only:
+  #   image: muezzin:0.1.0
+  #   ports:
+  #     - "8020:8020"
+  #   volumes:
+  #     - ./config:/app/config
+  #   command: ["web", "-c", "/app/config/muezzin.yaml", "--port", "8020", "--read-only"]
+
+volumes:
+  muezzin-out:
