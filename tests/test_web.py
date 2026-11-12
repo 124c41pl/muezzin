@@ -594,7 +594,7 @@ def test_a_upload_for_a_profile_that_casts_comes_back_with_a_url(tmp_path):
     # a speaker pulls the file over HTTP, so the reply has to name the address it
     # will be pulled from - that is what the page shows after an upload
     text = BASE.replace('    kind: file\n', '    kind: google_cast\n')
-    text = text.replace('    host: "{out}"', '    target: "Home group"')
+    text = text.replace('    host: "{out}"', '    target: "Whole-house group"')
     web, _, runner = _serve(tmp_path, text)
     try:
         status, reply = post_raw(web.port, "/api/media/upload?name=adhan.ogg",
@@ -646,36 +646,36 @@ def test_the_speaker_scan_is_cached_and_says_when_it_ran(panel, monkeypatch):
 
     def fake(timeout=5.0, ask_members=True):
         calls.append(timeout)
-        return {"speakers": [{"name": "Kitchen speaker", "model": "Nest Mini",
+        return {"speakers": [{"name": "Study speaker", "model": "Nest Mini",
                               "address": "192.168.0.23", "port": 8009, "group": False}],
-                "groups": [{"name": "Home group", "id": "abc", "members": ["Kitchen speaker"],
+                "groups": [{"name": "Whole-house group", "id": "abc", "members": ["Study speaker"],
                             "membership_known": True, "silent": []}],
                 "boxes": [], "asked": 1, "silent": []}
 
     monkeypatch.setattr(web_module, "scan_speakers", fake)
     status, reply = call(web.port, "/api/speakers")
     assert status == 200, reply
-    assert reply["found"]["groups"][0]["members"] == ["Kitchen speaker"]
+    assert reply["found"]["groups"][0]["members"] == ["Study speaker"]
     assert reply["seen_at"]
     call(web.port, "/api/speakers")
     assert len(calls) == 1, "the page may poll it; the network should not be polled on every poll"
     call(web.port, "/api/speakers?refresh=1")
     assert len(calls) == 2, "a refresh is what the button asks for"
-    assert call(web.port, "/api/speaker/add", {"target": "Kitchen speaker"})[0] == 200
+    assert call(web.port, "/api/speaker/add", {"target": "Study speaker"})[0] == 200
     _, reply = call(web.port, "/api/speakers")
-    assert reply["in_profile"] == {"Kitchen speaker": "kitchen-speaker"}, \
+    assert reply["in_profile"] == {"Study speaker": "study-speaker"}, \
         "the page needs to know which rows are already in the profile"
 
 
 def test_a_scanned_speaker_can_be_added_and_the_name_is_taken_from_it(panel):
     from muezzin import web as web_module
     web, _, tmp_path = panel
-    status, reply = call(web.port, "/api/speaker/add", {"target": "Kitchen speaker", "volume": 0.35})
+    status, reply = call(web.port, "/api/speaker/add", {"target": "Study speaker", "volume": 0.35})
     assert status == 200, reply
-    assert reply["output"] == "kitchen-speaker"
+    assert reply["output"] == "study-speaker"
     on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
-    assert "target: Kitchen speaker" in on_disk and "volume: 0.35" in on_disk
-    status, reply = call(web.port, "/api/speaker/add", {"target": "Kitchen speaker"})
+    assert "target: Study speaker" in on_disk and "volume: 0.35" in on_disk
+    status, reply = call(web.port, "/api/speaker/add", {"target": "Study speaker"})
     assert status == 400 and "already" in reply["error"]
 
 
@@ -723,7 +723,7 @@ def test_a_read_only_panel_cannot_press_any_of_the_new_buttons(tmp_path):
     try:
         for path, body in (("/api/method", {"preset": "qom"}),
                            ("/api/audio", {"at": "fajr", "media": ["dua.mp3"]}),
-                           ("/api/speaker/add", {"target": "Kitchen speaker"}),
+                           ("/api/speaker/add", {"target": "Study speaker"}),
                            ("/api/output/remove", {"name": "outbox"}),
                            ("/api/hijri", {"days": 1})):
             status, reply = call(web.port, path, body)

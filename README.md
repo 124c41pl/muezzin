@@ -6,7 +6,7 @@ family follows.
 It exists because the packaged options force two bad choices. First, the
 prayer-time calculation is a closed list: if your authority is not on the list,
 you are out. Second, playback is one global setting — one speaker type for every
-prayer — so "Fajr in the kitchen and the bedroom group, but never after Isha" is
+prayer — so "Fajr in the study and the landing group, but never after Isha" is
 not something you can express.
 
 muezzin is a small daemon plus a config file. One profile says where you are,
@@ -67,7 +67,7 @@ wall clock, weekday filter, and which output each event resolves to.
 `muezzin daemon --web` also serves one page on port 8020 (`--web 8080` for a
 different port). Open `http://<the machine's LAN address>:8020` — from a phone on
 the same wifi, which is how you stand in the kitchen and find out whether the
-kitchen speaker is actually reachable.
+study speaker is actually reachable.
 
 * three days of times for the method in the profile, with the marker kept on a
   prayer that falls after midnight (`00:28 +1`)
@@ -91,7 +91,7 @@ Saving re-validates before writing, and the error is the same one the CLI would
 give:
 
 ```
-_livecast.yaml: output 'home-group' has unknown kind 'google_cas';
+_livecast.yaml: output 'house-group' has unknown kind 'google_cas';
 known kinds: file, google_cast, lan_box, pc_speakers
 ```
 
@@ -262,9 +262,9 @@ considers itself part of, and inverts that. On this LAN the group record names o
 speaker while the four speakers name the group, which is where the list comes from:
 
 ```
-Bedroom group   192.168.0.21:32002    Bedroom speaker, Hall speaker
-Home group      192.168.0.21:32211      Bedroom speaker, Kitchen speaker,
-                                         Office speaker, Hall speaker
+Landing group      192.168.0.21:32002    Landing speaker, Hall speaker
+Whole-house group  192.168.0.21:32211    Landing speaker, Study speaker,
+                                         Cellar speaker, Hall speaker
 ```
 
 That inversion is also why the panel distinguishes **unknown** from **empty**. A
@@ -361,17 +361,17 @@ Things the engine gets right that a naive implementation does not:
 
 ```yaml
 outputs:
-  - name: kitchen
+  - name: study
     kind: google_cast
-    target: Kitchen speaker        # `muezzin devices` prints these names
+    target: Study speaker        # `muezzin devices` prints these names
     volume: 0.4
-  - name: home-group
+  - name: house-group
     kind: google_cast
-    target: Home group             # Google Home groups work, including one speaker
+    target: Whole-house group             # Google Home groups work, including one speaker
     volume: 0.25
   - name: pc
     kind: pc_speakers              # this machine's default output device
-  - name: bedroom-pi
+  - name: attic-pi
     kind: lan_box
     host: 192.168.0.25            # an `muezzin box`
   - name: study
@@ -388,12 +388,12 @@ events:
     at: fajr                       # fajr|sunrise|dhuhr|asr|maghrib|isha|midnight|true_night|shurf|sunset
     offset_min: -5                 # 5 minutes before Fajr
     media: [fajr.mp3]
-    targets: [kitchen, home-group] # per-event: this is the part that is missing elsewhere
+    targets: [study, house-group] # per-event: this is the part that is missing elsewhere
     volume: 0.5
   - name: sunrise-tune
     at: sunrise
     media: [dua.mp3]
-    targets: [kitchen]
+    targets: [study]
     days: [sat, sun]               # weekday filter
 ```
 
@@ -423,12 +423,12 @@ muezzin devices --timeout 8
 
 ```
 speaker / group              model                      group  address
-Bedroom group                Google Cast Group          yes    192.168.0.21:32002
-                                  members: Bedroom speaker, Hall speaker
-Home group                   Google Cast Group          yes    192.168.0.21:32211
-                                  members: Bedroom speaker, Kitchen speaker, Office speaker, Hall speaker
-Bedroom speaker                 Nest Audio                 -      192.168.0.22:8009
-Kitchen speaker              Google Nest Mini           -      192.168.0.23:8009
+Landing group                Google Cast Group          yes    192.168.0.21:32002
+                                  members: Landing speaker, Hall speaker
+Whole-house group            Google Cast Group          yes    192.168.0.21:32211
+                                  members: Landing speaker, Study speaker, Cellar speaker, Hall speaker
+Landing speaker              Nest Audio                 -      192.168.0.22:8009
+Study speaker                Google Nest Mini           -      192.168.0.23:8009
 
 box                          protocol         player     address
 test-box                     muezzin_box      mpg123     192.168.0.5:8090
@@ -478,14 +478,14 @@ Windows machine remains the brain. This is the arrangement Smart Azan's Pi
 feature implies, and it fixes the design flaw in it:
 
 ```bash
-muezzin box --name bedroom-pi --port 8090     # advertises itself with mDNS
+muezzin box --name attic-pi --port 8090     # advertises itself with mDNS
 ```
 
 Then in the daemon's profile:
 
 ```yaml
 outputs:
-  - name: bedroom-pi
+  - name: attic-pi
     kind: lan_box
     host: 192.168.0.25      # or leave it out and let discovery find it
     port: 8090
@@ -495,7 +495,7 @@ The wire protocol is plain HTTP + JSON so you can test it with curl:
 
 ```
 GET  /ping    -> Pong
-GET  /status  -> {"name": "bedroom-pi", "player": "mpg123", "last": {...}}
+GET  /status  -> {"name": "attic-pi", "player": "mpg123", "last": {...}}
 POST /play    -> {"urls": ["http://192.168.0.5:8010/fajr.mp3"],
                   "files": {"small.mp3": "<base64>"},
                   "volume": 0.4}
@@ -512,7 +512,7 @@ address or your phone, "play this" becomes "read this". So the box refuses any U
 whose host you did not name when you started it:
 
 ```bash
-muezzin box --name bedroom-pi --port 8090 --allow-host 192.168.0.5
+muezzin box --name attic-pi --port 8090 --allow-host 192.168.0.5
 ```
 
 `192.168.0.5` is the machine that serves your media — the daemon's address, which
@@ -534,7 +534,7 @@ Keeping the box alive (systemd on Raspberry Pi OS):
 Description=muezzin speaker box
 After=network-online.target
 [Service]
-ExecStart=/home/pi/muezzin/.venv/bin/muezzin box --name bedroom-pi --allow-host 192.168.0.5
+ExecStart=/home/pi/muezzin/.venv/bin/muezzin box --name attic-pi --allow-host 192.168.0.5
 Restart=always
 [Install]
 WantedBy=multi-user.target

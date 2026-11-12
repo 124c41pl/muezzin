@@ -283,8 +283,8 @@ def _value_of(raw: str) -> Optional[str]:
     """One scalar from the text after `field:`, quoting and comments undone.
 
     The comment matters more than it looks: in the starter profile the line is
-    `target: Kitchen speaker   # muezzin devices lists names`, and a reader that
-    kept the comment would go looking for a speaker called "Kitchen speaker #
+    `target: Study speaker   # muezzin devices lists names`, and a reader that
+    kept the comment would go looking for a speaker called "Study speaker #
     muezzin devices lists names" and never find one.
     """
     raw = raw.strip()

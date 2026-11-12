@@ -58,13 +58,13 @@ outputs:
   - name: pc
     kind: pc_speakers
     volume: 0.7
-  - name: kitchen
+  - name: study
     kind: google_cast
-    target: Kitchen speaker      # `muezzin devices` lists names, groups included
+    target: Study speaker      # `muezzin devices` lists names, groups included
     volume: 0.5
-  - name: bedroom-group
+  - name: landing-group
     kind: google_cast
-    target: Bedroom group        # a Google Home speaker GROUP works as one target
+    target: Landing group        # a Google Home speaker GROUP works as one target
     volume: 0.45
   - name: pi-box
     kind: lan_box
@@ -79,13 +79,13 @@ events:
   - name: fajr-adhan
     at: fajr
     media: [fajr.mp3]
-    targets: [pc, kitchen, pi-box]
+    targets: [pc, study, pi-box]
     volume: 0.8
   - name: sunrise-tune
     at: sunrise
     offset_min: -5
     media: [dua.mp3]
-    targets: [kitchen]
+    targets: [study]
   - name: jumuah
     at: dhuhr
     offset_min: 15

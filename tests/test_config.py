@@ -11,9 +11,9 @@ location: {latitude: 40.7128, longitude: -74.006, timezone: America/New_York}
 method: {preset: isna}
 media_dir: media
 outputs:
-  - name: kitchen
+  - name: study
     kind: google_cast
-    target: Kitchen speaker
+    target: Study speaker
   - name: spare
     kind: file
     host: out
@@ -22,7 +22,7 @@ events:
   - name: fajr-adhan
     at: fajr
     media: [fajr.mp3]
-    targets: [kitchen]
+    targets: [study]
 """
 
 
@@ -36,8 +36,8 @@ def test_profile_reads_a_plain_file(tmp_path):
     p = load_profile(write(tmp_path, BASE))
     assert p.params.fajr_angle == 15.0            # ISNA
     assert p.asr_shadow == 1.0
-    assert [o.name for o in p.enabled_outputs()] == ["kitchen"]
-    assert [t.name for t in p.targets_for(p.events[0])] == ["kitchen"]
+    assert [o.name for o in p.enabled_outputs()] == ["study"]
+    assert [t.name for t in p.targets_for(p.events[0])] == ["study"]
 
 
 def test_method_override_on_top_of_a_preset(tmp_path):
@@ -62,8 +62,8 @@ def test_hanafi_asr(tmp_path):
 
 def test_disabled_output_is_not_a_target(tmp_path):
     """`enabled: false` is how you park a speaker without deleting its config."""
-    p = load_profile(write(tmp_path, BASE.replace("targets: [kitchen]", "targets: [kitchen, spare]")))
-    assert [t.name for t in p.targets_for(p.events[0])] == ["kitchen"]
+    p = load_profile(write(tmp_path, BASE.replace("targets: [study]", "targets: [study, spare]")))
+    assert [t.name for t in p.targets_for(p.events[0])] == ["study"]
 
 
 def test_unknown_output_kind_is_rejected(tmp_path):
@@ -79,7 +79,7 @@ def test_typo_in_at_is_rejected(tmp_path):
 
 def test_event_targeting_a_missing_output_is_rejected(tmp_path):
     with pytest.raises(ValueError, match="do not exist"):
-        load_profile(write(tmp_path, BASE.replace("targets: [kitchen]", "targets: [kithcen]")))
+        load_profile(write(tmp_path, BASE.replace("targets: [study]", "targets: [kithcen]")))
 
 
 def test_event_without_media_is_rejected(tmp_path):
@@ -145,15 +145,15 @@ def test_a_host_with_anything_extra_in_it_is_rejected(tmp_path):
     for bad in ("192.168.0.5\n", "http://evil.example/", "10.0.0.1 /x", "%00", ""):
         with pytest.raises(ValueError, match="not a plain hostname"):
             load_profile(write(tmp_path,
-                               BASE.replace("target: Kitchen speaker", f'host: "{bad}"')))
+                               BASE.replace("target: Study speaker", f'host: "{bad}"')))
 
 
 def test_a_port_that_is_not_a_port_is_rejected(tmp_path):
     for bad in ("0", "-1", "70000"):
         with pytest.raises(ValueError, match="not between 1 and 65535"):
             load_profile(write(tmp_path,
-                               BASE.replace("target: Kitchen speaker",
-                                            f"target: Kitchen speaker\n    port: {bad}")))
+                               BASE.replace("target: Study speaker",
+                                            f"target: Study speaker\n    port: {bad}")))
 
 
 def test_an_offset_longer_than_a_day_is_a_typo(tmp_path):
