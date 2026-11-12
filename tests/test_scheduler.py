@@ -171,7 +171,7 @@ def test_a_reload_replaces_a_media_server_that_no_longer_matches(tmp_path):
     from muezzin.scheduler import Runner
 
     text = BASE.replace("kind: file", "kind: google_cast").replace(
-        '    host: "{out}"', "    target: Kitchen speaker")
+        '    host: "{out}"', "    target: Study speaker")
     profile, _ = profile_for(tmp_path, text)
     runner = Runner(profile)
     try:

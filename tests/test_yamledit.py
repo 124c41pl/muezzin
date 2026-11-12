@@ -67,16 +67,16 @@ def test_a_whole_section_is_never_clobbered_by_a_single_value():
 
 def test_the_output_entries_are_listed_in_order():
     rows = ye.entries(EXAMPLE, "outputs")
-    assert [r["name"] for r in rows] == ["pc", "kitchen", "bedroom-group", "pi-box", "testdir"]
+    assert [r["name"] for r in rows] == ["pc", "study", "landing-group", "pi-box", "testdir"]
     assert rows[0]["index"] == 0
     assert "kind: pc_speakers" in rows[0]["text"]
 
 
 def test_a_list_field_reads_in_either_yaml_style():
-    flow = "  - name: a\n    targets: [pc, kitchen]"
-    block = "  - name: a\n    targets:\n      - pc\n      - kitchen\n"
-    assert ye.entry_list(flow, "targets") == ["pc", "kitchen"]
-    assert ye.entry_list(block, "targets") == ["pc", "kitchen"]
+    flow = "  - name: a\n    targets: [pc, study]"
+    block = "  - name: a\n    targets:\n      - pc\n      - study\n"
+    assert ye.entry_list(flow, "targets") == ["pc", "study"]
+    assert ye.entry_list(block, "targets") == ["pc", "study"]
     assert ye.entry_list(flow, "volume") is None
 
 
@@ -91,11 +91,11 @@ def test_a_nested_list_is_not_mistaken_for_a_new_entry():
 
 def test_editing_one_entry_leaves_its_neighbours_alone(tmp_path):
     rows = ye.entries(EXAMPLE, "outputs")
-    kitchen = next(r for r in rows if r["name"] == "kitchen")
-    new = ye.edit_entry(EXAMPLE, "outputs", kitchen["index"],
-                        {"volume": 0.35, "target": "Kitchen speaker"})
+    study = next(r for r in rows if r["name"] == "study")
+    new = ye.edit_entry(EXAMPLE, "outputs", study["index"],
+                        {"volume": 0.35, "target": "Study speaker"})
     assert "volume: 0.35" in new
-    assert "target: Kitchen speaker" in new
+    assert "target: Study speaker" in new
     # the entry whose line was rewritten lost its trailing comment; the sibling
     # two lines away did not, and that is the honest limit of writing text back
     assert "`muezzin devices` lists names" not in new
@@ -108,10 +108,10 @@ def test_a_field_the_entry_lacks_is_added_to_that_entry(tmp_path):
     rows = ye.entries(EXAMPLE, "events")
     jumuah = next(r for r in rows if r["name"] == "jumuah")
     assert ye.entry_scalar(jumuah["text"], "targets") is None
-    new = ye.edit_entry(EXAMPLE, "events", jumuah["index"], {"targets": ["kitchen"]})
+    new = ye.edit_entry(EXAMPLE, "events", jumuah["index"], {"targets": ["study"]})
     profile = _loads_ok(new, tmp_path)
     event = next(e for e in profile.events if e.name == "jumuah")
-    assert event.targets == ["kitchen"]
+    assert event.targets == ["study"]
     assert event.days == ["fri"]          # the Friday restriction survived
 
 
@@ -130,7 +130,7 @@ def test_a_list_field_written_block_style_is_replaced_whole(tmp_path):
 def test_an_appended_output_lands_inside_its_own_section(tmp_path):
     new = ye.append_entry(EXAMPLE, "outputs",
                           {"name": "bedroom", "kind": "google_cast",
-                           "target": "Bedroom group", "volume": 0.4})
+                           "target": "Landing group", "volume": 0.4})
     assert "\n  - name: bedroom\n" in new
     rows = ye.entries(new, "outputs")
     assert [r["name"] for r in rows][-1] == "bedroom"
@@ -170,7 +170,7 @@ def test_values_are_written_the_way_a_person_would_type_them():
     assert ye.scalar(0.35) == "0.35"
     assert ye.scalar(5) == "5"
     assert ye.scalar(False) == "false"
-    assert ye.scalar("Kitchen speaker") == "Kitchen speaker"
+    assert ye.scalar("Study speaker") == "Study speaker"
     assert ye.scalar("Bedroom: group") == '"Bedroom: group"'
     assert ye.flow(["a.mp3", "b c.mp3"]) == "[a.mp3, b c.mp3]"
     assert ye.flow(["a,b.mp3"]) == '["a,b.mp3"]'
@@ -300,12 +300,12 @@ def test_a_flow_value_holding_a_comma_stays_one_value():
 
 def test_an_output_whose_name_has_a_comma_in_it_can_be_removed():
     text = ('outputs:\n  - name: "Front Hall, Landing"\n    kind: cast\n'
-            '    host: 192.168.0.21\n  - name: kitchen\n    kind: cast\n'
+            '    host: 192.168.0.21\n  - name: study\n    kind: cast\n'
             '    host: 192.168.0.23\n')
     assert [ye.entry_scalar(e, "name") for e in ye.entries(text, "outputs")] == \
-        ["Front Hall, Landing", "kitchen"]
+        ["Front Hall, Landing", "study"]
     new = ye.delete_entry(text, "outputs", 0)
-    assert "Front Hall, Landing" not in new and "kitchen" in new
+    assert "Front Hall, Landing" not in new and "study" in new
 
 
 def test_deleting_an_entry_leaves_the_next_one_s_comment_alone():
