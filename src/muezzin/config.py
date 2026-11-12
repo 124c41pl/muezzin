@@ -36,6 +36,26 @@ def valid_host(text: str) -> bool:
     return bool(_HOST_RE.fullmatch(str(text)))
 
 
+# The coordinates the starter profile ships with: a placeholder for New York, so
+# a profile still carrying all three is one nobody has set up yet.
+STARTER_LATITUDE = 40.7128
+STARTER_LONGITUDE = -74.006
+STARTER_TIMEZONE = "America/New_York"
+
+
+def uses_starter_location(loc: Location) -> bool:
+    """Is this profile still sitting on the starter's placeholder coordinates?
+
+    This is the one kind of wrong that produces no error: the arithmetic is
+    impeccable and the city is somebody else's. Kept deliberately narrow, so a
+    profile whose author changed any one of the three values never hears from
+    this function.
+    """
+    return (round(float(loc.latitude), 4) == STARTER_LATITUDE
+            and round(float(loc.longitude), 4) == STARTER_LONGITUDE
+            and str(loc.timezone) == STARTER_TIMEZONE)
+
+
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 # How far an event may be shifted from the prayer time it hangs off. Bigger than

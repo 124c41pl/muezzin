@@ -1,14 +1,16 @@
 """Editing a profile without wrecking the parts nobody asked to touch.
 
-The starter profile from `muezzin init` is the fixture, on purpose: if the
-helpers cannot handle the exact file the project hands out, they are useless.
+The documented example profile is the fixture, on purpose: if the helpers cannot
+handle the exact file the project shows people, they are useless. The starter a
+new user gets from `muezzin init` is a smaller file with the same shapes, and
+test_cli.py checks that one stays loadable.
 Every mutation here is also loaded back with load_profile, because a YAML
 indent that is one space off is a crash at 5 am, not a test failure.
 """
 import pytest
 import yaml
 
-from muezzin.cli import EXAMPLE
+from muezzin.cli import EXAMPLE, STARTER
 from muezzin.config import load_profile
 from muezzin import yamledit as ye
 
@@ -247,6 +249,24 @@ def test_a_list_written_on_one_line_is_refused_rather_than_mangled():
         ye.append_entry("events: []\n", "events",
                         {"name": "fajr-adhan", "at": "fajr", "media": ["a.mp3"]})
     assert "one entry per line" in str(exc.value)
+
+
+def test_the_first_speaker_a_new_user_adds_uses_the_starter_layout(tmp_path):
+    """`muezzin init` hands over an outputs block whose only contents are
+    commented examples, so the very first "use" click on the page is an append
+    onto a list with no entries in it. That is the most common edit this program
+    will ever be asked for, so it belongs beside the tests, not in a bug report.
+    """
+    new = ye.append_entry(STARTER, "outputs",
+                          {"name": "landing", "kind": "google_cast",
+                           "target": "Landing group", "volume": 0.6})
+    assert "  - name: landing" in new
+    assert "# No speakers listed yet, on purpose" in new, "the explanation stays above the list"
+    profile = _loads_ok(new, tmp_path)
+    assert [o.name for o in profile.outputs] == ["landing"]
+    assert len(profile.events) == 5, "the five adhans are still there and still untargeted"
+    assert profile.targets_for(profile.events[0]) == profile.outputs, \
+        "an event with no targets reaches every enabled output"
 
 
 # --- each one below was a real way to lose a value; pinned so they stay lost ---
