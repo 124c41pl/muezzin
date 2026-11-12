@@ -10,7 +10,8 @@ from pathlib import Path
 import yaml
 
 from . import __version__, calc
-from .config import OutputConfig, Profile, load_profile, valid_host
+from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, OutputConfig,
+                     Profile, load_profile, uses_starter_location, valid_host)
 
 log = logging.getLogger("muezzin.cli")
 
@@ -93,6 +94,89 @@ events:
     media: [khutbah.mp3]
 """
 
+# What `muezzin init` writes, and it is deliberately smaller than EXAMPLE above.
+# The example is documentation, so it shows four kinds of output; a starter must
+# not name one device the reader does not own, because an output pointed at a
+# speaker nobody has is an error at every single prayer time.
+STARTER = """\
+# muezzin profile. Everything here is data: change a number, not the code.
+#
+# The three lines under `location` are a placeholder for New York. Until they
+# say where you are, every time this program produces is New York's, and the
+# arithmetic will not complain about that, so change them first.
+
+location:
+  latitude: 40.7128            # your latitude, north positive
+  longitude: -74.006           # your longitude, east positive
+  timezone: America/New_York   # IANA name: DST is handled by the tz database
+
+method:
+  preset: isna                 # `muezzin methods` lists the presets and their angles
+  asr_shadow: standard         # standard | hanafi
+  # one number at a time, to match the table your community publishes:
+  # fajr_angle: 15.0
+  # isha_angle: 15.0
+  # maghrib_angle_offset: 3.7  # e.g. the Tehran institute's maghrib
+
+adjustments: {fajr: 0, dhuhr: 5, maghrib: 0}   # minutes, per prayer
+
+media_dir: media               # drop your adhan recordings in here
+http_port: 8010                # serves media_dir to Cast devices
+hijri_offset: 0                # display only: lines the page up with your calendar
+
+# No speakers listed yet, on purpose: an output pointed at a speaker nobody owns
+# is an error at every single prayer time. `muezzin devices` asks the network
+# what is there, and the page's "look again" then "use" writes the entry for you.
+# A scan by itself changes nothing, so this list is only ever what you chose. The
+# shortest entry of all is `kind: pc_speakers`, for the speakers already attached
+# to the machine this file is on: it needs a name and nothing else. To write one
+# by hand, delete the `# ` marks on the four lines below.
+outputs:
+  # - name: house-group            # a name you choose; the events below use these
+  #   kind: google_cast            # or pc_speakers, lan_box, file
+  #   target: Whole-house group    # spelled exactly as `muezzin devices` prints it
+  #   volume: 0.5
+
+# An event with no `targets:` reaches every enabled output, which is what most
+# households want: add a speaker and it joins the schedule this file already
+# describes. Add `targets:` when one prayer should go somewhere narrower, and
+# `days:` for a reminder that fires once a week.
+events:
+  - name: fajr-adhan
+    at: fajr
+    media: [fajr.mp3]
+  - name: dhuhr-adhan
+    at: dhuhr
+    media: [dhuhr.mp3]
+  - name: asr-adhan
+    at: asr
+    media: [asr.mp3]
+  - name: maghrib-adhan
+    at: maghrib
+    media: [maghrib.mp3]
+  - name: isha-adhan
+    at: isha
+    media: [isha.mp3]
+"""
+
+
+def starter_warnings(profile: Profile) -> list[str]:
+    """Say once, in plain words, the two things a starter profile makes easy to
+    miss: a city nobody chose, and a schedule with nowhere to play."""
+    notes = []
+    if uses_starter_location(profile.location):
+        notes.append(f"location is still the starter's placeholder "
+                     f"({STARTER_LATITUDE}, {STARTER_LONGITUDE}, {STARTER_TIMEZONE}): "
+                     f"every time here is New York's until those three lines change")
+    if not profile.outputs:
+        notes.append("no speakers configured: `muezzin devices` shows what is on the "
+                     "network and the panel adds one (or write an outputs: entry). An "
+                     "event with no targets reaches every enabled output")
+    elif not profile.enabled_outputs():
+        notes.append(f"all {len(profile.outputs)} configured outputs are disabled: "
+                     f"nothing will play")
+    return notes
+
 
 def _fmt(h):
     if h is None:
@@ -118,6 +202,9 @@ def cmd_times(profile: Profile, date, days: int) -> int:
     print(f"# {profile.params.label}  asr={'hanafi' if profile.asr_shadow == 2.0 else 'standard'}")
     print(f"# {profile.location.latitude}, {profile.location.longitude} {profile.location.timezone}"
           f"  (hl rule: {profile.params.high_latitude_rule})")
+    # stderr, so a table that is piped somewhere stays a table
+    for note in starter_warnings(profile):
+        print(f"# note: {note}", file=sys.stderr)
     print("date        " + "".join(f"{k[:8]:>9}" for k in keys))
     for i in range(days):
         d = date + dt.timedelta(days=i)
@@ -259,6 +346,9 @@ def cmd_next(profile: Profile, days: int) -> int:
     tz = profile.location.timezone
     now = dt.datetime.now(ZoneInfo(tz))
     print(f"# now {now:%Y-%m-%d %H:%M} {tz}   method: {profile.params.label}")
+    # `next` is the command that gets trusted, so it says why a row reads NO TARGETS
+    for note in starter_warnings(profile):
+        print(f"# note: {note}", file=sys.stderr)
     if not rows:
         print("nothing scheduled in this window - check the `events:` block "
               "(and `days:` here, currently asking for the next", days, "day(s)")
@@ -286,6 +376,8 @@ def cmd_daemon(config_path: Path, web_port=None, read_only: bool = False,
         panel.start()
     print(f"muezzin {__version__}: {profile.location.timezone} / {profile.params.label}; "
           f"outputs: {', '.join(o.name for o in profile.enabled_outputs())}")
+    for note in starter_warnings(profile):
+        log.warning("%s", note)
     if panel:
         host = runner.media.host_ip if runner.media else "127.0.0.1"
         print(f"control panel: http://{host}:{panel.port}"
@@ -408,8 +500,10 @@ def main(argv=None) -> int:
             print(f"{args.config} already exists; not overwriting", file=sys.stderr)
             return 1
         (args.config.parent / "media").mkdir(parents=True, exist_ok=True)
-        args.config.write_text(EXAMPLE, encoding="utf-8")
+        args.config.write_text(STARTER, encoding="utf-8")
         print(f"wrote {args.config} (and a media/ directory - drop your adhan files in it)")
+        print("no speakers are configured: set the three lines under `location` to where "
+              "you are, then run `muezzin devices` and add one from the panel")
         return 0
     if args.cmd == "methods":
         return cmd_methods()

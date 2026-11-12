@@ -12,6 +12,7 @@ import urllib.request
 
 import pytest
 
+from muezzin.cli import STARTER
 from muezzin.config import load_profile
 from muezzin.scheduler import PRAYER_KEYS, Runner
 from muezzin.web import WebPanel, _fmt
@@ -939,4 +940,36 @@ def test_a_box_is_not_added_on_an_address_or_port_that_makes_no_sense(panel):
     assert status == 200, reply
     on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
     assert "porch" in on_disk and re.search(r"host:\s*'?\"?192\.168\.0\.25", on_disk)
+
+
+def test_the_page_works_on_a_profile_that_has_no_speakers_yet(tmp_path):
+    """`muezzin init` hands over an outputs list with nothing in it, and the page
+    is the first thing a new install points a browser at. So the timetable has to
+    render over an empty list, and "use" has to be able to write the first entry
+    onto a list that has no entries in it - the most common edit this program
+    will ever be asked for, and the one every starter profile sits on.
+    """
+    profile, _ = profile_for(tmp_path, STARTER.replace("http_port: 8010", "http_port: 0"))
+    runner = Runner(profile)
+    web = WebPanel(runner, port=0)
+    web.start()
+    try:
+        status, state = call(web.port, "/api/state")
+        assert status == 200, state
+        assert state["outputs"] == [], "the page shows an empty list, not a crash"
+        assert len(state["events"]) == 5, "the five adhans are there before any speaker is"
+        assert all(not e["targets"] for e in state["upcoming"]), \
+            "an untargeted event with no outputs resolves to nothing, quietly"
+        status, reply = call(web.port, "/api/speaker/add", {"target": "Landing group"})
+        assert status == 200, reply
+        assert reply["output"] == "landing-group"
+        added = load_profile(tmp_path / "muezzin.yaml")
+        assert [o.name for o in added.outputs] == ["landing-group"]
+        assert added.targets_for(added.events[0]) == added.outputs, \
+            "the adhans reach the speaker the moment it exists"
+        status, page = call(web.port, "/", raw=True)
+        assert status == 200 and page.startswith("<!doctype html")
+    finally:
+        web.stop()
+        runner.shutdown()
 
