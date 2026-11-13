@@ -1,9 +1,9 @@
 """Configuration model: everything muezzin does is data, not enums.
 
 A profile is a YAML file (see muezzin.example.yaml). The important design
-decision compared with Smart Azan: `method` is not a pick-from-a-list, it is a
-named preset that any single number may override, so a community's own
-published angles are representable without waiting for an upstream release.
+decision: `method` is not a pick-from-a-list. It is a named preset that any single
+number may override, so a community's own published angles are representable
+without waiting for an upstream release.
 """
 from __future__ import annotations
 
