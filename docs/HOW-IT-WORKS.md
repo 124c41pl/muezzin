@@ -314,13 +314,15 @@ Landing speaker              Nest Audio                 -      192.168.0.22:8009
 Study speaker                Google Nest Mini           -      192.168.0.23:8009
 
 box                          protocol         player     address
-test-box                     muezzin_box      mpg123     192.168.0.5:8090
+test-box                     muezzin_box      winmm      192.168.0.5:8090
 attic-pi                     muezzin_box      mpg123     192.168.0.25:8090
 ```
 
 The member list is not in the group's own announcement, so it is read back from
 the speakers — see *Looking at the speakers* above. A group whose members could
-not be asked says so instead of printing nothing.
+not be asked says so instead of printing nothing. The `player` column is not
+something you configure: each box reports what it found on its own machine, which
+is how you can tell from the daemon's side that the Pi really does have mpg123.
 
 A Cast speaker plays a **URL it fetches itself**, so the daemon starts a small
 HTTP server for `media_dir` (port 8010). That means:
@@ -342,6 +344,57 @@ account, which costs about $20/month**. Nothing local can do it — unlike Cast,
 there is no LAN protocol for an Echo. If you want it, budget for that account;
 patches are welcome but they will always need it.
 
+## How a machine makes a sound
+
+Everything else in muezzin is written once and runs wherever Python runs. This is
+the one part that cannot be, because the operating system is the thing holding the
+audio device — and a container has no audio device at all. So the question "how
+does this machine make a sound" is answered in one place, once at start-up, and the
+answer is printed rather than assumed.
+
+| machine | what plays a recording | what you install |
+| --- | --- | --- |
+| Windows | winmm, the MCI interface that ships with Windows, called through `ctypes` | nothing |
+| macOS | `afplay`, which is part of macOS | nothing |
+| Linux | the first of `mpg123`, `ffplay`, `cvlc`, `paplay`, `aplay` that is on PATH | one small package: `sudo apt install mpg123` |
+| none of them | a refusal, in words, naming what to install | — |
+
+The same answer serves both places sound can come out of a computer: a
+`kind: pc_speakers` output in the daemon, and `muezzin box` on any machine that is
+only a speaker. So "the machine's own speakers" means the same thing on a Pi, a
+Windows PC and a Mac, and a box is not a Pi-shaped thing — it is whatever the
+machine in the cupboard already is.
+
+A box announces its choice: it is printed when the box starts, it is in its mDNS
+announcement, and `/status` returns it, which is why the `player:` column in
+`muezzin devices` can tell you that the Pi really does have mpg123. A box that
+found nothing warns at start-up and refuses a play before it wastes the network's
+time fetching a recording.
+
+`--player 'mpg123 -q'` replaces the guess with a command you name; the file to play
+is appended as its last argument. That is also how the tests watch a player without
+owning a speaker — the "player" is a two-line Python script that writes down what it
+was handed.
+
+Three honest limits of this seam:
+
+* it plays through the machine's **default output device**. None of the interfaces
+  above can choose a device, so per-room sound means network speakers.
+* **volume** is applied on Cast speakers, and on Windows where the audio path
+  accepts MCI's volume call. Measured on the PC this was developed on, that call was
+  refused — error 261, "the driver cannot recognize the specified command" — so the
+  play goes ahead at the machine's own level with a line in the log saying so. An
+  adhan missed because a knob was refused is the worse failure. On macOS and Linux
+  there is no portable level control at all, and the same kind of line explains the
+  difference.
+* a command-line player is a separate process, so what comes back from a recording
+  it cannot decode is an exit code rather than a diagnosis. `mpg123` and `ffplay`
+  cover what a Cast speaker accepts; `paplay` and `aplay` are wav only, which is why
+  they sit last in the list.
+
+Nothing here installs anything and nothing here goes online: the players are either
+part of the operating system or packages you put there yourself.
+
 ## Running on a Raspberry Pi
 
 Two ways, and they are not the same.
@@ -350,7 +403,9 @@ Two ways, and they are not the same.
 out of any Cast speaker or its own 3.5 mm / USB speakers:
 
 ```bash
-sudo apt install mpg123
+sudo apt install mpg123          # the only package this needs; on Windows and macOS
+                                 # each has its own built-in path, so there is nothing
+                                 # to install
 python3 -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/muezzin daemon -c muezzin.yaml --web   # the page is then on the Pi, so a
                                                 # phone on the wifi can drive it
@@ -432,9 +487,10 @@ machine, and the player never needs to know what it is.
 The other reason the box is dumb on purpose is safety. A player that also stores
 settings tends to expose routes that rewrite those settings, change the
 calculation, or reboot and re-image the machine. muezzin speaks to nothing that
-offers those routes. Our box has four — `GET /ping`, `POST /play`, `GET /status`,
-`POST /stop` — and a box fetches a recording only from a host you named with its
-own `--allow-host`.
+offers those routes. Our box has three — `GET /ping`, `GET /status`, `POST /play` —
+and a box fetches a recording only from a host you named with its own
+`--allow-host`. There is no route to interrupt a play once it started: a recording
+ends when it ends, and the next one waits behind it.
 
 ## Running in a container
 
@@ -559,9 +615,9 @@ Four things that follow from running in a container:
   your speaker has no route to.
 * **Port mappings are ignored under `network_mode: host`.** `ports:` in that case
   is decoration; the daemon is already listening on the host's interfaces.
-* **Run `muezzin box` natively on the Pi, not in Docker.** That process is the
-  one that needs ALSA/mpg123 and an mDNS registration, which is exactly the pair
-  a container is worst at.
+* **Run `muezzin box` natively on the Pi, not in Docker.** That process is the one
+  that needs the machine's own audio device — winmm, afplay, mpg123 — and an mDNS
+  registration, which is exactly the pair a container is worst at.
 
 If all you want from the container is the timetable, the page and a `file`
 output — a server that answers "what is Fajr tomorrow, and what would it have
@@ -573,8 +629,14 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 241 tests
+pytest -q                        # 291 tests
 ```
+
+CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and
+3.12. Three operating systems because the one part of this program that is
+operating-system-specific has to be tested on the three it claims to run on; the
+player tests pass a stub command instead of a speaker, so none of it needs audio
+hardware on the runner.
 
 1. **Independent oracle.** `tests/crosscheck.py` compares against PyPI's `adhan`
    package (Batoulapps.Adhan's Python twin) over four method / asr-shadow / date

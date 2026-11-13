@@ -12,6 +12,21 @@ dependencies = [
     # Windows has no system tz database; zoneinfo needs this for IANA zone names
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]
+# Where this is expected to work. The test suite runs on all three, because the
+# only operating-system-specific part of the program is which player gets asked
+# for sound - see src/muezzin/localplay.py.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Home Automation",
+]
 
 [project.optional-dependencies]
 # microphone / loopback capture and non-Windows playback experiments

@@ -10,16 +10,16 @@ from __future__ import annotations
 
 import abc
 import base64
-import ctypes
 import json
 import logging
 import socket
-import sys
 import time
 import urllib.request
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
+
+from . import localplay
 
 log = logging.getLogger("muezzin.backends")
 
@@ -64,38 +64,28 @@ class Backend(abc.ABC):
 # ---------------------------------------------------------------------------
 
 class PcSpeakersBackend(Backend):
-    """Play on the local machine's default output device.
+    """Play on the machine muezzin itself is running on.
 
-    On Windows this uses MCI (winmm), which handles wav/mp3 with no dependencies
-    and no extra services. MCI has no per-device routing - it is the system
-    default device - so send sound to a specific speaker by making that device
-    the Windows default, or use a cast/lan_box output for real routing.
+    The one output that needs no network: it asks localplay how this operating
+    system plays a file - winmm on Windows, afplay on macOS, whichever of the
+    usual players a Linux box has - and installs nothing on the way.
+
+    There is no per-device routing: the sound goes to the machine's default
+    output, so send it to a particular speaker by making that the system
+    default, or use a google_cast or lan_box output for real routing.
     """
     kind = "pc_speakers"
 
     def play(self, media, volume=None):
-        if sys.platform != "win32":
-            raise BackendError(f"{self.cfg.name}: pc_speakers playback is only implemented for Windows")
-        vol = int(self._effective_volume(volume) * 1000)
-        alias = f"azk{abs(id(self)) % 1000}"
-        winmm = ctypes.windll.winmm
-        buf = ctypes.create_unicode_buffer(512)
-        err = ctypes.create_unicode_buffer(512)
+        vol = self._effective_volume(volume)
         for path in media:
             if not path.exists():
                 log.warning("missing media %s", path)
                 continue
-            for cmd in (f'open "{path}" type mpegvideo alias {alias}',
-                        f'setvolume {alias} {vol}',
-                        f'play {alias} wait',
-                        f'close {alias}'):
-                rc = winmm.mciSendStringW(cmd, buf, 512, 0)
-                if rc != 0:
-                    winmm.mciGetErrorStringW(rc, err, 512)
-                    raise BackendError(f"{self.cfg.name}: MCI '{cmd.split()[0]}' failed ({rc}): {err.value}")
-
-    def close(self):
-        pass
+            try:
+                localplay.play_file(path, volume=vol)
+            except localplay.LocalPlaybackError as exc:
+                raise BackendError(f"{self.cfg.name}: {exc}") from exc
 
 
 class FileBackend(Backend):

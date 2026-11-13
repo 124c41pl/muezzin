@@ -1,10 +1,15 @@
-"""muezzin box: the player that runs on a Raspberry Pi (or a second PC).
+"""muezzin box: the player that runs on any machine that is only a speaker.
 
 The machine running the daemon decides *when* and *what*; a box decides only
 *where the sound comes out*. That split is deliberate: a player that also computes
 its own times has to support your calculation, and a player built from a fixed list
 of named methods stops at that list. Here the box never computes anything, so any
 method the daemon can express plays on it.
+
+A box is a normal process, so it runs wherever the rest of muezzin runs: a
+Raspberry Pi, a second PC, a Mac in the hall cupboard. Which program makes the
+sound is a question for localplay, and the answer is part of what the box reports
+on `/status` and over mDNS, so you can see it in `muezzin devices`.
 
 Wire protocol (plain HTTP + JSON, no auth, LAN only):
 
@@ -18,8 +23,9 @@ Wire protocol (plain HTTP + JSON, no auth, LAN only):
 long recording never passes through the daemon. It is also the one part of this
 protocol that makes a network request on the daemon's behalf, so the box will
 only fetch from hosts you named with `--allow-host`; without it, `urls` is
-refused and you use `files` instead. `volume` is recorded and logged, not
-applied - the level comes from the box's own player settings.
+refused and you use `files` instead. `volume` is honoured where this machine's
+own playback can take it and only logged where it cannot - a command-line player
+plays at the level that machine is already set to.
 
 The box announces itself with mDNS as _muezzin._tcp so `muezzin devices` finds it
 without anyone typing an address. That service type is our own, which is also the
@@ -33,12 +39,12 @@ import json
 import logging
 import re
 import shlex
-import shutil
-import subprocess
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from . import localplay
 
 log = logging.getLogger("muezzin.box")
 
@@ -54,19 +60,6 @@ MAX_ITEMS_PER_PLAY = 20                # files/urls in one request
 _SAFE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._()\[\]-]{0,120}")
 
 
-def available_player() -> tuple[str, list[str]]:
-    """Pick a command-line player: first one that exists on this box."""
-    for name, cmd in (
-        ("mpg123", ["mpg123", "-q"]),          # works for mp3 and wav on the Pi
-        ("ffplay", ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]),
-        ("cvlc", ["cvlc", "--play-and-exit"]),
-        ("aplay", ["aplay", "-q"]),            # wav only; last resort
-    ):
-        if shutil.which(name):
-            return name, cmd
-    return "none", []
-
-
 class Box:
     def __init__(self, name: str, port: int = 8090, player: str | None = None,
                  allow_hosts: tuple[str, ...] = ()):
@@ -78,7 +71,7 @@ class Box:
         # address, a file on this very machine - into a way to play the daemon's
         # own files.
         self.allow_hosts = tuple(str(h).strip().lower() for h in allow_hosts if str(h).strip())
-        self.player_name, self.player_cmd = available_player()
+        self.player_name, self.player_cmd = localplay.candidate()
         if player:
             self.player_cmd = shlex.split(player)   # a player path with a space in it is normal
             self.player_name = Path(self.player_cmd[0]).name
@@ -90,12 +83,10 @@ class Box:
     # -- playback ----------------------------------------------------------
     def play(self, urls: list[str], files: dict[str, str], volume: float | None) -> None:
         if self.player_name == "none":
-            raise RuntimeError("no player on this box: install mpg123 (apt install mpg123) "
-                               "or set --player to a command that takes a file argument")
+            # Say so before pulling a recording across the network for nothing.
+            raise RuntimeError(f"no player on this box. {localplay.install_advice()}")
         if len(urls) + len(files) > MAX_ITEMS_PER_PLAY:
             raise ValueError(f"too many files in one request ({MAX_ITEMS_PER_PLAY} at most)")
-        if volume is not None:
-            log.info("volume %s requested; the box plays at its player's own level", volume)
         paths: list[Path] = []
         with tempfile.TemporaryDirectory(prefix="muezzin-") as tmp:
             for url in urls:
@@ -111,10 +102,9 @@ class Box:
                 p.write_bytes(base64.b64decode(blob))
                 paths.append(p)
             for p in paths:
-                cmd = list(self.player_cmd) + [str(p)]
-                log.info("playing %s via %s", p.name, self.player_name)
+                log.info("playing %s on this box (player: %s)", p.name, self.player_name)
                 with self._lock:
-                    subprocess.run(cmd, check=True, timeout=600)
+                    localplay.play_file(p, volume=volume, player=self.player_cmd or None)
         self.last = {"played": [p.name for p in paths], "volume": volume}
 
     def _download(self, url: str, directory: Path) -> Path:
