@@ -1,6 +1,6 @@
 [project]
 name = "muezzin"
-version = "0.1.0"
+version = "0.1.1"
 description = "Prayer times and audio for your speakers - any calculation method, any speaker. Config-first, self-hosted."
 readme = "README.md"
 license = { text = "MIT" }
