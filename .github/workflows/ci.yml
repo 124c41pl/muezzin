@@ -42,11 +42,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .[dev]
       - name: the suite
-        # Without this, a test that blocks rather than fails sits here until the
-        # runner's own six-hour limit. pyproject's faulthandler_timeout names the
-        # test; this ends the job.
-        timeout-minutes: 15
-        run: python -m pytest -q
+        # Two macOS runs on 2026-11-12 showed 144 of 295 items taking about nine
+        # minutes there, against under a minute on ubuntu, with no faulthandler
+        # dump for any one test - the shape of a slow suite rather than of one
+        # stuck test, though a block that never gives the interpreter back would
+        # look the same from here. So: verbose, which names each test as it
+        # finishes and leaves the answer in the log even if the step is killed,
+        # plus a duration report. The limit stays so a hang ends the job.
+        timeout-minutes: 30
+        run: python -m pytest -v --durations=15
       - name: the independent oracle
         run: python tests/crosscheck.py
       - name: the shipped example profile really loads
