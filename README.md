@@ -126,7 +126,7 @@ outputs:
   - name: landing-group
     kind: google_cast
     target: Landing group             # spelled exactly as `muezzin devices` prints it
-    volume: 0.5
+    volume: 0.5                  # that speaker's level; the machine's own stays yours
 ```
 
 An event with no `targets:` reaches every enabled output, which is why adding a
@@ -233,10 +233,9 @@ the device list, along with the player it picked for itself.
 * Sound from the machine muezzin runs on goes to that machine's **default output
   device**, on all three systems: winmm on Windows, afplay on macOS, whichever
   small player a Linux box has. None of them route per device, so per-room sound
-  means network speakers. The `volume:` knob reaches a Cast speaker, and on Windows
-  the machine's own output when that audio path accepts a level. Where it does not —
-  and on macOS and Linux, always — the level is whatever that machine is set to, and
-  the log says so rather than leaving you guessing.
+  means network speakers. And muezzin never changes a computer's volume: the
+  `volume:` knob is for the speakers it casts to, while the machine it runs on —
+  and any box on the LAN — plays at whatever level you set on that machine.
 * On macOS the firewall asks whether Python may receive incoming connections the
   first time you run a daemon or a box. Say allow, or the page will not answer and
   discovery will not work.

@@ -49,13 +49,16 @@ def test_ping_answers(box):
 
 def test_box_decodes_an_inlined_file_and_hands_the_player_a_real_file(box):
     """Small media goes as base64 so a box that cannot route back to the daemon
-    still gets it."""
+    still gets it. The body also carries a volume, as a daemon written before the
+    rule that a box's own level is none of the network's business would send one:
+    it arrives, changes nothing, and is not remembered."""
     b, marker = box
     payload = {"files": {"fajr.mp3": base64.b64encode(b"ID3\x03real-audio").decode()}, "volume": 0.4}
     status, body = post(b, payload)
     assert status == 200 and body == b"ok"
     assert marker.read_bytes() == b"ID3\x03real-audio"
-    assert b.last["played"] == ["fajr.mp3"] and b.last["volume"] == 0.4
+    assert b.last["played"] == ["fajr.mp3"]
+    assert "volume" not in b.last, "a stray volume must not be remembered as if it did something"
 
 
 def test_box_fetches_a_url_instead_of_waiting_for_an_upload(box):

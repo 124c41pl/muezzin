@@ -15,7 +15,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from muezzin.backends import BackendError, CastBackend
+from muezzin import backends
+from muezzin.backends import BackendError, CastBackend, LanBoxBackend, PcSpeakersBackend
 from muezzin.config import OutputConfig
 
 
@@ -169,6 +170,7 @@ def test_a_speaker_the_helper_wrote_off_still_gets_the_audio(monkeypatch, tmp_pa
     b.media_server = SimpleNamespace(url_for=lambda p: "http://192.0.2.10:8010/" + p.name)
     b.play([clip])
     assert [c[0] for c in sent[:2]] == ["volume", "media"], sent
+    assert sent[0][1] == backends.DEFAULT_CAST_VOLUME, "a speaker is the one thing a level applies to"
     assert sent[1][1:] == ("http://192.0.2.10:8010/fajr.wav", "audio/wav", "BUFFERED"), sent
     assert "quit" in sent and "disconnect" in sent, "the connection was left lying around"
 
@@ -181,6 +183,52 @@ def test_a_speaker_that_never_says_playing_is_reported_as_unproven(caplog):
     assert "never reported playing fajr.wav" in caplog.text
     assert "did not finish" not in caplog.text
 
+
+
+def test_a_computer_output_is_never_handed_a_level(tmp_path, monkeypatch, caplog):
+    """pc_speakers is this machine's own speaker, so neither the profile's `volume:`
+    nor an event's override may reach it. And a profile that wrote the knob anyway
+    is told so once, when the output is built, rather than at the 5 am it would
+    otherwise have surfaced."""
+    seen = []
+    monkeypatch.setattr(backends.localplay, "play_file",
+                        lambda path, player=None: seen.append(path.name))
+    with caplog.at_level("WARNING"):
+        b = PcSpeakersBackend(OutputConfig(name="parlour", kind="pc_speakers", volume=0.2))
+    assert "parlour" in caplog.text and "volume" in caplog.text and "0.2" in caplog.text
+    clip = tmp_path / "fajr.mp3"
+    clip.write_bytes(b"ID3")
+    b.play([clip], 0.9)          # an event's level, aimed at a computer: it goes to the speaker as-is
+    assert seen == ["fajr.mp3"], "playback still happens, at the machine's own level"
+
+
+def test_the_box_is_told_what_to_play_and_nothing_about_its_volume(tmp_path, monkeypatch):
+    """What the daemon puts on the wire for a box is media and nothing else. A box
+    is somebody's computer, and a request that also moved its volume would be
+    reaching into a room that is not ours."""
+    bodies = []
+
+    class Resp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def capture(req, timeout=None):
+        bodies.append(req.data)
+        return Resp()
+
+    monkeypatch.setattr(backends.urllib.request, "urlopen", capture)
+    clip = tmp_path / "fajr.mp3"
+    clip.write_bytes(b"ID3")
+    b = LanBoxBackend(OutputConfig(name="attic-pi", kind="lan_box",
+                                   host="192.0.2.156", volume=0.3))
+    b.play([clip], 0.9)
+    assert len(bodies) == 1, bodies
+    assert b"files" in bodies[0] and b"volume" not in bodies[0], bodies[0]
 
 
 def device(name, group=False, **extra):
