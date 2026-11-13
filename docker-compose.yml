@@ -14,7 +14,7 @@
 services:
   muezzin:
     build: .
-    image: muezzin:0.1.0
+    image: muezzin:0.1.1
     network_mode: host            # required for speaker discovery
     volumes:
       - ./config:/app/config      # your muezzin.yaml lives here
@@ -33,7 +33,7 @@ services:
   # 172.17.0.2, which your speaker has no route to, and discovery never runs.
   #
   # muezzin-lookup-only:
-  #   image: muezzin:0.1.0
+  #   image: muezzin:0.1.1
   #   ports:
   #     - "8020:8020"
   #   volumes:
