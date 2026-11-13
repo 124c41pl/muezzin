@@ -4,12 +4,14 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import logging
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
 
-from . import __version__, calc
+from . import __version__, calc, places, yamledit
 from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, OutputConfig,
                      Profile, load_profile, uses_starter_location, valid_host)
 
@@ -167,7 +169,8 @@ def starter_warnings(profile: Profile) -> list[str]:
     if uses_starter_location(profile.location):
         notes.append(f"location is still the starter's placeholder "
                      f"({STARTER_LATITUDE}, {STARTER_LONGITUDE}, {STARTER_TIMEZONE}): "
-                     f"every time here is New York's until those three lines change")
+                     f"every time here is New York's until those three lines change "
+                     f"(`muezzin where <city> --write` writes a city centre into them)")
     if not profile.outputs:
         notes.append("no speakers configured: `muezzin devices` shows what is on the "
                      "network and the panel adds one (or write an outputs: entry). An "
@@ -221,6 +224,90 @@ def cmd_methods() -> int:
         extra = "  jafari-midnight" if p.midnight_from_fajr else ""
         print(f"{key:<{width}}  fajr {p.fajr_angle} deg   {isha:<20}  {p.label}{extra}")
     print("\nOverride any single value in the profile's `method:` block; the preset is a starting point.")
+    return 0
+
+
+def cmd_where(city: str | None, config: Path, write: bool) -> int:
+    """Look up the coordinates and the civil clock behind a city name.
+
+    This is the first step of a profile, so it is also the first thing worth
+    getting right on purpose rather than by default: the starter's placeholder
+    location is a real city's coordinates, and a timetable computed from them
+    looks exactly as plausible as yours.
+    """
+    if not city:
+        print(f"`muezzin where <city>` prints the coordinates and time zone behind a city "
+              f"name, offline, from a table of {len(places.PLACES)} city centres.")
+        print("Names are matched without case, and the region is optional: `orlando` and "
+              "`london ontario` both work. Two cities share a name, so `london` asks you "
+              "which one instead of choosing for you.")
+        print("A time zone only labels the clock. Orlando, Florida and Erie, Pennsylvania "
+              "are both America/New_York, and their fajr and maghrib land at different "
+              "clock times because the sun sits at a different angle over each of them.")
+        return 0
+
+    hits = places.find(city)
+    if not hits:
+        stem = city.strip().casefold()[:4]
+        near = [p.label for p in places.PLACES if stem in p.label.casefold()]
+        print(f"no city centre called {city!r} in the table"
+              + (f"; closest: {', '.join(near[:6])}" if near else ""), file=sys.stderr)
+        print("That is fine: write your own latitude, longitude and timezone into the "
+              "profile. This table is a starting point, not an index of the world.",
+              file=sys.stderr)
+        return 2
+    if len(hits) > 1:
+        print(f"{city!r} matches more than one city, and picking one silently would put "
+              "your times somewhere else entirely:", file=sys.stderr)
+        for place in hits:
+            print(f"  muezzin where \"{place.label}\"", file=sys.stderr)
+        return 2
+
+    place = hits[0]
+    print(f"{place.label}:  latitude {place.latitude}, longitude {place.longitude}, "
+          f"timezone {place.timezone}")
+    print("# the coordinates move the times; the time zone only names the clock they land on")
+    if not write:
+        print(f"# to put those three lines into {config}: "
+              f"muezzin where --write \"{place.label}\"")
+        return 0
+
+    if not config.exists():
+        print(f"{config} not found: run `muezzin init` first, or name the profile with -c",
+              file=sys.stderr)
+        return 2
+    original = config.read_bytes()
+    text = original.decode("utf-8")
+    try:
+        edited = yamledit.set_in_block(text, "location", place.as_config())
+    except ValueError as exc:
+        print(f"{config}: {exc}", file=sys.stderr)
+        return 2
+    # Same rule as the panel: the file is only replaced once the result is known
+    # to load. A location line that does not parse is worse than no new location.
+    fd, name = tempfile.mkstemp(dir=str(config.parent or "."),
+                                prefix=config.name + ".", suffix=".tmp")
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(edited)
+        try:
+            probe = load_profile(tmp)
+        except (KeyError, ValueError, TypeError, yaml.YAMLError) as exc:
+            print(f"not writing {config}: the result would not load. {exc}", file=sys.stderr)
+            return 2
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    # A profile checked out on Windows uses CRLF; keep it that way so this is one
+    # changed line in a diff instead of the whole file.
+    data = edited.replace("\r\n", "\n").replace("\n", "\r\n") if b"\r\n" in original else edited
+    config.write_bytes(data.encode("utf-8"))
+    print(f"# wrote that to {config}")
+    if uses_starter_location(probe.location):
+        print("# note: this is the same city the starter profile guesses, so the page will "
+              "still say the location was never chosen. Put your own street's numbers in "
+              "when you want the times for where you actually stand.")
     return 0
 
 
@@ -445,6 +532,13 @@ def main(argv=None) -> int:
 
     sub.add_parser("methods", help="list calculation presets and their angles")
 
+    p = sub.add_parser("where", help="look up a city's coordinates and time zone, offline")
+    add_config(p)
+    p.add_argument("city", nargs="?", help='city name: "orlando", "london ontario", "qom"')
+    p.add_argument("--write", action="store_true",
+                   help="put the answer into the profile's location: block, instead of "
+                        "only printing it")
+
     p = sub.add_parser("next", help="show the next events the daemon will fire, and to what")
     add_config(p)
     p.add_argument("--days", type=int, default=2)
@@ -502,11 +596,14 @@ def main(argv=None) -> int:
         (args.config.parent / "media").mkdir(parents=True, exist_ok=True)
         args.config.write_text(STARTER, encoding="utf-8")
         print(f"wrote {args.config} (and a media/ directory - drop your adhan files in it)")
-        print("no speakers are configured: set the three lines under `location` to where "
-              "you are, then run `muezzin devices` and add one from the panel")
+        print("no speakers are configured: run `muezzin where <city> --write` to say where "
+              "you are, then `muezzin devices` to see what is on the network and add a "
+              "speaker from the panel")
         return 0
     if args.cmd == "methods":
         return cmd_methods()
+    if args.cmd == "where":
+        return cmd_where(args.city, args.config, args.write)
     if args.cmd == "devices":
         return cmd_devices(args.timeout)
     if args.cmd == "box":
