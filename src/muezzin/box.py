@@ -1,13 +1,14 @@
 """muezzin box: the player that runs on a Raspberry Pi (or a second PC).
 
-The Windows/Linux daemon decides *when* and *what*; a box decides only *where the
-sound comes out*. That split is deliberate: it is the difference between this and
-Smart Azan, where the Pi also picks the calculation method, so a family whose
-method the box does not offer simply cannot use the Pi at all.
+The machine running the daemon decides *when* and *what*; a box decides only
+*where the sound comes out*. That split is deliberate: a player that also computes
+its own times has to support your calculation, and a player built from a fixed list
+of named methods stops at that list. Here the box never computes anything, so any
+method the daemon can express plays on it.
 
 Wire protocol (plain HTTP + JSON, no auth, LAN only):
 
-    GET  /ping            -> "Pong"                        (like Smart Azan's box)
+    GET  /ping            -> "Pong"
     GET  /status          -> {"name":..., "player":..., "last":...}
     POST /play            -> {"urls": ["http://.../fajr.mp3"],
                               "files": {"name.mp3": "<base64>"},
@@ -21,8 +22,9 @@ refused and you use `files` instead. `volume` is recorded and logged, not
 applied - the level comes from the box's own player settings.
 
 The box announces itself with mDNS as _muezzin._tcp so `muezzin devices` finds it
-- the same trick Smart Azan uses with _smartazan._tcp, but with our own service
-type so the two do not collide.
+without anyone typing an address. That service type is our own, which is also the
+rule for who may be driven: muezzin sends a recording to a device that advertises
+this protocol, and to nothing else.
 """
 from __future__ import annotations
 
@@ -176,9 +178,7 @@ class Box:
                 self.wfile.write(payload)
 
             def do_GET(self):
-                if self.path in ("/ping", "/api/Settings/ping"):
-                    # /api/Settings/ping answers too so a Smart Azan style scanner gets a
-                    # useful reply instead of a 404 it cannot read.
+                if self.path == "/ping":
                     self._send(200, "Pong")
                 elif self.path == "/status":
                     self._send(200, json.dumps({"name": box.name, "player": box.player_name,

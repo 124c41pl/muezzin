@@ -1,6 +1,7 @@
 """Scratch, read-only: enumerate every mDNS service type visible on this LAN, then
-dump the instances for the interesting ones. Used to learn what the Smart Azan Pi
-box advertises so muezzin can speak to it. Makes no writes to any device."""
+dump the instances for the interesting ones. Used to learn what a speaker box on
+this network advertises, and what a box has to advertise to be found at all. Makes
+no writes to any device."""
 import re
 import socket
 import sys
