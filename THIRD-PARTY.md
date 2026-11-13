@@ -48,6 +48,26 @@ exists precisely because the two implementations should agree without sharing
 code, and the licence permits using it that way. If you strip `dev` out of a build
 — which is what a release does — LGPL 3.0 leaves the picture entirely.
 
+## Data other people made: the map and the place names
+
+| what | who makes it | what their terms ask | what muezzin does |
+| --- | --- | --- | --- |
+| the squares in the page's map | [OpenStreetMap](https://www.openstreetmap.org/copyright) tile servers | the map data is ODbL 1.0, that tile style is CC BY-SA 4.0, and both ask to be credited | shown only when a profile sets `map_tiles: osm`; the daemon fetches one square per request, checks the bytes are a PNG, keeps it under `muezzin-tiles/`, and prints the credit under the map |
+| the places `muezzin where --online` answers with | [Nominatim](https://nominatim.org/), on the same OpenStreetMap data | the same credit, an identifying User-Agent, and no more than roughly one request a second | one request per search, no key and no account; nothing is stored, logged, or repeated back |
+
+One vendor for both, on purpose. OpenStreetMap asks for a name in a header; a
+commercial map API asks for a key, an account and a card. A program that cannot tell
+you where you live until you have registered with somebody has made its own problem
+into the user's, and a key in a profile is also a secret to leak.
+
+The credit is the one line the page carries — "© OpenStreetMap contributors", under
+the map, which is the wording their guidance asks for and covers the data and the
+tiles together. Showing a map is not redistributing a database: nothing here extracts
+the map into a file anyone can mine, and the squares cached on disk are the ones this
+house already looked at, one fetch per square, which is what the tile policy means by
+moderate use. Someone who wants the map gone sets `map_tiles: off` and the program
+asks nothing of a stranger again.
+
 ## Also true, and worth saying out loud
 
 * The installer someone unpacked in this directory, the binaries inside it and the
@@ -58,10 +78,15 @@ code, and the licence permits using it that way. If you strip `dev` out of a bui
   someone else's program, and are not published here. Describing a program you are
   allowed to run is not the same as shipping it; and muezzin's own code was written
   from published astronomy, not from anyone's binaries.
-* Nothing is downloaded from the internet at runtime. The web page is one file
-  served by the daemon, with no CDN, no web fonts and no analytics; the only URLs
-  the program ever fetches are the ones in your own profile, and only if you put
-  them there.
+* Nothing is downloaded to make the program run. The web page is one file served by
+  the daemon, with no CDN, no web fonts and no analytics; the times are computed on
+  your own machine from your own numbers; and the only URLs muezzin fetches *as
+  sound* are the ones in your own profile, and only because you put them there. Two
+  things can reach out, and both are choices rather than defaults, each named where
+  you make it: finding a place by its words (step 1, and the find-it box on the page)
+  sends the words you typed once, to Nominatim, and keeps nothing; the map on the
+  page (`map_tiles: osm`) has the daemon fetch the squares it shows, once each, into
+  `muezzin-tiles/`. A profile with neither asks nothing of anybody.
 * The Arabic on the page is a handful of prayer, month and weekday names, and the
   geometry is girih-style tiling drawn in CSS. There is no figurative imagery and
   no religious artwork, so nothing here is a depiction anyone has to be careful

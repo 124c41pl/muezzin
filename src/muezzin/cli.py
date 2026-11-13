@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from . import __version__, calc, localplay, places, yamledit
+from . import __version__, calc, geocode, localplay, places, yamledit
 from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, OutputConfig,
                      Profile, load_profile, uses_starter_location, valid_host)
 
@@ -226,14 +226,27 @@ def cmd_methods() -> int:
     return 0
 
 
-def cmd_where(city: str | None, config: Path, write: bool) -> int:
-    """Look up the coordinates and the civil clock behind a city name.
+def cmd_where(city: str | None, config: Path, write: bool, online: bool = False,
+              coords: str | None = None, choose: int = 0) -> int:
+    """Look up the coordinates and the civil clock behind a place.
 
     This is the first step of a profile, so it is also the first thing worth
     getting right on purpose rather than by default: the starter's placeholder
     location is a real city's coordinates, and a timetable computed from them
     looks exactly as plausible as yours.
+
+    Three doors, in the order it is worth trying them. The table offline answers for a
+    city and costs nothing. `--coords` answers for numbers you already have, also
+    offline, by naming the cities nearest to them - which is how a transposed coordinate
+    gets caught before it quietly becomes somebody else's timetable. `--online` asks
+    OpenStreetMap, which answers for a street rather than only a city, at the cost of
+    sending the words someone typed to a machine that is not on this network; so it is
+    asked for by name, never reached for on its own.
     """
+    if coords:
+        return _where_coords(coords, config, write, online)
+    if online:
+        return _where_online(city, config, write, choose)
     if not city:
         print(f"`muezzin where <city>` prints the coordinates and time zone behind a city "
               f"name, offline, from a table of {len(places.PLACES)} city centres.")
@@ -243,6 +256,10 @@ def cmd_where(city: str | None, config: Path, write: bool) -> int:
         print("A time zone only labels the clock. Orlando, Florida and Erie, Pennsylvania "
               "are both America/New_York, and their fajr and maghrib land at different "
               "clock times because the sun sits at a different angle over each of them.")
+        print("`--coords 42.1292,-80.0851` says what a set of numbers means by naming the "
+              "cities nearest to it, still offline. `--online` asks OpenStreetMap for a "
+              "street rather than a city: the only request this program makes away from "
+              "your own network, needs no account and no key, and keeps nothing.")
         return 0
 
     hits = places.find(city)
@@ -271,6 +288,17 @@ def cmd_where(city: str | None, config: Path, write: bool) -> int:
               f"muezzin where --write \"{place.label}\"")
         return 0
 
+    return _write_location(config, place.as_config())
+
+
+def _write_location(config: Path, values: dict) -> int:
+    """Put the three location lines into a profile, once they are known to load.
+
+    Only that block's lines are rewritten, because the comments in a profile are part of
+    the profile: they are what tells someone six months later that the time zone only
+    labels the clock. And the file is only replaced after the result has been loaded,
+    because a location line that does not parse is worse than no new location at all.
+    """
     if not config.exists():
         print(f"{config} not found: run `muezzin init` first, or name the profile with -c",
               file=sys.stderr)
@@ -278,12 +306,10 @@ def cmd_where(city: str | None, config: Path, write: bool) -> int:
     original = config.read_bytes()
     text = original.decode("utf-8")
     try:
-        edited = yamledit.set_in_block(text, "location", place.as_config())
+        edited = yamledit.set_in_block(text, "location", values)
     except ValueError as exc:
         print(f"{config}: {exc}", file=sys.stderr)
         return 2
-    # Same rule as the panel: the file is only replaced once the result is known
-    # to load. A location line that does not parse is worse than no new location.
     fd, name = tempfile.mkstemp(dir=str(config.parent or "."),
                                 prefix=config.name + ".", suffix=".tmp")
     tmp = Path(name)
@@ -308,6 +334,144 @@ def cmd_where(city: str | None, config: Path, write: bool) -> int:
               "still say the location was never chosen. Put your own street's numbers in "
               "when you want the times for where you actually stand.")
     return 0
+
+
+def _where_online(text: str | None, config: Path, write: bool, choose: int) -> int:
+    """Ask OpenStreetMap's Nominatim, and be exact about what that asked for.
+
+    A lookup answers for a street, which the offline table cannot. What it costs is that
+    the words someone typed - often their own street - travel to a machine that is not on
+    their network. That is worth doing knowingly and not by default, so the price is
+    printed before the question is sent, and nothing about the question is kept here.
+    """
+    if not text:
+        print('`muezzin where --online "1200 Peach Street, Erie, PA"` asks OpenStreetMap '
+              "for a place, which answers for a street and not only for a city in the "
+              "offline table.", file=sys.stderr)
+        print("No account and no key are needed. The words you type go to them; nothing is "
+              "saved here about the question, and the request carries only the name of the "
+              "program that is asking.")
+        return 2
+    print(f"# asking {geocode.provider()}: the words you typed leave this network, and "
+          "nothing here keeps a record of them")
+    try:
+        hits = geocode.search(text)
+    except geocode.GeocodeError as exc:
+        # The message says what went wrong without repeating the place asked about,
+        # because this line ends up in terminals and bug reports.
+        print(f"the lookup did not answer: {exc}", file=sys.stderr)
+        return 2
+    if not hits:
+        print(f"{geocode.provider()} found nothing called {text!r}. A street with its "
+              "number, with the city after it, usually answers.", file=sys.stderr)
+        return 2
+    if len(hits) > 1 and not choose:
+        print(f"{text!r} could be more than one place, and choosing between two of them "
+              "is not this program's call to make:", file=sys.stderr)
+        for number, hit in enumerate(hits, 1):
+            clock = hit.timezone or f"no time zone: {hit.zone_note}"
+            print(f"  {number}) {hit.label}   {hit.latitude}, {hit.longitude}   {clock}",
+                  file=sys.stderr)
+        print(f'# then: muezzin where --online --choose N --write "{text}"', file=sys.stderr)
+        return 2
+    if choose:
+        if not 1 <= choose <= len(hits):
+            print(f"--choose {choose} is not one of the {len(hits)} answers it gave",
+                  file=sys.stderr)
+            return 2
+        hit = hits[choose - 1]
+    else:
+        hit = hits[0]
+    print(f"{hit.label}:  latitude {hit.latitude}, longitude {hit.longitude}")
+    print(f"# {hit.zone_note}")
+    if hit.timezone:
+        print(f"# timezone {hit.timezone}")
+    print("# the coordinates move the times; the time zone only names the clock they land on")
+    if not write:
+        picked = f"--choose {choose} " if choose else ""
+        print(f"# to put those three lines into {config}: "
+              f"muezzin where --online {picked}--write \"{text}\"")
+        return 0
+    try:
+        values = hit.as_config()
+    except geocode.GeocodeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return _write_location(config, values)
+
+
+def _two_numbers(text: str) -> tuple[float, float]:
+    """Read `42.1292,-80.0851`, the way a map page or a phone shows it, and nothing else.
+
+    Out-of-range values are refused rather than clamped: a latitude of 91 is a copy-paste
+    mistake, and a timetable built from a clamped 90 would be wrong in a way that is very
+    hard to notice.
+    """
+    parts = [part.strip() for part in text.replace(";", ",").split(",")]
+    if len(parts) != 2 or not all(parts):
+        raise ValueError(f"{text!r} is not two numbers with a comma between them")
+    try:
+        latitude, longitude = (float(part) for part in parts)
+    except ValueError:
+        raise ValueError(f"{text!r} is not two numbers") from None
+    if not (abs(latitude) <= 90.0 and abs(longitude) <= 180.0):
+        raise ValueError("latitude goes from -90 to 90 and longitude from -180 to 180")
+    return latitude, longitude
+
+
+def _where_coords(coords: str, config: Path, write: bool, online: bool) -> int:
+    """Say what a set of numbers is near, with no request to anybody unless asked.
+
+    The mistake this exists for: a coordinate copied from a form, a phone, or a different
+    city's page, which loads into a profile and produces a timetable that looks perfectly
+    normal for the wrong place. Naming the nearest cities and how far away they are makes
+    it obvious at the moment it is typed.
+    """
+    try:
+        latitude, longitude = _two_numbers(coords)
+    except ValueError as exc:
+        print(f"{exc}. Write them as muezzin where --coords \"42.1292,-80.0851\", north "
+              "positive and east positive.", file=sys.stderr)
+        return 2
+    print(f"those numbers are latitude {latitude}, longitude {longitude}")
+    near = geocode.nearest_named(latitude, longitude, 3)
+    for row in near:
+        print(f"  {row['name']}:  {row['km']:,.0f} km away, bearing {row['bearing']:.0f} "
+              "degrees from true north")
+    if near and near[0]["km"] > geocode.FAR_KM:
+        print(f"# that is a long way from anywhere muezzin can name: the nearest city in "
+              f"the table is {near[0]['name']}, {near[0]['km']:,.0f} km away. If you did "
+              "not mean somewhere that remote, a number has been transposed or copied from "
+              "the wrong place.", file=sys.stderr)
+    zone = None
+    why = "no city in the table is near enough to lend its clock"
+    if near and near[0]["km"] <= geocode.ZONE_NEAR_KM:
+        zone = near[0]["timezone"]
+        why = f"borrowed from {near[0]['name']}, {near[0]['km']:,.0f} km away"
+    if online:
+        print(f"# asking {geocode.provider()} what it calls those numbers")
+        try:
+            hits = geocode.reverse(latitude, longitude)
+        except geocode.GeocodeError as exc:
+            print(f"the map did not answer: {exc}", file=sys.stderr)
+            hits = []
+        for hit in hits[:3]:
+            print(f"  the map calls it: {hit.label}")
+        if hits and hits[0].timezone:
+            zone, why = hits[0].timezone, "the lookup named this zone"
+    if not write:
+        print(f"# to put those three lines into {config}: muezzin where --coords "
+              f"\"{latitude},{longitude}\" --write"
+              + ("" if online else "   # add --online to ask the map what is there"))
+        return 0
+    if not zone:
+        print("no time zone could be agreed for those numbers: no city in the table is "
+              "nearby and the map did not name one. Write the timezone line yourself; the "
+              "two coordinates are good.", file=sys.stderr)
+        return 2
+    print(f"# timezone {zone}  # {why}")
+    return _write_location(config, {"latitude": latitude, "longitude": longitude,
+                                    "timezone": zone})
 
 
 def cmd_devices(timeout: float) -> int:
@@ -533,12 +697,21 @@ def main(argv=None) -> int:
 
     sub.add_parser("methods", help="list calculation presets and their angles")
 
-    p = sub.add_parser("where", help="look up a city's coordinates and time zone, offline")
+    p = sub.add_parser("where", help="look up the coordinates and time zone for a place")
     add_config(p)
     p.add_argument("city", nargs="?", help='city name: "orlando", "london ontario", "qom"')
     p.add_argument("--write", action="store_true",
                    help="put the answer into the profile's location: block, instead of "
                         "only printing it")
+    p.add_argument("--coords", metavar="LAT,LON",
+                   help="say what a set of numbers means, nearest known city first, so a "
+                        "coordinate copied from somewhere can be checked")
+    p.add_argument("--online", action="store_true",
+                   help="ask OpenStreetMap's Nominatim: answers for a street rather than "
+                        "only a city, at the cost that the words you typed leave this "
+                        "network. Nothing is kept, nothing needs an account or a key")
+    p.add_argument("--choose", type=int, default=0, metavar="N",
+                   help="take answer number N when the lookup answers more than one place")
 
     p = sub.add_parser("next", help="show the next events the daemon will fire, and to what")
     add_config(p)
@@ -606,7 +779,8 @@ def main(argv=None) -> int:
     if args.cmd == "methods":
         return cmd_methods()
     if args.cmd == "where":
-        return cmd_where(args.city, args.config, args.write)
+        return cmd_where(args.city, args.config, args.write, args.online,
+                         args.coords, args.choose)
     if args.cmd == "devices":
         return cmd_devices(args.timeout)
     if args.cmd == "box":

@@ -202,6 +202,45 @@ one of those and nothing else. The way to get sound out of a second machine is t
 run `muezzin box` on it, not to point muezzin at a device that takes orders from
 some other program.
 
+## Finding out where you are
+
+`muezzin where` answers three questions, and only one of them involves anybody else.
+The plain form is arithmetic against a table of city centres that ships in
+`places.py`: offline, instant, and close enough to get a household's first times
+roughly right. `--coords 42.1292,-80.0851` skips the name and says what those numbers
+are near, which is the quickest way to notice a transposed digit: it prints the
+nearest names with their distance and the compass bearing, and when the nearest one
+is hundreds of kilometres off the answer says so in a sentence rather than computing
+a beautiful timetable for the South Atlantic.
+
+`--online` is the one request in this program that goes to a machine outside the
+network: a search at Nominatim, the address lookup the OpenStreetMap project runs. It
+is opt-in per invocation, and the page has the same two halves — checking numbers
+asks nobody anything, while **find it** names the machine it is about to ask before it
+asks. The request carries a User-Agent that identifies this program, because their
+usage policy asks an application to say who it is and to stay near one request a
+second; nothing of the query is cached, logged, or repeated back if the answer is
+bad. No key is involved anywhere, which is the reason both the lookup and the map are
+OpenStreetMap rather than an API somebody would have to register a card for. Someone
+running their own instance points at it with `MUEZZIN_GEOCODE`, and `MUEZZIN_CONTACT`
+adds a URL of theirs to that name, if they would rather the operator of the lookup be
+able to reach them.
+
+Coordinates do not come with a time zone attached, from anybody. `timezone:` is a
+separate line and a separate hazard, because a name this machine's tz database does
+not have is a profile that will not load, so it is settled in three steps: take the
+zone in the lookup's own extra tags if this machine knows that name; otherwise borrow
+the zone of the nearest city in the table, within 150 km, and print which city was
+borrowed; otherwise say plainly that there is no honest guess and let the person type
+the name. The panel will not write a zone `ZoneInfo` cannot open.
+
+The map on the page is `map_tiles: osm`, off by default. The daemon fetches each
+256-pixel square once, keeps it under `muezzin-tiles/` beside the profile, checks that
+the bytes really are a PNG before serving them from its own origin, and prints
+"© OpenStreetMap contributors" under the map. The browser never talks to the tile
+server, so the page is still only ever a page from this address — and a grey square
+costs nothing, because the times come out of the engine and not out of a map.
+
 ## The calculation is data, not an enum
 
 `muezzin methods` prints the built-in starting points, and the table of them — with
@@ -670,7 +709,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 308 tests
+pytest -q                        # 359 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and

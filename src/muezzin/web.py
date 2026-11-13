@@ -30,7 +30,7 @@ from urllib.parse import parse_qs, urlparse
 
 import yaml
 
-from . import __version__, calc, hijri, net, yamledit
+from . import __version__, calc, geocode, hijri, net, yamledit
 from .backends import scan_speakers
 from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, load_profile,
                      uses_starter_location, valid_host)
@@ -132,6 +132,25 @@ def _fmt(hours) -> str:
     return f"{h % 24:02d}:{m:02d}{day}"
 
 
+def _numbers(payload: dict) -> tuple[float, float]:
+    """Latitude and longitude out of a request, or a reason why there are none.
+
+    Bounded and rounded here, once, because these come from a browser and from a text
+    box a person is typing into. A latitude of 91 is a slip of a finger, and letting it
+    through would produce a timetable that looks normal for a place that does not exist.
+    """
+    try:
+        latitude = float(payload["latitude"])
+        longitude = float(payload["longitude"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError('give latitude and longitude as numbers, like "latitude": '
+                         '42.1292, "longitude": -80.0851') from None
+    if not (abs(latitude) <= 90.0 and abs(longitude) <= 180.0):
+        raise ValueError("latitude runs -90 to 90 and longitude -180 to 180, north and "
+                         "east being positive")
+    return round(latitude, 6), round(longitude, 6)
+
+
 class WebPanel:
     def __init__(self, runner: Runner, port: int = 8020, allow_edit: bool = True,
                  allow_hosts: tuple[str, ...] = ()):
@@ -217,10 +236,11 @@ class WebPanel:
         if uses_starter_location(p.location):
             notes.append(f"The location is still the starter's placeholder "
                          f"({STARTER_LATITUDE}, {STARTER_LONGITUDE}, {STARTER_TIMEZONE}), so "
-                         f"every time on this page is New York's until you change it in the "
-                         f"profile below. A time zone labels the clock; the coordinates are "
-                         f"what move the times. On this machine, "
-                         f"`muezzin where <city> --write` fills those three lines in.")
+                         f"every time on this page is New York's until you set it in the "
+                         f"Where section below. A time zone labels the clock; the "
+                         f"coordinates are what move the times. Checking numbers there "
+                         f"asks nobody anything; finding a place by its words asks "
+                         f"{geocode.provider()}, and only when you press find-it.")
         if not p.outputs:
             notes.append("No speakers are configured yet, so nothing can play: look again "
                          "below and use a speaker, or write an outputs entry in the profile.")
@@ -280,8 +300,14 @@ class WebPanel:
             # numbers, and the editor below shows them.
             "location": {"latitude": round(p.location.latitude, 2),
                          "longitude": round(p.location.longitude, 2),
-
                          "timezone": p.location.timezone, "elevation_m": p.location.elevation_m},
+            # What the page may show that other people made, and who made it. off means
+            # no map appears and no tile request leaves the house at all.
+            "map_tiles": p.map_tiles,
+            "map_credit": geocode.MAP_CREDIT,
+            # Named on the page before any asking happens, so a person knows whose door
+            # they are about to knock on.
+            "geocoder": geocode.provider(),
             "method": {"label": p.params.label, "preset": preset,
                        "shia": p.params.midnight_from_fajr,
                        "fajr_angle": p.params.fajr_angle,
@@ -491,6 +517,132 @@ class WebPanel:
         saved["hijri_offset"] = days
         saved["today"] = hijri.day_info(self._local_today(), days)
         return saved
+
+    def near(self, payload: dict) -> dict:
+        """What a set of numbers means, worked out from the table this program carries.
+
+        No request leaves the machine. A person checking that they typed the right
+        coordinates should not have to ask a stranger whether the numbers look right, and
+        should be able to check when the internet is out.
+        """
+        latitude, longitude = _numbers(payload)
+        near = geocode.nearest_named(latitude, longitude, 4)
+        answer = {"latitude": latitude, "longitude": longitude, "near": near}
+        if near and near[0]["km"] <= geocode.ZONE_NEAR_KM:
+            answer["timezone"] = near[0]["timezone"]
+            answer["zone_note"] = (f"the clock would be {near[0]['name']}'s, "
+                                   f"{near[0]['km']:g} km away")
+        else:
+            answer["zone_note"] = ("no city muezzin knows is near enough to lend its "
+                                   "clock: use find-it, or write the timezone line "
+                                   "yourself")
+        if near and near[0]["km"] > geocode.FAR_KM:
+            answer["far_note"] = (f"that is {near[0]['km']:,.0f} km from "
+                                  f"{near[0]['name']}, the nearest city in the table. If "
+                                  "you did not mean somewhere that remote, a number has "
+                                  "been transposed or copied from the wrong place.")
+        return answer
+
+    def find(self, payload: dict) -> dict:
+        """Ask the lookup - the one request in this program that leaves the network.
+
+        The page reaches here only from a button someone presses, and the button says who
+        will be asked first. What was typed is not stored, not logged, and not quoted back
+        if the answer is bad.
+        """
+        text = str(payload.get("q") or "").strip()
+        if text:
+            hits = geocode.search(text)
+        elif payload.get("latitude") is not None:
+            latitude, longitude = _numbers(payload)
+            hits = geocode.reverse(latitude, longitude)
+        else:
+            raise ValueError("type a place, or give latitude and longitude")
+        return {"provider": geocode.provider(), "credit": geocode.MAP_CREDIT,
+                "hits": [{"label": hit.label, "latitude": hit.latitude,
+                          "longitude": hit.longitude, "timezone": hit.timezone,
+                          "note": hit.zone_note} for hit in hits]}
+
+    def set_location(self, payload: dict) -> dict:
+        """Write the three location lines, once each of them is known to mean something.
+
+        The coordinates move the times and the time zone only names the clock they land
+        on, so all three are checked before anything is written. A zone name this machine
+        does not have is not a slightly wrong guess but a profile that will not load, and
+        finding that out at the next restart is the worst time to learn it.
+        """
+        latitude, longitude = _numbers(payload)
+        zone = str(payload.get("timezone") or "").strip()
+        if not zone:
+            raise ValueError("the coordinates need a time zone with them: they decide "
+                             "where in the day those times land on the clock")
+        if not geocode.zone_known(zone):
+            raise ValueError(f"this machine does not know a time zone called {zone!r}, so "
+                             "the profile would not load. Use the exact name your area "
+                             "uses, like America/New_York")
+        with self._editing() as text:
+            saved = self.save_config(yamledit.set_in_block(text, "location", {
+                "latitude": latitude, "longitude": longitude, "timezone": zone}))
+        location = self.runner.profile.location
+        saved["location"] = {"latitude": round(location.latitude, 2),
+                             "longitude": round(location.longitude, 2),
+                             "timezone": location.timezone}
+        saved["notices"] = self.notices()
+        log.info("location set to %.6f, %.6f (%s)", location.latitude, location.longitude,
+                 location.timezone)
+        return saved
+
+    def _tile_dir(self) -> Path:
+        """Where the map squares are kept, next to the profile that asked for them."""
+        profile = self.runner.profile
+        base = profile.path.parent if profile.path else Path(profile.media_dir)
+        return base / "muezzin-tiles"
+
+    def tile(self, zoom, x, y) -> bytes:
+        """One square of the map, for a profile that asked for a map.
+
+        The daemon fetches it rather than the browser, for three reasons: a LAN page then
+        never makes somebody's phone reach the internet on its own; the request carries
+        the name of this program, which is what the tile users' policy asks of an
+        application instead of a browser's default string; and each square is fetched once
+        for the house instead of once per screen. What comes back is checked to be a
+        picture before this origin serves it, so an error page or a hijacked answer does
+        not arrive at the browser looking like it came from here.
+        """
+        if self.runner.profile.map_tiles != "osm":
+            raise _Status(403, "this profile shows no map. If you want one, put "
+                               "map_tiles: osm in the profile - the page will then say "
+                               "whose map it is")
+        try:
+            zoom, x, y = int(zoom), int(x), int(y)
+        except (TypeError, ValueError):
+            raise _Status(400, "the map wants whole numbers for zoom and square") from None
+        try:
+            geocode.tile_url(zoom, x, y)      # checked before anything is asked for
+        except geocode.TileMissing as exc:
+            # A square that does not exist is the page's mistake, not the map server's
+            # silence, and the two deserve different statuses.
+            raise _Status(400, str(exc)) from None
+        try:
+            target = self._tile_dir() / str(zoom) / f"{x}-{y}.png"
+            if target.is_file():
+                return target.read_bytes()
+        except OSError:
+            pass                              # a cache that will not read is not fatal
+        try:
+            body = geocode.fetch_tile(zoom, x, y)
+        except geocode.GeocodeError as exc:
+            raise _Status(502, str(exc)) from None
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            scratch = target.with_name(f"{x}-{y}.writing")
+            scratch.write_bytes(body)
+            os.replace(scratch, target)       # never a half-written square on disk
+        except OSError as exc:
+            # The map is a courtesy; a read-only volume or a full disk should not cost
+            # anyone the picture they asked for right now.
+            log.info("the map square was not kept: %s", exc)
+        return body
 
     def _event_row(self, rows: list[dict], at: str, friday: bool) -> Optional[dict]:
         """The event entry that owns this prayer time.
@@ -1020,6 +1172,25 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 name = (parse_qs(urlparse(self.path).query).get("name") or [""])[0]
                 clip, content_type = self.panel.clip(name)
                 self._send_file(clip, content_type)
+            elif self.path.startswith("/api/near"):
+                # "What are these numbers near?" is a read, and an offline one: it works
+                # on a read-only panel, and it asks nobody anything.
+                query = parse_qs(urlparse(self.path).query)
+                self._json(self.panel.near({
+                    "latitude": (query.get("lat") or [""])[0],
+                    "longitude": (query.get("lon") or [""])[0]}))
+            elif self.path.startswith("/api/tile"):
+                # One square of a map this daemon fetched, on a profile that asked for a
+                # map. The browser never talks to the tile server itself: the page keeps
+                # being a page from this address and nothing else.
+                site = (self.headers.get("Sec-Fetch-Site") or "").casefold()
+                if site not in ("", "same-origin", "none"):
+                    self._json({"error": "map squares are only handed to this page"}, 403)
+                    return
+                query = parse_qs(urlparse(self.path).query)
+                self._write(self.panel.tile((query.get("z") or [""])[0],
+                                            (query.get("x") or [""])[0],
+                                            (query.get("y") or [""])[0]), "image/png")
             else:
                 self._json({"error": f"no such path: {self.path}"}, 404)
         except _Status as exc:
@@ -1027,6 +1198,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             # whose header is not audio. It has a status and a reason already, and
             # turning it into a 500 with a traceback in the log would hide both.
             self._json({"error": str(exc)}, exc.status)
+        except ValueError as exc:
+            # Coordinates that are not coordinates: the read routes never reach the
+            # write paths, so this is where their bad input gets a 400 with the reason
+            # instead of a 500 and a line in a log nobody reads.
+            self._fail(400, str(exc))
         except ConnectionError:
             pass  # the page went away mid-response, which is normal
         except Exception as exc:                                  # never kill the thread
@@ -1049,6 +1225,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             if not self._same_origin():
                 self._drain(MAX_UPLOAD)
                 self._json({"error": "this page only takes writes from its own origin"}, 403)
+                return
+            if self.path == "/api/geocode" and not self.panel.allow_edit:
+                # The one path that is allowed past the read-only gate, because it is
+                # not a change: it asks a question of a machine elsewhere and writes
+                # nothing here. A household running a locked panel should still be able
+                # to see what its coordinates mean, in the same way it can listen to a
+                # recording or look at a scanned speaker.
+                self._json(self.panel.find(self._body()))
                 return
             if not self.panel.allow_edit:
                 # Answered before any of the body is interpreted, but still read
@@ -1079,6 +1263,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self._json(self.panel.reload())
             elif self.path == "/api/method":
                 self._json(self.panel.set_method(body))
+            elif self.path == "/api/geocode":
+                # The one request this panel makes to a machine that is not on this
+                # network, and it happens only because someone pressed find-it.
+                self._json(self.panel.find(body))
+            elif self.path == "/api/location":
+                self._json(self.panel.set_location(body))
             elif self.path == "/api/hijri":
                 self._json(self.panel.set_hijri_offset(body.get("days", body.get("offset"))))
             elif self.path == "/api/audio":
@@ -1099,6 +1289,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._fail(400, str(exc))
         except RuntimeError as exc:            # busy testing, or a disabled output
             self._fail(409, str(exc))
+        except geocode.NeedsInternet as exc:
+            # The page asked this daemon to ask somebody further away, and that further
+            # away machine could not be reached at all.
+            self._fail(504, str(exc))
+        except geocode.GeocodeError as exc:
+            # Reached, but would not answer honestly: a redirect, an error status, a
+            # certificate this side could not verify. The reason is the whole message.
+            self._fail(502, str(exc))
         except ConnectionError:
             pass  # the page went away mid-response, which is normal
         except Exception as exc:
@@ -1177,7 +1375,7 @@ PAGE = """<!doctype html>
  textarea { width:100%; min-height:340px; background:#08110e; color:#dbe6df;
   border:1px solid var(--line); border-radius:8px; padding:12px;
   font:13px/1.45 ui-monospace,Consolas,monospace; tab-size:2 }
- select, input[type=file] { background:#0d1815; color:var(--fg); border:1px solid var(--line);
+ select, input[type=file], input[type=number], input[type=text] { background:#0d1815; color:var(--fg); border:1px solid var(--line);
   border-radius:6px; padding:5px 8px; font:inherit; max-width:100% }
  select:disabled, input:disabled { opacity:.45 }
  .row select { min-width:190px }
@@ -1196,6 +1394,20 @@ PAGE = """<!doctype html>
  .notice { color:var(--gold); background:#0d1815; border:1px solid var(--line);
   border-left:3px solid var(--gold); border-radius:8px; padding:9px 13px;
   margin:10px 0 0; font-size:13.5px; max-width:1200px }
+ .fine.warn { color:var(--bad) }
+ /* How a position gets shown: a diagram of bearings drawn here from the numbers,
+    which works with the network unplugged, and - only when the profile asked for
+    a map - squares of somebody else's map, fetched by the daemon and credited
+    where they appear. The dot is where the numbers are, not a picture of anything. */
+ .mapbox { position:relative; display:inline-block; margin-top:8px; border:1px solid var(--line) }
+ .mapbox img { float:left; width:256px; height:256px }
+ .mapbox:after { content:""; display:block; clear:both }
+ .spot { position:absolute; width:9px; height:9px; margin:-4px 0 0 -4px; border-radius:50%;
+  background:var(--gold); box-shadow:0 0 0 3px rgba(11,20,17,.8) }
+ .cities { display:inline-block; vertical-align:top; margin-left:14px }
+ .cities div { margin-bottom:5px }
+ #dial text { fill:var(--dim); font-size:9.5px }
+ #dial line, #dial circle { stroke-width:1 }
 </style></head><body>
 <header>
  <svg class="star" viewBox="0 0 32 32" aria-hidden="true">
@@ -1213,6 +1425,24 @@ PAGE = """<!doctype html>
  <section><h2>Next events</h2><table><thead><tr><th>when</th><th>event</th><th>speakers</th><th>media</th></tr></thead><tbody id="upcoming"></tbody></table></section>
  <section><h2>Outputs</h2><table><thead><tr><th>name</th><th>kind</th><th>target</th><th>on</th><th></th></tr></thead><tbody id="outputs"></tbody></table>
   <div class="row"><select id="media"></select><span class="tag" id="mediaurl"></span></div>
+ </section>
+ <section class="wide"><h2>Where</h2>
+  <div class="row"><label>latitude <input id="lat" type="number" step="any" size="10"></label>
+   <label>longitude <input id="lon" type="number" step="any" size="10"></label>
+   <label>time zone <input id="zone" type="text" size="18"></label>
+   <button id="check">check these numbers</button><button id="writewhere">write these</button></div>
+  <div id="where"></div>
+  <div class="row"><input id="place" type="text" size="32" placeholder="a town, a street, anything you would type into a map">
+   <button id="findit">find it</button></div>
+  <div id="found"></div>
+  <div class="fine">Checking numbers happens on this machine, against the town centres
+   muezzin carries, and asks nobody anything. Finding a place by its words sends what you
+   typed to <span id="geocoder"></span> - once, and only because you pressed find-it; it is
+   not kept, not written to the profile, not put in the log, and the times themselves never
+   ask anyone. A map is off unless the profile says <code>map_tiles: osm</code>; with it on,
+   the squares are fetched by the daemon and credited where they show, never by your
+   browser.</div>
+  <div id="map"></div>
  </section>
  <section><h2>Method</h2>
   <div class="row"><select id="preset"></select><select id="asr"></select><button id="applymethod">apply method</button></div>
@@ -1328,11 +1558,13 @@ function render(){
  $('#credit').innerHTML=`muezzin ${esc(st.version||'')} · MIT · `
   +(st.attribution?`written by ${esc(st.attribution)}, with an AI assistant`
                   :'written by whoever set this up, with an AI assistant');
- renderMethod();renderSound();renderFound();
+ renderMethod();renderSound();renderFound();renderWhere();
  syncYaml();
  $('#save').disabled=$('#reload').disabled=st.read_only;
  document.querySelectorAll('.switch,[data-test]').forEach(b=>b.disabled=st.read_only);
- ['#preset','#asr','#applymethod','#hijminus','#hijplus','#applysound','#upload','#file'].forEach(s=>{ $(s).disabled=st.read_only; });
+ // Checking numbers and finding a place stay live on a read-only panel: looking
+ // changes nothing. Only the buttons that write a line into the profile go dark.
+ ['#preset','#asr','#applymethod','#hijminus','#hijplus','#applysound','#upload','#file','#writewhere'].forEach(s=>{ $(s).disabled=st.read_only; });
 }
 // ---- the three editors ----------------------------------------------------
 //
@@ -1442,6 +1674,98 @@ async function uploadFile(){
  return j;
 }
 async function act(fn,after){ try{ await fn(); say('',''); if(after)await after(); await load(); }catch(e){ say(e.message,'err'); } }
+// The position, said three ways: the numbers themselves, the towns this machine
+// knows with the way each of them lies, and - only if the profile asked for a map -
+// squares of somebody else's map, credited where they appear. The diagram is drawn
+// from bearings and distances and needs no network at all, which is the point of
+// checking numbers before sending anything anywhere.
+let W=null, FH=[], MP=null, MZ=12, MAPTAG='', prefilled=false;
+function fillWhere(){
+ if(prefilled) return;
+ prefilled=true;
+ $('#lat').value=st.location.latitude;
+ $('#lon').value=st.location.longitude;
+ $('#zone').value=st.location.timezone;
+}
+function renderWhere(){
+ fillWhere();
+ $('#geocoder').textContent=st.geocoder||'';
+ showWhere(); showFound(); drawMap();
+}
+function dial(cities){
+ const c=78, r=58, s=156;
+ let g='<svg id="dial" viewBox="0 0 '+s+' '+s+'" width="'+s+'" height="'+s
+  +'" role="img" aria-label="which way the nearby towns lie from these numbers">';
+ g+='<circle cx="'+c+'" cy="'+c+'" r="'+r+'" fill="none" stroke="var(--line)"/>';
+ g+='<text x="'+c+'" y="12" text-anchor="middle">N</text>';
+ cities.forEach(t=>{
+  const a=t.bearing*Math.PI/180, x=c+r*Math.sin(a), y=c-r*Math.cos(a);
+  g+='<line x1="'+c+'" y1="'+c+'" x2="'+x.toFixed(1)+'" y2="'+y.toFixed(1)
+   +'" stroke="var(--gold)"/>';
+  g+='<text x="'+(c+(r+14)*Math.sin(a)).toFixed(1)+'" y="'+(c-(r+14)*Math.cos(a)+3)
+   .toFixed(1)+'" text-anchor="middle">'+esc(t.name)+'</text>';
+ });
+ return g+'<circle cx="'+c+'" cy="'+c+'" r="3" fill="var(--gold)"/></svg>';
+}
+function showWhere(){
+ const box=$('#where');
+ if(!W){ box.innerHTML=''; return; }
+ let h='<div class="row"><div>'+dial(W.near)+'</div><div class="cities">';
+ W.near.forEach(t=>{ h+='<div>'+esc(t.name)+' <span class="tag">'+Math.round(t.km)
+  +' km &middot; '+Math.round(t.bearing)+'&deg; true</span></div>'; });
+ h+='</div></div><div class="fine">'+esc(W.zone_note)+'</div>';
+ if(W.far_note) h+='<div class="fine warn">'+esc(W.far_note)+'</div>';
+ box.innerHTML=h;
+}
+function showFound(){
+ const box=$('#found');
+ if(!FH.length){ box.innerHTML=''; return; }
+ let h='<table><tbody>';
+ FH.forEach((f,i)=>{
+  h+='<tr><td>'+esc(f.label)+'</td><td class="members">'+f.latitude+', '+f.longitude
+   +'</td><td class="members">'+esc(f.note)+'</td><td>'+(f.timezone
+    ?(st.read_only?'<span class="unknown">read-only</span>'
+                 :'<button data-use="'+i+'">use this</button>')
+    :'<span class="unknown">no time zone came with it</span>')+'</td></tr>';
+ });
+ box.innerHTML=h+'</tbody></table>';
+ document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
+  const f=FH[Number(b.dataset.use)];
+  act(()=>api('/api/location',{latitude:f.latitude,longitude:f.longitude,
+                               timezone:f.timezone}),
+   ()=>say('the location is written: the timetable above is the new one','ok'));
+ });
+}
+function square(lat,lon,z){
+ // Which square of the map a point falls in. Worked out here, in the page, because
+ // the daemon serves one square at a time and has no notion of what anyone is
+ // looking at.
+ const n=Math.pow(2,z), fx=n*(lon+180)/360;
+ const fy=n*(1-Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))/Math.PI)/2;
+ return {n:n, x:Math.floor(fx), y:Math.floor(fy), fx:fx, fy:fy};
+}
+function drawMap(){
+ const box=$('#map');
+ if(st.map_tiles!=='osm'){ box.innerHTML=''; MAPTAG=''; return; }
+ const p=MP||{latitude:st.location.latitude,longitude:st.location.longitude};
+ const stamp=MZ+'|'+p.latitude+','+p.longitude;
+ if(stamp===MAPTAG) return;      // the 60 second refresh must not fetch squares again
+ MAPTAG=stamp;
+ const q=square(p.latitude,p.longitude,MZ);
+ let cells='';
+ for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+  const x=Math.min(q.n-1,Math.max(0,q.x+dx)), y=Math.min(q.n-1,Math.max(0,q.y+dy));
+  cells+='<img src="/api/tile?z='+MZ+'&x='+x+'&y='+y+'" width="256" height="256" alt="">';
+ }
+ box.innerHTML='<div class="row"><button id="zout">farther</button><span class="tag">zoom '
+  +MZ+'</span><button id="zin">closer</button><span class="fine">map data '
+  +esc(st.map_credit)+'</span></div><div class="mapbox" role="img" '
+  +'aria-label="the area around these numbers">'+cells+'<span class="spot" style="left:'
+  +((q.fx-q.x+1)*256).toFixed(1)+'px;top:'+((q.fy-q.y+1)*256).toFixed(1)+'px"></span></div>';
+ document.querySelectorAll('#map img').forEach(i=>{ i.onerror=()=>{ i.style.opacity=.15; }; });
+ $('#zin').onclick=()=>{ if(MZ<18){ MZ++; drawMap(); } };
+ $('#zout').onclick=()=>{ if(MZ>3){ MZ--; drawMap(); } };
+}
 // the scan is expensive and the daemon caches it, so arriving at the page shows
 // what was last seen if there is a last-seen; the button is for when speakers
 // have been added or moved rooms
@@ -1458,6 +1782,25 @@ $('#hijplus').onclick=()=>act(()=>api('/api/hijri',{days:st.hijri_offset+1}),()=
 $('#applysound').onclick=()=>act(async()=>{ sent=await applySound(); },
  ()=>{ $('#sound').dataset.dirty=''; say(sent?('wrote '+sent+' clip'+(sent>1?'s':'')+': the daemon reloaded with them')
                                        :'nothing needed writing','ok'); });
+// Where the house is. The three buttons are deliberately separate: checking the
+// numbers is a look, finding a place is a question to somebody further away, and
+// writing them is the only one that changes the profile.
+$('#check').onclick=()=>act(async()=>{
+ const lat=$('#lat').value.trim(), lon=$('#lon').value.trim();
+ if(!lat||!lon) throw new Error('type the latitude and the longitude first');
+ W=await api('/api/near?lat='+encodeURIComponent(lat)+'&lon='+encodeURIComponent(lon));
+ MP={latitude:W.latitude,longitude:W.longitude}; FH=[]; showWhere(); showFound();
+},()=>say('these are the numbers the timetable above would use','ok'));
+$('#writewhere').onclick=()=>act(()=>api('/api/location',{latitude:$('#lat').value,
+ longitude:$('#lon').value,timezone:$('#zone').value}),
+ ()=>say('the location is written; the timetable above is the new one','ok'));
+$('#findit').onclick=()=>act(async()=>{
+ const q=$('#place').value.trim();
+ if(!q) throw new Error('type a place first');
+ FH=(await api('/api/geocode',{q:q})).hits||[];
+ showFound();
+},()=>say(FH.length?('found '+FH.length+', from '+st.geocoder+'; nothing of it is kept')
+                 :'nothing came back for those words. Try fewer of them.','ok'));
 $('#scan').onclick=()=>act(async()=>{ SC=await api('/api/speakers?refresh=1'); },
  ()=>say(((SC.found.speakers||[]).length)+' speakers, '+((SC.found.groups||[]).length)+' groups, '
    +((SC.found.boxes||[]).length)+' boxes','ok'));
