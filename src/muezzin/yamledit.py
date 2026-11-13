@@ -188,6 +188,42 @@ def block_value(text: str, key: str, field: str) -> Optional[str]:
 _TRAILING = re.compile(r"([ \t]+#.*)$")
 
 
+def _align_comments(lines, start, end, indent):
+    """Put a block's own trailing comments back in one column.
+
+    A comment that keeps the padding it was written with drifts the moment the value in
+    front of it changes length, and `timezone: Asia/Tehran` is four characters shorter
+    than `timezone: America/New_York`. That column is the only thing that makes a
+    hand-written profile easy to scan, so a write that leaves it ragged makes the file
+    look vandalised even though nothing in it is wrong.
+
+    Comments move right and never left. The width someone chose for their own block is
+    theirs; an editor that tightened it would turn a one-line change into a diff of the
+    whole section.
+    """
+    notes = []
+    for i in range(start + 1, end):
+        line = lines[i].rstrip("\r\n")
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue                       # a comment of its own has no column to hold
+        if len(line) - len(line.lstrip(" \t")) != len(indent):
+            continue                       # nested lines belong to the block below
+        tail = _TRAILING.search(line)
+        if not tail:
+            continue
+        note = tail.group(1).lstrip()
+        column = len(line) - len(note)
+        notes.append((i, line[:column].rstrip(), note, column,
+                      "\r\n" if lines[i].endswith("\r\n") else "\n"))
+    if not notes:
+        return
+    column = max([c for _, _, _, c, _ in notes]
+                 + [len(code) + 1 for _, code, _, _, _ in notes])
+    for i, code, note, _, ending in notes:
+        lines[i] = code + " " * (column - len(code)) + note + ending
+
+
 def set_in_block(text, key, edits):
     """Only the block's own lines are fields of the block, and a field name may be quoted."""
     found = find_block(text, key)
@@ -245,6 +281,7 @@ def set_in_block(text, key, edits):
         else:
             lines.insert(start + 1, f"{indent}{field}: {scalar(value)}\n")
             end += 1
+    _align_comments(lines, start, end, indent)
     return "".join(lines)
 
 

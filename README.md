@@ -47,6 +47,8 @@ before it.
 muezzin init                            # starter profile: five prayers, no speakers yet
 muezzin where orlando                   # prints the coordinates behind a city name
 muezzin where --write orlando           # ...and puts them in the profile
+muezzin where --online "SW1A 1AA"       # ask OpenStreetMap for something the table lacks
+muezzin where --coords 42.1292,-80.0851 # what those numbers are near, nobody asked
 muezzin times                           # does this look like your local timetable?
 ```
 
@@ -64,6 +66,17 @@ town, type your own numbers into the profile. Until you do, the starter's
 placeholder location is announced out loud — `muezzin times` and `muezzin daemon`
 print a note, and the page shows a gold band under the header — because a location
 nobody chose produces no error at all, just wrong times.
+
+`--online` is the one place in muezzin where words you typed leave your network, and
+it is a flag you type rather than a default. It asks Nominatim — the address search
+the OpenStreetMap project runs — once, in a request that carries this program's name
+instead of an account, and keeps nothing: no cache, no log, and a bad answer is not
+quoted back. No lookup anywhere in here needs an API key, because a search you can
+only run after registering a card with somebody is a search most households will not
+run. What comes back usually carries a time zone; when it does not, muezzin borrows
+the zone of the nearest city it knows within 150 km and prints which city it
+borrowed, or says there is no honest guess and leaves that line to you. The times
+themselves never depend on either service being up.
 
 ### 2. Which numbers
 
@@ -190,9 +203,17 @@ just added is actually reachable.
 On it: three days of times for the method in the profile; the next events and
 which output each resolves to; every output with an on/off switch and a **test**
 button; the method dropdown; a clip per prayer and a Friday column; what is on the
-LAN right now, with **use** / **stop using**; and the profile YAML itself with a
-save button. A band above it says out loud whatever is still missing — a location
-nobody chose, no speakers, or every speaker switched off.
+LAN right now, with **use** / **stop using**; a **Where** section — type numbers and
+press **check these numbers** to be told the nearest names and what clock they would
+keep, with nobody being asked anything, or type words and press **find it**, which
+asks OpenStreetMap once; and the profile YAML itself with a save button. A band above
+it says out loud whatever is still missing — a location nobody chose, no speakers, or
+every speaker switched off.
+
+Put `map_tiles: osm` in the profile and a small map appears behind those numbers. The
+squares are fetched by the daemon and kept on disk, so the page still only ever talks
+to this address, and the credit "© OpenStreetMap contributors" sits under the map.
+Without that line there is no map, and the page asks nothing of anybody.
 
 Saving re-validates before writing, and a bad edit is never written to disk: the
 error you see is the one the CLI would print. A good one is picked up without a
