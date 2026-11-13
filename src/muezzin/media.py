@@ -15,6 +15,7 @@ import time
 from http import HTTPStatus
 from pathlib import Path
 
+from . import net
 from .backends import local_ip
 
 log = logging.getLogger("muezzin.media")
@@ -79,7 +80,8 @@ class MediaServer:
         if self._httpd:
             return
         handler = functools.partial(_QuietHandler, directory=str(self.media_dir))
-        self._httpd = http.server.ThreadingHTTPServer(("0.0.0.0", self.port), handler)
+        # LANServer rather than the standard library's class: see net.py.
+        self._httpd = net.LANServer(("0.0.0.0", self.port), handler)
         self.port = self._httpd.server_address[1]
         self._thread = threading.Thread(target=self._httpd.serve_forever,
                                         name="muezzin-media", daemon=True)

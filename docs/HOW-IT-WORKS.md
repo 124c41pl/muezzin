@@ -442,6 +442,20 @@ POST /play    -> {"urls": ["http://192.168.0.5:8010/fajr.mp3"],
 cannot route back to the daemon. The box announces itself as
 `_muezzin._tcp.local.`, which is why `muezzin devices` finds it without an IP.
 
+**Starting a server never waits for name resolution.** The panel, the media
+server and a box's own server all listen on `0.0.0.0`, and the standard library's
+HTTP server pauses while it binds to ask the operating system this machine's
+fully-qualified name. Where nothing resolves that name — a Pi called
+`raspberrypi` with no DNS entry, a Mac on a home LAN, a CI runner whose hostname
+ends in `.local` — the answer is not "no", it is a timeout. Measured on
+2026-11-13 on an arm64 macOS runner, opening a port there took **35.0 seconds**,
+and `socket.getfqdn()` on that same machine took 70.0; on Linux and on Windows
+the same call took about a second, which is still a second per server started.
+So all three servers bind through one class of muezzin's own, `net.LANServer`,
+which records the address it actually has. Nothing muezzin sends depends on the
+name, and a daemon that says nothing for half a minute before its port opens
+looks exactly like a daemon that is broken.
+
 **A box only fetches from a host you named.** `POST /play {"urls": [...]}` is an
 instruction to make an HTTP request, and a $25 speaker on everybody's wifi is a
 poor place to put that power: pointed at a router's admin page, a cloud metadata
@@ -629,7 +643,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 291 tests
+pytest -q                        # 299 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and
