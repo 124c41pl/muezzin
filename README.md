@@ -72,9 +72,12 @@ muezzin daemon --web               # leave it running, with the browser page on 
 The two mistakes a starter makes easy both produce no error at all: a city nobody
 chose, and a schedule with nowhere to play. So until you fix them, `times` and
 `daemon` say so — that the location is still the starter's New York placeholder,
-and that no speaker is configured. Change one of the three location lines and the
-first note stops, because a household that typed its own coordinates has already
-said what it needs. An event with no `targets:` reaches every enabled output,
+and that no speaker is configured. The page repeats the same thing in a gold band
+under the header, because a new install opens the page long before it opens a log
+file, and a band that says *every speaker is switched off* is the one silence worth
+announcing. Change one of the three location lines and the first note stops, because
+a household that typed its own coordinates has already said what it needs. An event
+with no `targets:` reaches every enabled output,
 which is why adding a speaker to a working household needs no edit to the events.
 
 `muezzin next` is the one to trust: it shows the schedule as the daemon sees it —
@@ -450,7 +453,7 @@ Study speaker                Google Nest Mini           -      192.168.0.23:8009
 
 box                          protocol         player     address
 test-box                     muezzin_box      mpg123     192.168.0.5:8090
-raspberrypi                  smart_azan_pi               192.168.0.25:9874
+attic-pi                     smart_azan_pi               192.168.0.25:9874
 ```
 
 The member list is not in the group's own announcement, so it is read back from
