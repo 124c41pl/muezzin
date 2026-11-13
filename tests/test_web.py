@@ -13,6 +13,7 @@ import urllib.request
 
 import pytest
 
+from muezzin import geocode
 from muezzin.cli import STARTER
 from muezzin.config import load_profile
 from muezzin.scheduler import PRAYER_KEYS, Runner
@@ -1152,4 +1153,368 @@ def test_switching_every_speaker_off_says_so_on_the_page(panel):
     assert any("switched off" in n for n in state["notices"]), state["notices"]
     assert not any("No speakers" in n for n in state["notices"]), \
         "configured but off is a different problem from having nothing at all"
+
+
+# Three questions about a place, and they are not three versions of one question:
+# whether a pair of numbers is sane is arithmetic this machine can do for itself; what
+# a place is called is a single request to somebody else, made only because someone
+# pressed a button; and making those numbers the profile's location is a write. The
+# tests keep them apart because the promises are different. The first two work with the
+# cable unplugged and on a locked panel; the third touches the file, and only once the
+# clock name it was given is one this machine actually has.
+
+LOCATED = BASE.replace(
+    "location: {latitude: 40.7128, longitude: -74.006, timezone: America/New_York}\n",
+    "location:\n"
+    "  latitude: 40.7128            # your latitude, north positive\n"
+    "  longitude: -74.006           # your longitude, east positive\n"
+    "  timezone: America/New_York   # IANA name: DST is handled by the tz database\n")
+
+MAPPED = BASE.replace("media_dir: media\n", "media_dir: media\nmap_tiles: osm\n")
+
+# Two answers shaped like the lookup's own rows: one carries a time zone in its extra
+# tags, the other does not. Qom rather than anyone's home address, because a fixture
+# that repeats a real household is the sort of thing that gets published by accident.
+WHERE_ANSWER = json.dumps([
+    {"place_id": 1, "lat": "34.6416", "lon": "50.8851", "display_name": "Qom, Iran",
+     "extratags": {"timezone": "Asia/Tehran"}},
+    {"place_id": 2, "lat": "34.65", "lon": "50.87", "display_name": "Qom Province, Iran"},
+]).encode("utf-8")
+
+# A row in the open Atlantic with nothing to borrow a clock from, which is the case
+# that has to say "I do not know" rather than guess at the nearest thing.
+SOLO_ANSWER = json.dumps([
+    {"place_id": 3, "lat": "-30.5", "lon": "-21.5",
+     "display_name": "Mid-Atlantic, somewhere"},
+]).encode("utf-8")
+
+PNG = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + b"a square of somebody's map"
+
+
+def test_checking_a_set_of_numbers_asks_nobody_anything(panel, monkeypatch):
+    """The most common reason to look at coordinates is that they are wrong, and the
+    person who typed them should find that out without a stranger being involved. This
+    is arithmetic against the table the program carries, so it also works at 3 a.m. with
+    the internet down, which is roughly when a mis-set location gets noticed."""
+    def nobody_should_be_asked(*args, **kwargs):
+        raise AssertionError("checking numbers must not touch the network")
+
+    monkeypatch.setattr(geocode, "_open", nobody_should_be_asked)
+    web, _, _ = panel
+    status, st = call(web.port, "/api/near?lat=42.1292&lon=-80.0851")
+    assert status == 200, st
+    assert st["near"][0]["name"] == "Erie, Pennsylvania", st["near"]
+    assert st["near"][0]["km"] < 5.0
+    assert 0.0 <= st["near"][0]["bearing"] < 360.0
+    assert st["timezone"] == "America/New_York", st["zone_note"]
+    assert "far_note" not in st, "nothing is wrong with these numbers"
+
+
+def test_numbers_a_long_way_from_any_familiar_name_are_called_out(panel):
+    """A lat/long copied from the wrong row of a spreadsheet is not a place, and the
+    page should say so in the plainest possible words rather than compute a beautiful
+    set of times for the South Atlantic. Refusing to lend a clock is part of it: a zone
+    four thousand kilometres away is a wrong answer, not a near miss."""
+    web, _, _ = panel
+    status, st = call(web.port, "/api/near?lat=-30.0&lon=-20.0")
+    assert status == 200, st
+    assert st["near"][0]["km"] > geocode.FAR_KM
+    assert "transposed" in st["far_note"], st["far_note"]
+    assert "timezone" not in st, st
+    assert "near enough" in st["zone_note"], st["zone_note"]
+
+
+def test_a_number_that_cannot_be_a_place_comes_back_with_a_reason(panel):
+    """91 degrees north does not exist, and silently arithmetic-ing on it would produce
+    times for somewhere the person has never been."""
+    web, _, _ = panel
+    status, st = call(web.port, "/api/near?lat=91&lon=-80.0851")
+    assert status == 400 and "-90 to 90" in st["error"], st
+    for query in ("lat=&lon=", "lat=42.1&lon=banana", "lat=42.1"):
+        status, st = call(web.port, f"/api/near?{query}")
+        assert status == 400 and "latitude" in st["error"], (query, st)
+
+
+def test_finding_a_place_sends_the_words_once_and_names_who_was_asked(tmp_path,
+                                                                      monkeypatch):
+    """The one request in this program that leaves the network, so the test pins down
+    all four of the promises at once: one press is one request, no key is involved, the
+    answering machine is named on the page, and nothing at all is written down."""
+    asks = []
+
+    def answer(url, accept="application/json"):
+        asks.append(url)
+        return WHERE_ANSWER
+
+    monkeypatch.setattr(geocode, "_open", answer)
+    web, out, _ = _serve(tmp_path)
+    try:
+        _, before = call(web.port, "/api/state")
+        status, st = call(web.port, "/api/geocode", {"q": "Qom, Iran"})
+        assert status == 200, st
+        assert len(asks) == 1, asks
+        assert "nominatim.openstreetmap.org" in asks[0], asks
+        assert "key=" not in asks[0], "a lookup that needs a key is one users cannot run"
+        assert "Qom" in asks[0]
+        assert st["provider"] == "nominatim.openstreetmap.org"
+        assert st["credit"] == geocode.MAP_CREDIT
+        assert st["hits"][0]["latitude"] == 34.6416
+        _, after = call(web.port, "/api/state")
+        assert after["config_text"] == before["config_text"], \
+            "looking a place up writes nothing to the profile"
+    finally:
+        web.stop()
+        web.runner.shutdown()
+
+
+def test_a_hit_with_no_zone_of_its_own_says_where_its_clock_came_from(tmp_path,
+                                                                      monkeypatch):
+    """Neither the lookup nor a map tells you which clock a place keeps. Borrowing the
+    zone of a city next door is usually right and is nearly always what people want, but
+    it has to be labelled as a borrow, because a household near a border - Nijmegen,
+    Erie, Baarle - is exactly where the guess is wrong."""
+    monkeypatch.setattr(geocode, "_open", lambda url, accept="application/json":
+                        WHERE_ANSWER)
+    web, _, _ = _serve(tmp_path)
+    try:
+        _, st = call(web.port, "/api/geocode", {"q": "Qom"})
+        assert st["hits"][1]["timezone"] == "Asia/Tehran"
+        assert "borrowed" in st["hits"][1]["note"], st["hits"][1]
+        assert "named this zone" in st["hits"][0]["note"], st["hits"][0]
+    finally:
+        web.runner.shutdown()
+
+
+def test_a_place_with_no_clock_to_borrow_admits_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(geocode, "_open", lambda url, accept="application/json":
+                        SOLO_ANSWER)
+    web, _, _ = _serve(tmp_path)
+    try:
+        _, st = call(web.port, "/api/geocode", {"latitude": -30.5, "longitude": -21.5})
+        assert st["hits"][0]["timezone"] is None, st
+        assert "no time zone" in st["hits"][0]["note"], st["hits"][0]["note"]
+    finally:
+        web.runner.shutdown()
+
+
+def test_a_find_that_was_given_neither_words_nor_numbers_is_refused(panel):
+    web, _, _ = panel
+    status, st = call(web.port, "/api/geocode", {})
+    assert status == 400 and "type a place" in st["error"], st
+
+
+def test_a_read_only_panel_can_still_ask_what_its_numbers_mean(tmp_path, monkeypatch):
+    """--read-only is about not changing the household's settings, not about being blind.
+    A lookup changes nothing here, so a locked panel keeps it; writing the location is
+    still refused, which is the half of the section that actually edits the file."""
+    monkeypatch.setattr(geocode, "_open", lambda url, accept="application/json":
+                        WHERE_ANSWER)
+    profile, _ = profile_for(tmp_path)
+    runner = Runner(profile)
+    web = WebPanel(runner, port=0, allow_edit=False)
+    web.start()
+    try:
+        status, st = call(web.port, "/api/near?lat=42.1292&lon=-80.0851")
+        assert status == 200, st
+        status, st = call(web.port, "/api/geocode", {"q": "Qom, Iran"})
+        assert status == 200 and st["hits"], st
+        status, st = call(web.port, "/api/location", {"latitude": 42.1292,
+                                                      "longitude": -80.0851,
+                                                      "timezone": "America/New_York"})
+        assert status == 403 and "read-only" in st["error"], st
+    finally:
+        web.stop()
+        runner.shutdown()
+
+
+def test_writing_a_location_keeps_the_comments_and_the_shape_of_the_file(tmp_path):
+    """The location block is the one part of a starter profile every new household has
+    to change, so how that write looks afterwards is what the file is judged by. The
+    notes beside the three lines are the explanation of what each one does, and the
+    comment column is what makes them readable: a write that left them ragged would look
+    like something had been vandalised."""
+    web, _, _ = _serve(tmp_path, LOCATED)
+    try:
+        status, st = call(web.port, "/api/location", {"latitude": 34.6416,
+                                                      "longitude": 50.8851,
+                                                      "timezone": "Asia/Tehran"})
+        assert status == 200, st
+        assert st["location"] == {"latitude": 34.64, "longitude": 50.89,
+                                 "timezone": "Asia/Tehran"}, st
+        text = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+        assert "latitude: 34.6416" in text and "timezone: Asia/Tehran" in text
+        assert text.count("#") == LOCATED.count("#"), "a comment was lost"
+        columns = {line.index("#") for line in text.splitlines()
+                   if line.strip().startswith(("latitude:", "longitude:", "timezone:"))}
+        assert len(columns) == 1, f"the notes came back ragged: {columns}"
+        assert not any("placeholder" in n for n in st["notices"]), st["notices"]
+    finally:
+        web.runner.shutdown()
+
+
+def test_a_block_written_as_one_line_stays_a_block_written_as_one_line(tmp_path):
+    """Somebody who wrote their location on one line should not come back to find the
+    daemon reformatted it: the file is theirs to read, and a diff that moves lines is a
+    diff that hides the one line that changed."""
+    web, _, _ = _serve(tmp_path)
+    try:
+        status, st = call(web.port, "/api/location", {"latitude": 34.6416,
+                                                      "longitude": 50.8851,
+                                                      "timezone": "Asia/Tehran"})
+        assert status == 200, st
+        lines = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8").splitlines()
+        assert any(line.startswith("location: {") for line in lines), lines
+    finally:
+        web.runner.shutdown()
+
+
+def test_a_zone_this_machine_has_no_clock_for_is_refused_before_the_file_moves(tmp_path):
+    """A time zone name the tz database does not have is not a slightly wrong guess but
+    a profile that will not load, and the worst moment to discover that is the next
+    restart - which in a house that only hears the adhan twice a day might be weeks
+    away. So it is refused here, in words, while the file is still what it was."""
+    web, _, _ = _serve(tmp_path, LOCATED)
+    try:
+        before = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+        status, st = call(web.port, "/api/location", {"latitude": 34.6416,
+                                                      "longitude": 50.8851,
+                                                      "timezone": "Mars/Phobos"})
+        assert status == 400 and "would not load" in st["error"], st
+        assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before
+        for zone in ("", "   "):
+            status, st = call(web.port, "/api/location", {"latitude": 34.6416,
+                                                          "longitude": 50.8851,
+                                                          "timezone": zone})
+            assert status == 400 and "time zone" in st["error"], (zone, st)
+    finally:
+        web.runner.shutdown()
+
+
+def test_the_page_is_told_who_it_may_ask_and_whose_map_it_shows(panel):
+    """The page has to name the machine that will receive the typed words before the
+    button is pressed, rather than after; and if a map appears, whose map it is belongs
+    on the page as much as in a document."""
+    web, _, _ = panel
+    _, st = call(web.port, "/api/state")
+    assert st["geocoder"] == geocode.provider() == "nominatim.openstreetmap.org"
+    assert st["map_tiles"] == "off"
+    assert st["map_credit"] == geocode.MAP_CREDIT
+    _, page = call(web.port, "/", raw=True)
+    assert "map_tiles: osm" in page, "the way to turn the map on is not written down"
+    assert "Where" in page
+
+
+def test_the_page_never_asks_anyone_to_hold_a_key(panel):
+    """Every lookup that needs a key is a lookup a user cannot run: they would have to
+    register a card with a vendor to set where they live. The page is where that promise
+    is kept, so the guard lives with the page."""
+    web, _, _ = panel
+    _, page = call(web.port, "/", raw=True)
+    lowered = page.lower()
+    for forbidden in ("api key", "apikey", "key=", "iaza"):
+        assert forbidden not in lowered, forbidden
+
+
+def test_no_map_squares_until_the_profile_asks_for_a_map(panel, monkeypatch):
+    """A map on the page means somebody else's servers get asked for pictures, so the
+    default is no map and the way to want one is a line in the profile - not a checkbox
+    that reads as harmless."""
+    asks = []
+    monkeypatch.setattr(geocode, "_open",
+                        lambda url, accept="application/json": asks.append(url) or PNG)
+    web, _, _ = panel
+    status, body, ctype = get_bytes(web.port, "/api/tile?z=12&x=1&y=1")
+    assert status == 403 and b"map_tiles: osm" in body, (status, body)
+    assert asks == [], "the map was fetched for a profile that never asked for one"
+
+
+def test_a_map_square_is_brought_once_and_then_kept_for_the_house(tmp_path, monkeypatch):
+    """The daemon fetches the square rather than letting nine browser screens do it, and
+    keeps it: the same nine squares should not be asked for again every time somebody
+    opens the page, and the picture has to arrive as bytes with a picture's header, not
+    as a base64 string inside JSON."""
+    asks = []
+
+    def answer(url, accept="application/json"):
+        asks.append((url, accept))
+        return PNG
+
+    monkeypatch.setattr(geocode, "_open", answer)
+    web, _, _ = _serve(tmp_path, MAPPED)
+    try:
+        status, body, ctype = get_bytes(web.port, "/api/tile?z=12&x=1&y=1")
+        assert status == 200 and body == PNG, (status, body[:40])
+        assert ctype == "image/png", ctype
+        assert asks == [(geocode.tile_url(12, 1, 1), "image/png")], asks
+        assert len(list((tmp_path / "muezzin-tiles").rglob("*.png"))) == 1
+        status, body, _ = get_bytes(web.port, "/api/tile?z=12&x=1&y=1")
+        assert status == 200 and body == PNG
+        assert len(asks) == 1, "the second request should have come off the disk"
+    finally:
+        web.runner.shutdown()
+
+
+def test_an_answer_that_is_not_a_picture_is_not_shown_as_one(tmp_path, monkeypatch):
+    """This origin would be serving the bytes, so a login page or a captive portal from
+    somewhere else would arrive at the browser looking like it came from the daemon. The
+    header is checked before anything is kept or shown."""
+    monkeypatch.setattr(geocode, "_open",
+                        lambda url, accept="application/json": b"<html>hello</html>")
+    web, _, _ = _serve(tmp_path, MAPPED)
+    try:
+        status, body, _ = get_bytes(web.port, "/api/tile?z=12&x=1&y=1")
+        assert status == 502 and b"not a picture" in body, (status, body)
+        folder = tmp_path / "muezzin-tiles"
+        kept = list(folder.rglob("*.png")) if folder.exists() else []
+        assert kept == [], f"an answer that is not a picture was kept: {kept}"
+    finally:
+        web.runner.shutdown()
+
+
+def test_a_square_off_the_edge_of_the_map_is_refused(tmp_path, monkeypatch):
+    """Zoom 30 has no squares in it, and asking the map server for one is a way of
+    finding out what a public server does with nonsense at somebody else's expense."""
+    monkeypatch.setattr(geocode, "_open",
+                        lambda url, accept="application/json": PNG)
+    web, _, _ = _serve(tmp_path, MAPPED)
+    try:
+        for query in ("z=30&x=1&y=1", "z=3&x=999&y=0", "z=abc&x=1&y=1"):
+            status, body, _ = get_bytes(web.port, f"/api/tile?{query}")
+            assert status == 400, (query, status, body[:80])
+    finally:
+        web.runner.shutdown()
+
+
+def test_a_map_square_is_not_handed_to_a_page_that_is_not_this_one(tmp_path,
+                                                                   monkeypatch):
+    """The square route hands over bytes, so it is the one route where a foreign page
+    could read an answer through this origin. Same guard as the recordings."""
+    monkeypatch.setattr(geocode, "_open",
+                        lambda url, accept="application/json": PNG)
+    web, _, _ = _serve(tmp_path, MAPPED)
+    try:
+        status, body, _ = get_bytes(web.port, "/api/tile?z=12&x=1&y=1",
+                                    headers={"Sec-Fetch-Site": "cross-site"})
+        assert status == 403, (status, body[:80])
+    finally:
+        web.runner.shutdown()
+
+
+def test_a_map_that_cannot_be_reached_costs_nobody_the_times(tmp_path, monkeypatch):
+    """The map is the one part of the page that depends on a stranger, and the times are
+    the reason the page exists. So an unreachable tile server is a grey square with a
+    reason, and nothing else on the page changes."""
+    def refused(url, accept="application/json"):
+        raise urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(geocode, "_open", refused)
+    web, _, _ = _serve(tmp_path, MAPPED)
+    try:
+        status, body, _ = get_bytes(web.port, "/api/tile?z=12&x=1&y=1")
+        assert status == 502 and b"courtesy" in body, (status, body)
+        _, st = call(web.port, "/api/state")
+        assert st["upcoming"], "the times went down with the map"
+    finally:
+        web.runner.shutdown()
+
 

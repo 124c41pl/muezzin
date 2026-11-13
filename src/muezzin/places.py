@@ -26,9 +26,11 @@ because picking one silently would put someone's prayer times in another country
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import re
 
-__all__ = ["Place", "PLACES", "ALIASES", "find", "lookup", "AmbiguousPlace", "UnknownPlace"]
+__all__ = ["Place", "PLACES", "ALIASES", "find", "lookup", "AmbiguousPlace",
+           "UnknownPlace", "distance_km", "bearing", "nearest"]
 
 
 @dataclass(frozen=True)
@@ -194,6 +196,49 @@ def find(query: str) -> list[Place]:
             partial.append(place)
     hits = exact or partial
     return sorted(hits, key=lambda p: p.label)
+
+
+# How far apart two places are, and in which direction.
+#
+# Neither has anything to do with prayer times: the online lookup borrows a time zone
+# from the nearest city in this table when the map did not name one, and the page draws
+# a small picture of where the chosen point sits among the places it can name. A sphere
+# is used on purpose: the difference against an ellipsoid is a few tenths of a percent,
+# which is nothing beside the fact that a city centre sits a kilometre or two from any
+# given house in it.
+EARTH_KM = 6371.0
+
+
+def distance_km(north_a: float, east_a: float, north_b: float, east_b: float) -> float:
+    """Great-circle distance between two points, in kilometres."""
+    phi_a, phi_b = math.radians(north_a), math.radians(north_b)
+    d_phi = phi_b - phi_a
+    d_lambda = math.radians(east_b - east_a)
+    haversine = (math.sin(d_phi / 2.0) ** 2
+                 + math.cos(phi_a) * math.cos(phi_b) * math.sin(d_lambda / 2.0) ** 2)
+    return 2.0 * EARTH_KM * math.asin(math.sqrt(haversine))
+
+
+def bearing(north_a: float, east_a: float, north_b: float, east_b: float) -> float:
+    """The direction from A to B, degrees clockwise from true north, 0 to 360."""
+    phi_a, phi_b = math.radians(north_a), math.radians(north_b)
+    d_lambda = math.radians(east_b - east_a)
+    y = math.sin(d_lambda) * math.cos(phi_b)
+    x = math.cos(phi_a) * math.sin(phi_b) - math.sin(phi_a) * math.cos(phi_b) * math.cos(d_lambda)
+    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+
+
+def nearest(latitude: float, longitude: float, count: int = 5) -> list[tuple[Place, float]]:
+    """The `count` closest city centres, nearest first, each with its distance in km.
+
+    This answers "what is this point near" without a network, which is the part worth
+    answering offline: a coordinate copied wrongly is usually obvious once something
+    says it sits 4,000 km from the city it was meant to be.
+    """
+    scored = [(place, distance_km(latitude, longitude, place.latitude, place.longitude))
+              for place in PLACES]
+    scored.sort(key=lambda pair: pair[1])
+    return scored[:max(0, count)]
 
 
 class UnknownPlace(LookupError):
