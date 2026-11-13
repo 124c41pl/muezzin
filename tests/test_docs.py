@@ -49,8 +49,11 @@ def test_the_security_document_points_at_github():
     assert "124c41pl/muezzin/issues" in text, "no route for ordinary bugs"
 
 
-# Built from pieces so this file does not match its own pattern.
-OTHER_PRODUCT = re.compile("(?i)" + "smart" + ".?" + "azan")
+# Built from pieces so this file does not match its own pattern. Matching is over
+# the whole file, not one line at a time: the mention that survived an earlier
+# version of this test was the name split by a line break in a docstring, `Smart`
+# at the end of one line and the rest at the start of the next.
+OTHER_PRODUCT = re.compile("(?is)" + "smart" + ".?" + "azan")
 
 # Text files are the ones that get read. Private working notes, unpacked
 # installers and the developer's own configs are not published here, and are not
@@ -85,7 +88,15 @@ def test_no_published_file_names_another_vendor():
         if len(rel.parts) == 1 and path.suffix.lower() == ".yaml":
             continue          # the developer's own untracked profile
         text = path.read_text(encoding="utf-8", errors="replace")
-        for n, line in enumerate(text.splitlines(), 1):
-            if OTHER_PRODUCT.search(line):
-                hits.append(f"{rel.as_posix()}:{n}: {line.strip()[:70]}")
+        for m in OTHER_PRODUCT.finditer(text):
+            n = text.count("\n", 0, m.start()) + 1
+            hits.append(f"{rel.as_posix()}:{n}: {m.group(0)!r}")
     assert not hits, "published files name another product:\n" + "\n".join(hits[:10])
+
+
+def test_the_vendor_guard_catches_a_name_split_across_a_line():
+    """That is exactly the spelling that got past the line-by-line version of this
+    test, so the test that proves the guard is whole-file lives here."""
+    split = "the Smart" + chr(10) + "Azan flow"
+    assert OTHER_PRODUCT.search(split), "the split spelling slipped through"
+    assert not OTHER_PRODUCT.search("an adhan, said well")

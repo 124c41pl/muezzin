@@ -120,7 +120,7 @@ def test_the_machine_speakers_report_their_name_in_the_error(tmp_path, monkeypat
 
     class Cfg:
         name = "attic-pc"
-        volume = 0.5
+        volume = None
 
     wav = tmp_path / "test-chime.wav"
     wav.write_bytes(b"RIFF")
@@ -135,7 +135,7 @@ def test_a_box_refuses_before_it_fetches_anything(tmp_path):
     b = Box("quiet-box", port=0)
     b.player_name, b.player_cmd = "none", []
     with pytest.raises(RuntimeError) as caught:
-        b.play([], {}, None)
+        b.play([], {})
     assert "no player" in str(caught.value).lower()
 
 
@@ -143,19 +143,9 @@ def test_a_box_with_a_player_hands_it_one_file(tmp_path):
     marker = tmp_path / "marker"
     b = Box("stub-box", port=0)
     b.player_name, b.player_cmd = "stub", [sys.executable, "-c", STUB, str(marker)]
-    b.play([], {"maghrib.mp3": base64.b64encode(b"ID3\x03audio").decode()}, 0.3)
+    b.play([], {"maghrib.mp3": base64.b64encode(b"ID3" + bytes([3]) + b"audio").decode()})
     assert Path(marker.read_text().split("|")[0]).name == "maghrib.mp3"
     assert b.last["played"] == ["maghrib.mp3"]
-
-
-def test_the_volume_honesty_line_appears_where_volume_is_not_applied(tmp_path, caplog):
-    """A volume in the profile that silently does nothing is a confusing silence,
-    so the log has to say where the level actually comes from."""
-    marker = tmp_path / "marker"
-    with caplog.at_level("INFO"):
-        localplay.play_file(tmp_path / "fajr.mp3", volume=0.4,
-                            player=[sys.executable, "-c", STUB, str(marker)])
-    assert "does not set it" in caplog.text and "0.4" in caplog.text
 
 
 class FakeWinmm:
@@ -184,22 +174,15 @@ def use_fake_winmm(monkeypatch, refuse=()):
     return winmm
 
 
-def test_a_windows_path_that_refuses_the_volume_still_plays(tmp_path, monkeypatch, caplog):
-    """Missed adhan is worse than a knob that did nothing, so a refused setvolume
-    is a log line and not a refusal to play."""
-    winmm = use_fake_winmm(monkeypatch, refuse={"setvolume"})
-    with caplog.at_level("WARNING"):
-        assert localplay.play_file(tmp_path / "fajr.mp3", volume=0.2) == localplay.WINMM
-    assert winmm.sent == ["open", "setvolume", "play", "close"]
-    assert "own level" in caplog.text
-
-
-def test_no_volume_asked_means_no_level_command_sent(tmp_path, monkeypatch):
-    """Leaving the level alone is the machine's own business; sending 0 because a
-    profile did not name one would be inventing silence out of an empty field."""
+def test_the_machines_own_level_is_never_touched(tmp_path, monkeypatch):
+    """`setvolume` is MCI's way of changing the level of the computer muezzin runs
+    on. That level belongs to whoever is in the room, and the call was already
+    unreliable on real hardware, so it is gone from the sequence rather than
+    merely optional: open, play, close, in that order and nothing else."""
     winmm = use_fake_winmm(monkeypatch)
-    localplay.play_file(tmp_path / "fajr.mp3")
+    assert localplay.play_file(tmp_path / "fajr.mp3") == localplay.WINMM
     assert winmm.sent == ["open", "play", "close"]
+    assert "setvolume" not in winmm.sent
 
 
 def test_the_file_is_closed_even_when_playback_fails(tmp_path, monkeypatch):
@@ -207,5 +190,5 @@ def test_the_file_is_closed_even_when_playback_fails(tmp_path, monkeypatch):
     and a file handle behind."""
     winmm = use_fake_winmm(monkeypatch, refuse={"play"})
     with pytest.raises(localplay.LocalPlaybackError):
-        localplay.play_file(tmp_path / "fajr.mp3", volume=0.5)
-    assert winmm.sent == ["open", "setvolume", "play", "close"]
+        localplay.play_file(tmp_path / "fajr.mp3")
+    assert winmm.sent == ["open", "play", "close"]

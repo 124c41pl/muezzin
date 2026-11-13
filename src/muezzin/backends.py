@@ -28,17 +28,35 @@ class BackendError(RuntimeError):
     pass
 
 
+# Where no `volume:` is written for a speaker we are casting to. Deliberately not
+# zero: a missing field has never meant "play quietly", and now that a profile can
+# tell "not written" from "written as 0.5" there is no reason to invent one.
+DEFAULT_CAST_VOLUME = 0.5
+
+
 class Backend(abc.ABC):
     kind = "?"
     # True for devices that can only play a URL they fetch themselves, which is
     # what makes muezzin start the little media server.
     needs_urls = False
+    # Whether a `volume:` in the profile means anything for this kind of output.
+    # Only a speaker muezzin is casting to: a Cast speaker exists to be driven and
+    # its level is a property of the room. Everything else is a computer, and a
+    # computer's volume belongs to the person who owns that computer.
+    takes_volume = False
     # Safety net so a stream that stalls cannot block the rest of the day's jobs.
     max_play_seconds = 30 * 60
 
     def __init__(self, cfg, media_server=None):
         self.cfg = cfg
         self.media_server = media_server
+        if getattr(cfg, "volume", None) is not None and not self.takes_volume:
+            # Say it once, when the output is built, rather than at every prayer
+            # time: the profile named a knob this output will never use, and the
+            # place to be told that is before the morning it would have mattered.
+            log.warning("%s (%s): volume %s is ignored. muezzin sets a level only on a speaker it "
+                        "casts to; the level on that machine is set on the machine itself",
+                        cfg.name, self.kind, cfg.volume)
 
     @abc.abstractmethod
     def play(self, media: list[Path], volume: Optional[float] = None) -> None:
@@ -48,10 +66,6 @@ class Backend(abc.ABC):
         pass
 
     # helpers ---------------------------------------------------------------
-    def _effective_volume(self, volume: Optional[float]) -> float:
-        v = self.cfg.volume if volume is None else volume
-        return max(0.0, min(1.0, float(v)))
-
     def _url_for(self, path: Path) -> str:
         if self.media_server is None:
             raise BackendError(f"{self.cfg.name}: {self.kind} needs a media URL but no media server "
@@ -73,17 +87,20 @@ class PcSpeakersBackend(Backend):
     There is no per-device routing: the sound goes to the machine's default
     output, so send it to a particular speaker by making that the system
     default, or use a google_cast or lan_box output for real routing.
+
+    A `volume:` in the profile does nothing here, and says so once when the
+    output is built. This is a computer, and the level a computer plays at is
+    the business of whoever is sitting in front of it.
     """
     kind = "pc_speakers"
 
     def play(self, media, volume=None):
-        vol = self._effective_volume(volume)
         for path in media:
             if not path.exists():
                 log.warning("missing media %s", path)
                 continue
             try:
-                localplay.play_file(path, volume=vol)
+                localplay.play_file(path)
             except localplay.LocalPlaybackError as exc:
                 raise BackendError(f"{self.cfg.name}: {exc}") from exc
 
@@ -117,9 +134,20 @@ class CastBackend(Backend):
     """
     kind = "google_cast"
     needs_urls = True
+    takes_volume = True       # the one kind whose level is ours to ask for
     READY_SECONDS = 15.0    # how long the speaker has to send its first status
     START_SECONDS = 10.0    # how long it has to say PLAYING once handed a file
     poll_seconds = 1.0      # how often to ask; a test may shrink it
+
+    def _effective_volume(self, volume: Optional[float]) -> float:
+        """The level to ask this speaker for: the event's override, else the
+        output's own `volume:`, else the default. This is the only place in
+        muezzin that sets a level at all, and what it sets is a speaker's, not a
+        computer's."""
+        named = volume if volume is not None else self.cfg.volume
+        if named is None:
+            named = DEFAULT_CAST_VOLUME
+        return max(0.0, min(1.0, float(named)))
 
     def play(self, media, volume=None):
         import pychromecast
@@ -248,11 +276,15 @@ class CastBackend(Backend):
 class LanBoxBackend(Backend):
     """A box on the LAN running the muezzin player (a Pi, another PC).
 
-    Protocol: POST http://host:port/play {"files": [...], "volume": 0..1}.
-    The box pulls the served URL when `use_urls` is set, otherwise muezzin
-    streams the file bytes as the request body. This is the same shape as Smart
-    Azan's "Pi button scans the network and issues commands" flow, but the
-    device list and the audio are ours, so the media is not limited to URLs.
+    Protocol: POST http://host:port/play with either {"urls": [...]} or
+    {"files": {"name.mp3": "<base64>"}}. The box pulls the served URL when a
+    media server is running, which keeps a long recording from passing through
+    this process; otherwise muezzin sends the bytes itself, so a box that cannot
+    route back still plays.
+
+    There is no level in the request. A box is a computer: its volume is set on
+    that box, by whoever uses it, and a daemon across the house has no business
+    changing it. A daemon that still sends `volume` - an older one - is ignored.
     """
     kind = "lan_box"
     needs_urls = True
@@ -269,11 +301,10 @@ class LanBoxBackend(Backend):
                 continue
             if self.media_server is not None:
                 # Preferred: the box pulls the file, so a long recording costs nothing here.
-                payload = {"urls": [self._url_for(path)], "volume": self._effective_volume(volume)}
+                payload = {"urls": [self._url_for(path)]}
             else:
                 # Fallback: send the bytes inline, so the box needs no route back to this machine.
-                payload = {"files": {path.name: base64.b64encode(path.read_bytes()).decode()},
-                           "volume": self._effective_volume(volume)}
+                payload = {"files": {path.name: base64.b64encode(path.read_bytes()).decode()}}
             body = json.dumps(payload).encode()
             req = urllib.request.Request(base + "/play", data=body,
                                          headers={"Content-Type": "application/json"})

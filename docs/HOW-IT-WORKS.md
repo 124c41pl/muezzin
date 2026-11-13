@@ -247,17 +247,17 @@ outputs:
   - name: study
     kind: google_cast
     target: Study speaker        # `muezzin devices` prints these names
-    volume: 0.4
+    volume: 0.4                  # a speaker's level; a computer has none
   - name: house-group
     kind: google_cast
     target: Whole-house group             # Google Home groups work, including one speaker
     volume: 0.25
   - name: pc
-    kind: pc_speakers              # this machine's default output device
+    kind: pc_speakers              # this machine's default output, at its own level
   - name: attic-pi
     kind: lan_box
-    host: 192.168.0.25            # an `muezzin box`
-  - name: study
+    host: 192.168.0.25            # an `muezzin box`, also at its own level
+  - name: hall-pc
     kind: pc_speakers
     enabled: false                 # parked, not deleted
   - name: paper-trail
@@ -272,7 +272,7 @@ events:
     offset_min: -5                 # 5 minutes before Fajr
     media: [fajr.mp3]
     targets: [study, house-group] # per-event: this is the part that is missing elsewhere
-    volume: 0.5
+    volume: 0.5                  # one level for the cast speakers in this event
   - name: sunrise-tune
     at: sunrise
     media: [dua.mp3]
@@ -380,13 +380,18 @@ Three honest limits of this seam:
 
 * it plays through the machine's **default output device**. None of the interfaces
   above can choose a device, so per-room sound means network speakers.
-* **volume** is applied on Cast speakers, and on Windows where the audio path
-  accepts MCI's volume call. Measured on the PC this was developed on, that call was
-  refused — error 261, "the driver cannot recognize the specified command" — so the
-  play goes ahead at the machine's own level with a line in the log saying so. An
-  adhan missed because a knob was refused is the worse failure. On macOS and Linux
-  there is no portable level control at all, and the same kind of line explains the
-  difference.
+* **a computer's volume is not ours to touch.** The `volume:` knob in a profile
+  means one thing: the level of a speaker muezzin is casting to. The machine
+  muezzin runs on, and any box on the LAN, play at whatever level that machine is
+  already set to, and nothing that arrives over the network changes it. Someone
+  chose that level, in that room, and a program that moved it while they were
+  asleep would be doing something they never agreed to. There is also no
+  portable way to do it: on Windows the MCI level call is one a driver may not
+  implement at all - measured here, it answers error 261, "the driver cannot
+  recognize the specified command" - and on macOS and Linux there is no
+  comparable call. So it is not attempted anywhere. If a profile names a volume
+  for an output that is a computer, one line in the log at start-up says so,
+  rather than leaving you looking for the knob.
 * a command-line player is a separate process, so what comes back from a recording
   it cannot decode is an exit code rather than a diagnosis. `mpg123` and `ffplay`
   cover what a Cast speaker accepts; `paplay` and `aplay` are wav only, which is why
@@ -434,13 +439,14 @@ The wire protocol is plain HTTP + JSON so you can test it with curl:
 GET  /ping    -> Pong
 GET  /status  -> {"name": "attic-pi", "player": "mpg123", "last": {...}}
 POST /play    -> {"urls": ["http://192.168.0.5:8010/fajr.mp3"],
-                  "files": {"small.mp3": "<base64>"},
-                  "volume": 0.4}
+                  "files": {"small.mp3": "<base64>"}}
 ```
 
 `urls` is the normal path (the box pulls the file). `files` exists for a box that
-cannot route back to the daemon. The box announces itself as
-`_muezzin._tcp.local.`, which is why `muezzin devices` finds it without an IP.
+cannot route back to the daemon. No level crosses this wire: the box plays at the
+volume set on the box, and a daemon has no way to change it. The box announces
+itself as `_muezzin._tcp.local.`, which is why `muezzin devices` finds it without
+an IP.
 
 **Starting a server never waits for name resolution.** The panel, the media
 server and a box's own server all listen on `0.0.0.0`, and the standard library's
@@ -643,7 +649,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 299 tests
+pytest -q                        # 300 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and
