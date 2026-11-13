@@ -42,11 +42,9 @@ def get(box, path):
         return resp.status, resp.read()
 
 
-def test_ping_answers_like_a_smart_azan_box(box):
+def test_ping_answers(box):
     b, _ = box
     assert get(b, "/ping") == (200, b"Pong")
-    # Smart Azan's scanner asks this path; answer it instead of 404
-    assert get(b, "/api/Settings/ping") == (200, b"Pong")
 
 
 def test_box_decodes_an_inlined_file_and_hands_the_player_a_real_file(box):

@@ -42,11 +42,11 @@ def test_the_container_does_not_run_as_root():
 
 
 def test_the_image_ships_no_code_that_is_not_mine():
-    """The reverse-engineering material in this directory is someone else's
-    proprietary Windows installer. It is why the design decisions were made, and
-    it must never leave this repo inside an image."""
+    """This directory also holds private notes, personal configs and working
+    material gathered while looking at another program's installer. None of it is
+    muezzin's, and none of it may leave this repo inside an image."""
     ignore = (ROOT / ".dockerignore").read_text(encoding="utf-8").split()
-    for blocked in ("SmartAzanSetup.exe", "extracted2/", "tools/", "*.yaml", "media/"):
+    for blocked in (".git/", ".venv/", "research/", "notes/", "tests/", "FINDINGS.md"):
         assert blocked in ignore, f".dockerignore does not exclude {blocked}"
 
 

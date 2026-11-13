@@ -125,7 +125,7 @@ PUBLISHED_CASES = [
                    "asr": "13:56", "maghrib": "16:18", "isha": "18:11"},
     },
     {
-        # This is the case the original Smart Azan could not express at all:
+        # The case a closed enum of named methods could not express at all:
         # the Institute of Geophysics, Tehran (Fajr 17.7 / Isha 14, Jafari midnight).
         "name": "Qom, Institute of Geophysics Tehran (aladhan method 7)",
         "lat": 34.6416, "lng": 50.8799, "tz": "Asia/Tehran",

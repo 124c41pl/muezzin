@@ -43,20 +43,21 @@ the `discover_cast` / `discover_boxes` helpers, which is what the licence's
 | [adhan](https://github.com/djwonka/adhan.py) | 0.1.1 | **LGPL 3.0** | an oracle. `tests/crosscheck.py` computes the same times twice and compares the answers |
 
 That is a test dependency under the `dev` extra, never a runtime requirement, and
-never a copy: **not one line of adhan or of Batoulapps.Adhan is in this
-repository.** The comparison exists precisely because the two implementations
-should agree without sharing code, and the licence permits using it that way. If
-you strip `dev` out of a build — which is what a release does — LGPL 3.0 leaves
-the picture entirely.
+never a copy: **not one line of adhan is in this repository.** The comparison
+exists precisely because the two implementations should agree without sharing
+code, and the licence permits using it that way. If you strip `dev` out of a build
+— which is what a release does — LGPL 3.0 leaves the picture entirely.
 
 ## Also true, and worth saying out loud
 
-* `SmartAzanSetup.exe`, the unpacked Smart Azan binaries and the installer script
-  extracted from them are **not** in this repository and stay out of it: they are
-  someone else's proprietary work. They sit in a working copy while the
-  teardown is being read, and `.gitignore` names each one.
-* `FINDINGS.md` is a written description of what that teardown showed. Describing
-  a program you are allowed to run is not the same as shipping it.
+* The installer someone unpacked in this directory, the binaries inside it and the
+  script extracted from them are **not** in this repository and stay out of it:
+  they are someone else's proprietary work. They sit in a private working copy,
+  `.gitignore` keeps them there, and the image build refuses to carry them.
+* The notes written while reading that teardown are private working notes about
+  someone else's program, and are not published here. Describing a program you are
+  allowed to run is not the same as shipping it; and muezzin's own code was written
+  from published astronomy, not from anyone's binaries.
 * Nothing is downloaded from the internet at runtime. The web page is one file
   served by the daemon, with no CDN, no web fonts and no analytics; the only URLs
   the program ever fetches are the ones in your own profile, and only if you put

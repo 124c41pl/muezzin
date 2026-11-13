@@ -680,12 +680,15 @@ def test_a_scanned_speaker_can_be_added_and_the_name_is_taken_from_it(panel):
     assert status == 400 and "already" in reply["error"]
 
 
-def test_a_box_that_runs_another_app_is_not_offered_as_an_output(panel):
+def test_a_box_the_panel_cannot_drive_is_not_offered_as_an_output(panel):
     web, _, _ = panel
+    # The panel writes what the loader can read. A box advertising a protocol
+    # muezzin does not speak has nowhere to go, so it is refused here rather
+    # than written into a profile that fails at the next prayer time.
     status, reply = call(web.port, "/api/box/add",
                          {"name": "attic-pi", "host": "192.0.2.156", "port": 9874,
-                          "kind": "smart_azan_pi"})
-    assert status == 400 and "does not speak" in reply["error"]
+                          "kind": "some_other_box"})
+    assert status == 400 and "lan_box" in reply["error"]
 
 
 def test_removing_a_speaker_says_which_events_it_took_with_it(two_outputs):

@@ -210,7 +210,9 @@ class WebPanel:
             notes.append(f"The location is still the starter's placeholder "
                          f"({STARTER_LATITUDE}, {STARTER_LONGITUDE}, {STARTER_TIMEZONE}), so "
                          f"every time on this page is New York's until you change it in the "
-                         f"profile below.")
+                         f"profile below. A time zone labels the clock; the coordinates are "
+                         f"what move the times. On this machine, "
+                         f"`muezzin where <city> --write` fills those three lines in.")
         if not p.outputs:
             notes.append("No speakers are configured yet, so nothing can play: look again "
                          "below and use a speaker, or write an outputs entry in the profile.")
@@ -620,9 +622,6 @@ class WebPanel:
         # loader will read - so the two have to be checked against each other
         # here, not one here and one in the reply.
         kind = str(payload.get("kind") or "lan_box").strip().lower()
-        if kind == "smart_azan_pi":
-            raise ValueError("that box runs Smart Azan's own web service; muezzin does not "
-                             "speak its protocol, so it cannot be used as an output")
         if kind != "lan_box":
             raise ValueError(f"the panel adds boxes as lan_box, not {kind}")
         port = None
@@ -1298,8 +1297,8 @@ function renderFound(){
   +`<td class="members">look at the groups above</td><td>${act2(d.name,'')}</td></tr>`));
  (SC.found.boxes||[]).forEach(b=>rows.push(
   `<tr><td>${esc(b.name)}</td><td>box${b.player?' · '+esc(b.player):''}</td><td class="members">${esc(b.address||'')}:${esc(b.port||'')}</td>`
-  +`<td class="members">${b.kind==='muezzin_box'?'plays what this daemon tells it':'<span class="unknown">belongs to another program: muezzin does not speak its protocol</span>'}</td>`
-  +`<td>${b.kind==='muezzin_box'?act2(b.address,b.name):'<span class="tag">not usable</span>'}</td></tr>`));
+  +`<td class="members">plays what this daemon tells it</td>`
+  +`<td>${act2(b.address,b.name)}</td></tr>`));
  box.innerHTML=rows.join('')||'<tr><td colspan=5>nothing answered</td></tr>';
  document.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{
   const boxes=(SC.found.boxes||[]).filter(x=>x.address===b.dataset.add);

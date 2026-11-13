@@ -1,9 +1,9 @@
 """Solar-position and prayer-time math.
 
 A compact, parameter-driven engine in the same family of published algorithms used
-by PrayTimes.org, the adhan libraries (JS/Java/iOS) and Smart Azan's Batoulapps
-port. Unlike those, there is no closed enum of "approved" methods: a method is a
-plain dataclass of angles and rules, so any community profile is representable.
+by PrayTimes.org and the adhan libraries (JS/Java/iOS). Unlike those, there is no
+closed enum of "approved" methods: a method is a plain dataclass of angles and
+rules, so any community profile is representable.
 
 Conventions
 -----------

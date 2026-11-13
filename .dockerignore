@@ -1,17 +1,20 @@
-# What the image does not need. The reverse-engineering material in this repo is
-# a Windows installer someone unpacked: it has no business being in an image, and
-# an image that ships someone else's proprietary binary is not MIT's to ship.
+# What the image does not need: version control, the virtualenv, the tests, and
+# the private notes and working material in this directory. None of that is
+# muezzin's to ship — the notes and unpacked binaries describe someone else's
+# proprietary program, and an image carrying a binary someone else owns is not
+# MIT's to redistribute.
 .git/
 .gitignore
 .venv/
 out/
 research/
+notes/
 tests/
 tools/
 extracted/
 extracted2/
 issdir/
-SmartAzanSetup.exe
+*.exe
 FINDINGS.md
 __pycache__/
 *.pyc

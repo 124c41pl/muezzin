@@ -1,4 +1,4 @@
-"""Output backends: the part Smart Azan made a single global dropdown.
+"""Output backends: which speaker, for which prayer.
 
 Each backend answers one question - "play this media here" - and a profile can
 name as many outputs as it likes, individually or in groups. Media is delivered
@@ -399,25 +399,23 @@ def discover_cast(timeout: float = 4.0) -> list[dict]:
 
 
 def discover_boxes(timeout: float = 4.0) -> list[dict]:
-    """Speaker boxes on the LAN: our own protocol, plus Smart Azan's Pi.
+    """Speaker boxes on the LAN: the ones that speak muezzin's own protocol.
 
-    `_muezzin._tcp` is what `muezzin box` advertises. `_smartazan._tcp` is the
-    service Smart Azan's Pi image announces (found by scanning this LAN: instance
-    "Raspberry Pi Azan", port 9874) - listed so you can see what is out there and
-    point muezzin at it, not because we speak its dialect.
+    `_muezzin._tcp` is what `muezzin box` advertises, and it is the only service
+    type browsed here. A device that takes orders from some other program is not
+    ours to send a recording to, and listing things a reader cannot use is noise
+    at the exact moment they are choosing a speaker.
     """
     rows = []
-    for stype, kind in (("_muezzin._tcp.local.", "muezzin_box"),
-                        ("_smartazan._tcp.local.", "smart_azan_pi")):
-        for r in browse_service(stype, timeout):
-            rows.append({
-                "name": r["props"].get("name") or r["server"].split(".")[0],
-                "kind": kind,
-                "instance": r["instance"],
-                "player": r["props"].get("player", ""),
-                "address": r["addresses"][0] if r["addresses"] else "",
-                "port": r["port"],
-            })
+    for r in browse_service("_muezzin._tcp.local.", timeout):
+        rows.append({
+            "name": r["props"].get("name") or r["server"].split(".")[0],
+            "kind": "muezzin_box",
+            "instance": r["instance"],
+            "player": r["props"].get("player", ""),
+            "address": r["addresses"][0] if r["addresses"] else "",
+            "port": r["port"],
+        })
     return sorted(rows, key=lambda d: (d["kind"], d["name"]))
 
 
