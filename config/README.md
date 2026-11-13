@@ -4,7 +4,7 @@ your speakers and your schedule stay on your machine.
 
 To start one off:
 
-    docker run --rm -v "%cd%\config:/app/config" muezzin:0.1.1 init -c /app/config/muezzin.yaml
+    docker run --rm -v "%cd%\config:/app/config" muezzin:0.1.2 init -c /app/config/muezzin.yaml
 
 On Linux or macOS, replace `%cd%` with `$PWD`. Then edit the file — set
 `location` to where you actually are, pick a `method`, and add your speakers
