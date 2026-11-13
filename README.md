@@ -19,7 +19,8 @@ Two decisions do most of the work:
   expressible, because an output is a row in a file and not one global setting.
 
 * **Language / shape:** Python daemon plus one small LAN web page, configured by a
-  single YAML profile. Runs on Windows, Linux, a Raspberry Pi, or in a container.
+  single YAML profile. Runs on Windows, Linux, macOS, a Raspberry Pi, or in a
+  container.
 * **License:** MIT. The calculation engine is written here from scratch;
   `THIRD-PARTY.md` lists what it stands on and what each licence asks of you.
 * **Status:** working, used against real hardware, and young. See *Limits*.
@@ -27,7 +28,7 @@ Two decisions do most of the work:
 ```
    muezzin.yaml  ──>  muezzin daemon  ──>  pc_speakers   (this machine)
    location             scheduler          google_cast   (Nest / Chromecast / groups)
-   method               media server       lan_box       (muezzin box on a Pi)
+   method               media server       lan_box       (muezzin box, any machine)
    events                                  file          (copy somewhere)
                          |
                     http://this-host:8020   your browser: times, schedule,
@@ -155,7 +156,11 @@ wall clock, weekday filter, and which output each event resolves to.
 
 ## Install
 
-Python 3.10+ (3.11 through 3.15 are what it is tested on).
+Python 3.10+ (3.11 through 3.15 are what it is tested on), on Windows, Linux or
+macOS - whichever machine the house already has. Those three differ in exactly
+one place: what plays a recording through a machine's own speakers. Windows and
+macOS need nothing installed; a Linux box wants one small player package, and
+`muezzin box` tells you which one it found.
 
 ```bash
 git clone <your fork> muezzin
@@ -202,8 +207,9 @@ somewhere else.
 
 **Raspberry Pi.** Either run the whole daemon on the Pi, or run `muezzin box`
 there as a dumb always-on player and keep the brain on the machine you already
-use. The systemd unit, the player packages and what mDNS does and does not see on
-a Pi are in `docs/HOW-IT-WORKS.md`.
+use. A Pi is a real Linux machine, so the container path works there too, host
+networking and all. The systemd unit, the player packages and what mDNS does and
+does not see on a Pi are in `docs/HOW-IT-WORKS.md`.
 
 **Container.** `docker compose up` builds it; or pull what CI publishes:
 
@@ -213,18 +219,27 @@ docker pull ghcr.io/124c41pl/muezzin:0.1.1
 
 Your profile goes in `./config` and your audio in `./media`; nothing personal is
 baked into the image, and the container runs as an ordinary user. Speaker
-discovery needs `network_mode: host`, which Docker Desktop on Windows cannot
-really provide — the measured numbers, and the two things a container is bad at
-here, are in `docs/HOW-IT-WORKS.md`.
+discovery needs `network_mode: host`, which Docker Desktop on Windows or macOS
+cannot really provide — the measured numbers, and the two things a container is
+bad at here, are in `docs/HOW-IT-WORKS.md`. On a real Linux machine, host
+networking is one line and works.
 
-**A second machine anywhere** can be a speaker too: `muezzin box --name attic-pi`
-on it, and it shows up in the device list.
+**Any other machine** can be a speaker too: a second PC, an old laptop, a Mac in
+the hall cupboard. Run `muezzin box --name attic-box` on it and it shows up in
+the device list, along with the player it picked for itself.
 
 ## Limits, honestly
 
-* `pc_speakers` uses Windows MCI, so it plays through the **system default output
-  device** — per-app output routing is not available through that API. Network
-  speakers are the way to get per-room sound.
+* Sound from the machine muezzin runs on goes to that machine's **default output
+  device**, on all three systems: winmm on Windows, afplay on macOS, whichever
+  small player a Linux box has. None of them route per device, so per-room sound
+  means network speakers. The `volume:` knob reaches a Cast speaker, and on Windows
+  the machine's own output when that audio path accepts a level. Where it does not —
+  and on macOS and Linux, always — the level is whatever that machine is set to, and
+  the log says so rather than leaving you guessing.
+* On macOS the firewall asks whether Python may receive incoming connections the
+  first time you run a daemon or a box. Say allow, or the page will not answer and
+  discovery will not work.
 * The daemon is a foreground process. There is no Windows service installer or
   tray icon yet; a Task Scheduler entry or `systemd` unit is what people use.
 * No Alexa, and no Bluetooth-target backend.
@@ -263,7 +278,10 @@ on it, and it shows up in the device list.
 * The Hijri date is tabular arithmetic, not a sighting, and `hijri_offset` is there
   because the moon decides, not an integer. It is display only: no prayer time
   reads it.
-* In a container, mDNS discovery and local audio are the weak points.
+* In a container, mDNS discovery and local audio are the weak points: the image
+  has no audio device, and on Docker Desktop (Windows or macOS) host networking is
+  not really available either. As the brain that drives network speakers, a
+  container is fine.
 
 ## Who wrote this
 
@@ -313,8 +331,10 @@ python tests/crosscheck.py   # oracle + invariants + published timetables
 Layout: `calc.py` (astronomy and the method table), `places.py` (the city table
 `muezzin where` reads), `config.py` (the YAML is the interface), `scheduler.py`
 (times → wall-clock events), `backends.py` (one class per kind of speaker, plus
-what is found on the LAN), `media.py` (the HTTP server speakers fetch from),
-`box.py` (the player agent), `web.py` (the LAN page and its JSON API),
+what is found on the LAN), `localplay.py` (the one platform-specific seam: which
+player this machine has, and how it gets asked for sound), `media.py` (the HTTP
+server speakers fetch from), `box.py` (the player agent), `web.py` (the LAN page and
+its JSON API),
 `yamledit.py` (writing one line of the profile without disturbing the rest of it),
 `cli.py` (the commands you type).
 
