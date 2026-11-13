@@ -1,5 +1,5 @@
-"""Engine tests: published timetables, invariants, and the method features
-Smart Azan's closed enum could not express (Shia angles, Jafari midnight,
+"""Engine tests: published timetables, invariants, and the method features a
+closed enum of named methods could not express (Shia angles, Jafari midnight,
 maghrib depression angle, isha intervals, high-latitude rules).
 
 Tolerances are in minutes and deliberately not tight: we are checking that the
@@ -30,9 +30,10 @@ PUBLISHED = [
     ("London / Egyptian (aladhan method 5)", LONDON, dt.date(2026, 11, 10), calc.PRESETS["egyptian"],
      {"fajr": "05:04", "sunrise": "07:10", "dhuhr": "11:44", "asr": "13:56",
       "maghrib": "16:18", "isha": "18:11"}),
-    # The case Smart Azan could not express at all: Institute of Geophysics,
-    # Tehran (Fajr 17.7 / Isha 14, Jafari midnight). Its published maghrib is a
-    # 4.5 deg depression, not sunset, so this row expects the sunset value.
+    # The case a closed enum of named methods could not express at all: the
+    # Institute of Geophysics, Tehran (Fajr 17.7 / Isha 14, Jafari midnight). Its
+    # published maghrib is a 4.5 deg depression, not sunset, so this row expects
+    # the sunset value.
     ("Qom / Tehran institute (aladhan method 7)", QOM, dt.date(2026, 11, 10),
      calc.PRESETS["tehran"],
      {"fajr": "05:10", "sunrise": "06:35", "dhuhr": "11:50", "asr": "14:45",
@@ -151,7 +152,7 @@ def test_elevation_lowers_sunrise_and_raises_maghrib():
 
 def test_dhuhr_adjustment_moves_only_dhuhr():
     """Adjustments are per-prayer minutes, applied to that time only - the
-    equivalent of Smart Azan's per-salat offset box."""
+    per-salat offset box every user expects, expressed as data."""
     date = dt.date(2026, 11, 10)
     plain = calc.compute_times(NYC, date, calc.PRESETS["isna"])
     adj = calc.Adjustments(dhuhr=5, isha=-3)
@@ -162,8 +163,8 @@ def test_dhuhr_adjustment_moves_only_dhuhr():
 
 
 def test_shia_presets_are_present_and_distinct():
-    """The whole reason this project exists: Smart Azan's CalculationMethod enum
-    has 11 values and none of them are Shia."""
+    """The whole reason this project exists: a CalculationMethod enum with 11
+    values has no Shia entries in it, and there is no way to add one."""
     for name in ("qom", "qom_khamenei_12", "tehran", "shia_ithna_ashari"):
         p = calc.PRESETS[name]
         assert p.midnight_from_fajr, f"{name} should use the Jafari night"
@@ -294,7 +295,9 @@ def test_the_documented_preset_count_and_names_match_the_table():
     readme = (root / "README.md").read_text(encoding="utf-8")
     example = (root / "config" / "example.yaml").read_text(encoding="utf-8")
     count = len(calc.PRESETS)
-    assert f"the {count} presets" in readme, "the README counts the presets wrong"
+    # folded, because the sentence carrying the count may start a line: the thing
+    # under test is the number, not which letter happens to be capital
+    assert f"the {count} presets" in readme.lower(), "the README counts the presets wrong"
     assert f"Any of the {count} presets" in example, "config/example.yaml counts them wrong"
     for name in calc.PRESETS:
         assert f"`{name}`" in readme, f"{name} exists in the code but is not in the README table"
