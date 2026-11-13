@@ -223,7 +223,10 @@ def test_the_player_thread_picks_up_what_the_scheduler_queued(tmp_path):
     try:
         runner._pending.put(events_for_date(profile, TUESDAY)[0])
         deadline = time.time() + 5.0
-        while not (out / "fajr.mp3").exists() and time.time() < deadline:
+        # the file lands a moment before the queue reports the job finished, so wait
+        # on the queue rather than on the file: the queue is the claim being tested,
+        # and a deadline is only a way of not waiting forever
+        while runner._pending.unfinished_tasks and time.time() < deadline:
             time.sleep(0.05)
         assert (out / "fajr.mp3").exists(), "nothing on the queue was ever played"
         assert runner._pending.unfinished_tasks == 0

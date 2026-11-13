@@ -145,6 +145,27 @@ about that are deliberate:
   app can be undone by reloading the file or pressing a toggle; overwriting the
   one recording your family listens to is the edit with no undo.
 
+Beside the picker, a name and a **hear it here** button let someone listening to a
+library of recitations hear one before assigning it. The browser asks for the bytes
+(`GET /api/clip?name=whatever.mp3`) and makes the sound out of its own machine: no
+speaker on the network is involved, and the row stays live on a read-only panel,
+because listening changes nothing. There is no volume control beside it, for the
+reason given throughout this document — the level on a computer belongs to whoever
+is sitting at it. Because the file is handed over rather than played here, three
+details are load-bearing:
+
+* the `Content-Type` comes from the file's **first bytes**, not its extension, so a
+  WAV somebody copied in by hand and called `adhan.mp3` still plays instead of the
+  browser going silent. The answer is streamed in 64 KB pieces, so a hundred-
+  megabyte recitation does not have to sit in this process all at once.
+* only a plain file name inside `media_dir` answers, and a request whose
+  `Sec-Fetch-Site` says it came from another page is refused. The page may pick a
+  file from the list it was given, not name one further up the tree, and a
+  household's recordings are not a public share. `curl`, which says nothing, stays
+  allowed; this is a browser guard, not access control.
+* no `Range` header is honoured, so a preview always starts at the beginning. That
+  is the media server's existing limit written down twice, not a new one.
+
 ## Looking at the speakers, including inside a group
 
 **look again** scans with mDNS and shows speakers, groups and boxes, each with a
@@ -649,7 +670,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 300 tests
+pytest -q                        # 308 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and

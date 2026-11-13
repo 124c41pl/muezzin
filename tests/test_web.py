@@ -8,6 +8,7 @@ import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import pytest
@@ -425,6 +426,18 @@ def post_raw(port, path, data, ctype="application/octet-stream"):
         return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
+def get_bytes(port, path, headers=None):
+    """Fetch a path and hand back (status, raw body, content type). A recording is
+    bytes, not text: decoding it to check it would be the first way a test could
+    pass while the browser got something it could not play."""
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status, resp.read(), resp.headers.get("Content-Type")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(), exc.headers.get("Content-Type")
+
+
 def test_the_state_names_the_methods_the_page_can_offer(panel):
     web, _, _ = panel
     _, st = call(web.port, "/api/state")
@@ -640,6 +653,92 @@ def test_a_recording_may_be_large_where_a_json_body_may_not(panel, monkeypatch):
     assert not (tmp_path / "media" / "big.mp3").exists()
 
 
+def test_the_page_can_ask_for_a_recording_to_play_itself(panel):
+    """The preview: the browser fetches the bytes and makes the sound out of its own
+    computer, so someone can hear what an adhan sounds like before assigning it. No
+    speaker on the network is asked for anything, and the file arrives whole."""
+    web, _, tmp_path = panel
+    status, body, ctype = get_bytes(web.port, "/api/clip?name=fajr.mp3")
+    assert status == 200 and ctype == "audio/mpeg"
+    assert body == (tmp_path / "media" / "fajr.mp3").read_bytes()
+
+
+def test_the_preview_calls_a_file_by_what_its_bytes_are(panel):
+    """An upload has to agree with its own name; a WAV someone copied into media_dir
+    by hand is allowed to exist. The browser still has to be told what it is being
+    handed, or it sits there silently and the user blames the recording."""
+    web, _, tmp_path = panel
+    (tmp_path / "media" / "liar.mp3").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+    status, _, ctype = get_bytes(web.port, "/api/clip?name=liar.mp3")
+    assert status == 200 and ctype == "audio/wav"
+
+
+def test_the_preview_only_answers_for_a_plain_name_in_media_dir(panel):
+    """The same containment the test button has. A page may pick a file out of the
+    list it was given; it does not get to name one further up the tree, and a
+    refusal says so instead of bringing a traceback into the daemon's log."""
+    web, _, tmp_path = panel
+    (tmp_path / "private.txt").write_text("the household address\n", encoding="utf-8")
+    for name in ("../private.txt", "..\\private.txt", "/etc/passwd", "C:\\private.txt"):
+        status, body, _ = get_bytes(web.port, "/api/clip?name=" + urllib.parse.quote(name))
+        assert status in (400, 404), f"{name} was answered with {status}"
+        assert b"household" not in body
+    status, body, _ = get_bytes(web.port, "/api/clip?name=nope.mp3")
+    assert status == 404 and "media_dir" in body.decode()
+
+
+def test_something_that_is_not_audio_is_not_handed_to_a_browser(panel):
+    web, _, tmp_path = panel
+    note = "a reminder about the prayer times, not a recording\n"
+    (tmp_path / "media" / "notes.txt").write_text(note, encoding="utf-8")
+    status, body, _ = get_bytes(web.port, "/api/clip?name=notes.txt")
+    assert status == 415 and "reminder" not in body.decode()
+
+
+def test_a_read_only_panel_can_still_be_listened_to(tmp_path):
+    """Hearing the library changes nothing - no file, no schedule, no speaker - so a
+    guest who cannot write should still be able to listen. That is the difference
+    between this route and every other one the panel offers."""
+    profile, _ = profile_for(tmp_path)
+    runner = Runner(profile)
+    web = WebPanel(runner, port=0, allow_edit=False)
+    web.start()
+    try:
+        status, _, ctype = get_bytes(web.port, "/api/clip?name=fajr.mp3")
+        assert status == 200 and ctype == "audio/mpeg"
+        _, reply = call(web.port, "/api/reload", {})
+        assert "read-only" in reply["error"]
+    finally:
+        web.stop()
+        runner.shutdown()
+
+
+def test_another_page_cannot_ask_for_someone_elses_recordings(panel):
+    """A browser says in Sec-Fetch-Site whether a request came from this page or from
+    a site someone in the house happens to be visiting. The writes are already
+    guarded by that; this is the one read that hands over a file, so it is guarded
+    too. curl says nothing at all and stays allowed."""
+    web, _, _ = panel
+    for site, wanted in (("cross-site", 403), ("same-site", 403), ("same-origin", 200), ("", 200)):
+        headers = {"Sec-Fetch-Site": site} if site else {}
+        status, _, _ = get_bytes(web.port, "/api/clip?name=fajr.mp3", headers)
+        assert status == wanted, f"Sec-Fetch-Site: {site} answered {status}"
+
+
+def test_the_page_offers_a_preview_and_no_way_to_move_a_level(panel):
+    """Two things the page has to get right that no Python assertion about audio can
+    catch: the preview is labelled as this computer making the sound, and nowhere on
+    the page is there a level to move. The level on a computer belongs to the person
+    sitting in front of it."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert "/api/clip" in html and "hear it here" in html
+    script = html.split("<script>", 1)[1]
+    assert "new Audio(" in script, "the preview has to be the browser making the sound"
+    assert ".volume" not in script, "the page must not set the level of a computer"
+    assert 'type="range"' not in html, "no volume slider anywhere on this page"
+
+
 def test_the_speaker_scan_is_cached_and_says_when_it_ran(panel, monkeypatch):
     from muezzin import web as web_module
     web, _, _ = panel
@@ -803,6 +902,40 @@ def test_a_write_from_a_name_the_page_does_not_answer_to_is_refused_before_the_b
     assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before
     _, st = call(web.port, "/api/state")
     assert "preset: isna" in st["config_text"], "nothing was changed by the refused write"
+
+
+def test_a_refused_write_still_arrives_as_a_reason(panel):
+    """Refused is not the same as hung up on. A body that this side has no intention
+    of using is still read off the socket and thrown away - never interpreted, never
+    kept - because a socket closed in front of a client that is still sending
+    reaches the browser as "network error" instead of the reason it was refused."""
+    web, _, _ = panel
+    import socket
+    # bigger than any socket buffer, so the client is genuinely still sending when
+    # the answer goes out; a small body fits and the race is invisible
+    body = b"-" * (4 * 1024 * 1024)
+    for headers, reason in (
+            (b"Host: evil.example\r\n", b"its own address"),
+            # the Host has to be a real one here, or the name check answers first and
+            # the origin check is never reached
+            (f"Host: 127.0.0.1:{web.port}\r\nOrigin: http://evil.example\r\n".encode(),
+             b"its own origin")):
+        with socket.create_connection(("127.0.0.1", web.port), timeout=15) as sock:
+            sock.sendall(b"POST /api/config HTTP/1.1\r\n" + headers +
+                         b"Content-Type: application/json\r\nContent-Length: "
+                         + str(len(body)).encode() + b"\r\n\r\n")
+            sock.sendall(body)
+            reply = b""
+            while len(reply) < 4096:
+                chunk = sock.recv(512)
+                if not chunk:
+                    break
+                reply += chunk
+                if reason in reply:
+                    break
+        first = reply.split(b"\r\n", 1)[0]
+        assert b"403" in first, first
+        assert reason in reply, "the reason the write was refused, not a reset"
 
 
 def test_a_chunked_body_is_answered_and_not_reassembled(panel):
