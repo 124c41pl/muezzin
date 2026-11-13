@@ -59,12 +59,11 @@ hijri_offset: 0
 
 outputs:
   - name: pc
-    kind: pc_speakers
-    volume: 0.7
+    kind: pc_speakers              # this machine, at whatever level it is already set to
   - name: study
     kind: google_cast
     target: Study speaker      # `muezzin devices` lists names, groups included
-    volume: 0.5
+    volume: 0.5                  # the level on that speaker, and only on speakers
   - name: landing-group
     kind: google_cast
     target: Landing group        # a Google Home speaker GROUP works as one target
@@ -83,7 +82,7 @@ events:
     at: fajr
     media: [fajr.mp3]
     targets: [pc, study, pi-box]
-    volume: 0.8
+    volume: 0.8              # one level for the cast targets in this event
   - name: sunrise-tune
     at: sunrise
     offset_min: -5
@@ -137,7 +136,7 @@ outputs:
   # - name: house-group            # a name you choose; the events below use these
   #   kind: google_cast            # or pc_speakers, lan_box, file
   #   target: Whole-house group    # spelled exactly as `muezzin devices` prints it
-  #   volume: 0.5
+  #   volume: 0.5                  # the level on a speaker; a computer plays at its own
 
 # An event with no `targets:` reaches every enabled output, which is what most
 # households want: add a speaker and it joins the schedule this file already
@@ -553,7 +552,9 @@ def main(argv=None) -> int:
     # append, not nargs="*": a greedy option would eat the media paths that follow it
     p.add_argument("--to", action="append", default=[], metavar="OUTPUT",
                    help="output name; repeat for several (default: all enabled)")
-    p.add_argument("--volume", type=float, default=None)
+    p.add_argument("--volume", type=float, default=None,
+                   help="the level for the Cast speakers in this playback; a computer - this "
+                        "machine or a box on the LAN - plays at its own level")
     p.add_argument("media", nargs="*", help="files in media_dir (or absolute paths)")
 
     p = sub.add_parser("daemon", help="run the scheduler until stopped")

@@ -11,18 +11,21 @@ Nothing is downloaded or bundled. Each choice is what the operating system
 already provides or what its package manager is one command away from, and when
 none of them are present the answer is a refusal that names what to install, not
 a guess.
+
+A machine's own level is not part of this question. Nothing in here changes the
+volume of a computer: that belongs to the person who owns the machine, and a
+program that moves the sound while nobody is looking is a surprise, not a
+feature. A level is set only on a speaker muezzin is casting to, so the
+`volume:` knob in a profile means that speaker and nothing else.
 """
 from __future__ import annotations
 
 import ctypes
 import itertools
-import logging
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-
-log = logging.getLogger("muezzin.localplay")
 
 # the built-in Windows path: not a command line, so it is reported by name
 WINMM = "winmm"
@@ -76,14 +79,17 @@ def install_advice() -> str:
             "works, and --player can point at any command that takes a file argument.")
 
 
-def play_file(path: Path, volume: float | None = None,
-              player: list[str] | None = None) -> str:
+def play_file(path: Path, player: list[str] | None = None) -> str:
     """Play one file on this machine's default output, blocking until it ends.
 
     Returns the name of the player used, so a caller can put it in a log line or
     in a status a person reads. ``player`` replaces the choice with a command
     list, which is how ``muezzin box --player`` works and how the tests watch a
     playback without needing a speaker.
+
+    There is no volume argument, on purpose. This plays at whatever level the
+    machine running it is already set to, because that level is the machine
+    owner's to set and nobody else's to change.
     """
     if player is None:
         name, cmd = candidate()
@@ -92,18 +98,13 @@ def play_file(path: Path, volume: float | None = None,
     if not cmd and name != WINMM:
         raise LocalPlaybackError(f"no player found on this machine. {install_advice()}")
     if name == WINMM:
-        _play_winmm(Path(path), volume)
+        _play_winmm(Path(path))
     else:
-        _play_command(name, cmd, Path(path), volume)
+        _play_command(name, cmd, Path(path))
     return name
 
 
-def _play_command(name: str, cmd: list[str], path: Path, volume: float | None) -> None:
-    if volume is not None and name != WINMM:
-        # Named out loud rather than ignored: a volume in the profile that
-        # reaches a Cast speaker and not this machine is a confusing silence.
-        log.info("volume %s asked for, but muezzin does not set it for %s; "
-                 "use this machine's own volume", volume, name)
+def _play_command(name: str, cmd: list[str], path: Path) -> None:
     try:
         subprocess.run(cmd + [str(path)], check=True, timeout=PLAY_SECONDS)
     except FileNotFoundError as exc:
@@ -123,7 +124,7 @@ def _play_command(name: str, cmd: list[str], path: Path, volume: float | None) -
 _aliases = itertools.count(1)
 
 
-def _play_winmm(path: Path, volume: float | None) -> None:
+def _play_winmm(path: Path) -> None:
     try:
         winmm = ctypes.windll.winmm
     except AttributeError as exc:      # not a Windows machine
@@ -143,15 +144,9 @@ def _play_winmm(path: Path, volume: float | None) -> None:
 
     try:
         run(f'open "{path}" type mpegvideo alias {alias}')
-        want = None if volume is None else int(max(0.0, min(1.0, float(volume))) * 1000)
-        # setvolume is the one part of this that a Windows audio path may not
-        # implement - measured here, the driver answers "cannot recognize the
-        # specified command" - and silence because a knob was refused is the wrong
-        # way to miss an adhan. So the level is best effort: when it does not land,
-        # this machine plays at its own level with a line in the log saying so.
-        if want is not None and not run(f"setvolume {alias} {want}", required=False):
-            log.warning("this Windows audio path will not take a volume; playing "
-                        "%s at the machine's own level rather than at %s", path.name, volume)
+        # No setvolume: the level this machine plays at is that machine's own
+        # business, and MCI's level call is a thing a driver may not implement
+        # anyway. Whatever is playing is playing because someone chose it.
         run(f"play {alias} wait")
     finally:
         # close what was opened even when playing failed, or the alias and the file

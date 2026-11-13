@@ -16,16 +16,17 @@ Wire protocol (plain HTTP + JSON, no auth, LAN only):
     GET  /ping            -> "Pong"
     GET  /status          -> {"name":..., "player":..., "last":...}
     POST /play            -> {"urls": ["http://.../fajr.mp3"],
-                              "files": {"name.mp3": "<base64>"},
-                              "volume": 0.0-1.0}
+                              "files": {"name.mp3": "<base64>"}}
 
 `urls` is preferred: the box pulls the file from the daemon's media server, so a
 long recording never passes through the daemon. It is also the one part of this
 protocol that makes a network request on the daemon's behalf, so the box will
 only fetch from hosts you named with `--allow-host`; without it, `urls` is
-refused and you use `files` instead. `volume` is honoured where this machine's
-own playback can take it and only logged where it cannot - a command-line player
-plays at the level that machine is already set to.
+refused and you use `files` instead.
+
+There is no level in this protocol. A box is a computer, and the volume it plays
+at is set on that box by whoever uses it; nothing that arrives over the network
+moves it. An older daemon that still sends `volume` is understood and ignored.
 
 The box announces itself with mDNS as _muezzin._tcp so `muezzin devices` finds it
 without anyone typing an address. That service type is our own, which is also the
@@ -81,7 +82,7 @@ class Box:
         self._lock = threading.Lock()   # one adhan at a time, not two overlapping
 
     # -- playback ----------------------------------------------------------
-    def play(self, urls: list[str], files: dict[str, str], volume: float | None) -> None:
+    def play(self, urls: list[str], files: dict[str, str]) -> None:
         if self.player_name == "none":
             # Say so before pulling a recording across the network for nothing.
             raise RuntimeError(f"no player on this box. {localplay.install_advice()}")
@@ -104,8 +105,8 @@ class Box:
             for p in paths:
                 log.info("playing %s on this box (player: %s)", p.name, self.player_name)
                 with self._lock:
-                    localplay.play_file(p, volume=volume, player=self.player_cmd or None)
-        self.last = {"played": [p.name for p in paths], "volume": volume}
+                    localplay.play_file(p, player=self.player_cmd or None)
+        self.last = {"played": [p.name for p in paths]}
 
     def _download(self, url: str, directory: Path) -> Path:
         """Fetch one recording, from an allowed host only, size-capped."""
@@ -194,8 +195,11 @@ class Box:
                     return self._send(413, f"body over {MAX_BODY_BYTES // 1024 // 1024} MB")
                 try:
                     data = json.loads(self.rfile.read(length) or b"{}")
-                    box.play(list(data.get("urls") or []), dict(data.get("files") or {}),
-                             data.get("volume"))
+                    # Anything else in the body is ignored, including a `volume`
+                    # from an older daemon: this box plays at the level its own
+                    # machine is set to, and a request from down the hall cannot
+                    # change that.
+                    box.play(list(data.get("urls") or []), dict(data.get("files") or {}))
                     self._send(200, "ok")
                 except Exception:              # never let a bad request kill the box
                     # The detail goes to the log, not the client: an exception's

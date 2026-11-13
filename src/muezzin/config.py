@@ -81,7 +81,7 @@ class OutputConfig:
     target: Optional[str] = None   # speaker/group name (Cast) or host (lan_box)
     host: Optional[str] = None
     port: Optional[int] = None
-    volume: float = 0.5
+    volume: Optional[float] = None   # a speaker's level; a computer's is never touched
     enabled: bool = True
 
 
@@ -234,7 +234,7 @@ def load_profile(path) -> Profile:
             target=item.get("target"),
             host=host,
             port=port,
-            volume=float(item.get("volume", 0.5)),
+            volume=(float(item["volume"]) if item.get("volume") is not None else None),
             enabled=bool(item.get("enabled", True)),
         ))
 
