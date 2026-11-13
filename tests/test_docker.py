@@ -66,8 +66,8 @@ def test_the_compose_file_parses_and_keeps_what_discovery_needs():
 def test_the_published_tag_is_the_one_the_readme_promises():
     """The registry tag must be the version, not the git tag.
 
-    Publishing `${{ github.ref_name }}` puts `:v0.1.0` on ghcr while every
-    instruction in the README says `docker pull ...:0.1.0`, and the build stays
+    Publishing the git ref name puts a `v`-prefixed tag on ghcr while every
+    instruction in the README says to pull the bare version, and the build stays
     green the whole time: the failure belongs to whoever follows the
     instructions a week later, with no way to tell that the recipe and the
     pantry disagree. Nothing else in this suite reads the workflow, so this is
@@ -80,7 +80,7 @@ def test_the_published_tag_is_the_one_the_readme_promises():
     pushed = "\n".join(step["with"]["tags"] for step in steps
                        if step.get("with", {}).get("tags"))
     assert "env.IMAGE_TAG" in pushed, "the published tag must be the version, not the git tag"
-    assert "ref_name" not in pushed, "a git tag pushes v0.1.0 while the docs promise 0.1.0"
+    assert "ref_name" not in pushed, "the workflow publishes a v-prefixed tag while the docs promise the bare version"
     guard = "\n".join(step.get("run", "") for step in steps)
     assert "IMAGE_TAG" in guard and "GITHUB_ENV" in guard, "IMAGE_TAG is never set, so the tag is empty"
     readme = (ROOT / "README.md").read_text(encoding="utf-8")

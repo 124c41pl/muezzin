@@ -32,7 +32,8 @@ import yaml
 
 from . import __version__, calc, hijri, yamledit
 from .backends import scan_speakers
-from .config import load_profile, valid_host
+from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, load_profile,
+                     uses_starter_location, valid_host)
 from .scheduler import PRAYER_KEYS, Runner, upcoming
 
 log = logging.getLogger("muezzin.web")
@@ -194,6 +195,30 @@ class WebPanel:
 
     # ---- state -----------------------------------------------------------
 
+    def notices(self) -> list[str]:
+        """The two things that make a muezzin play nothing, said where a new
+        install will actually read them.
+
+        A fresh profile has no speakers in it, and its coordinates are the
+        starter's placeholder for New York. Both are correct YAML and neither
+        produces an error, so the page - which a new user opens before they ever
+        see a log - has to be the one that says so.
+        """
+        p = self.runner.profile
+        notes = []
+        if uses_starter_location(p.location):
+            notes.append(f"The location is still the starter's placeholder "
+                         f"({STARTER_LATITUDE}, {STARTER_LONGITUDE}, {STARTER_TIMEZONE}), so "
+                         f"every time on this page is New York's until you change it in the "
+                         f"profile below.")
+        if not p.outputs:
+            notes.append("No speakers are configured yet, so nothing can play: look again "
+                         "below and use a speaker, or write an outputs entry in the profile.")
+        elif not p.enabled_outputs():
+            notes.append(f"All {len(p.outputs)} speakers in the profile are switched off, "
+                         f"so nothing can play.")
+        return notes
+
     def state(self) -> dict:
         p = self.runner.profile
         now = dt.datetime.now(dt.timezone.utc)
@@ -283,6 +308,9 @@ class WebPanel:
                         for key, value in sorted(calc.PRESETS.items())],
             "prayers": list(PRAYER_KEYS),
             "scan_at": self.scan_at,
+            # what the page should say out loud before anything else: an empty
+            # profile is a valid profile, and a silent one
+            "notices": self.notices(),
             "max_upload": MAX_UPLOAD,
             "outputs": [{"name": o.name, "kind": o.kind, "target": o.target, "host": o.host,
                          "port": o.port, "volume": o.volume, "enabled": o.enabled}
@@ -1071,6 +1099,9 @@ PAGE = """<!doctype html>
  footer { padding:8px 22px 30px; max-width:1200px }
  #credit { color:var(--gold); font-size:13.5px }
  .fine { color:var(--dim); font-size:12.5px; margin-top:6px }
+ .notice { color:var(--gold); background:#0d1815; border:1px solid var(--line);
+  border-left:3px solid var(--gold); border-radius:8px; padding:9px 13px;
+  margin:10px 0 0; font-size:13.5px; max-width:1200px }
 </style></head><body>
 <header>
  <svg class="star" viewBox="0 0 32 32" aria-hidden="true">
@@ -1082,6 +1113,7 @@ PAGE = """<!doctype html>
  <button id="refresh">refresh</button>
 </header>
 <div id="next"></div>
+<div id="notices"></div>
 <main>
  <section><h2>Timetable</h2><div id="days"></div></section>
  <section><h2>Next events</h2><table><thead><tr><th>when</th><th>event</th><th>speakers</th><th>media</th></tr></thead><tbody id="upcoming"></tbody></table></section>
@@ -1170,6 +1202,9 @@ function render(){
  $('#next').innerHTML=nx
   ? `<b>${esc(nx.when)}</b> · ${esc(NAME[nx.at]||nx.at)} <span class="ar">${esc(AR[nx.at]||'')}</span> · ${esc(nx.name)} to ${esc(nx.targets.join(', ')||'(no speaker enabled)')}`
   : 'nothing scheduled in the next two days';
+ // A brand new install sees this page long before it sees a log file, so the two
+ // things that make a quiet muezzin are said here as well as in the daemon's log.
+ $('#notices').innerHTML=(st.notices||[]).map(n=>`<div class="notice">${esc(n)}</div>`).join('');
  $('#days').innerHTML=st.days.map((d,i)=>
   `<div class="day${i===0?' today':''}"><div class="dayhead"><h2>${esc(d.weekday)} ${esc(d.date)}</h2>`
   +` <span class="hij">${esc(d.hijri)}</span> <span class="ar">${esc(d.hijri_ar)}</span>`

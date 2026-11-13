@@ -30,10 +30,11 @@ jobs:
             echo "tag is v$tag but pyproject.toml says $want; fix the version first" >&2
             exit 1
           fi
-          # The image is tagged with the version, not with the git tag. The
-          # README tells people to pull :0.1.0, and publishing ${{ github.ref_name }}
-          # would put :v0.1.0 on the registry instead: every documented pull
-          # command then fails for a stranger, and nothing in the build complains.
+          # The image is tagged with the version, not with the git tag: the
+          # README tells people to pull the version number, and publishing the
+          # ref name itself would put a v-prefixed tag on the registry instead.
+          # Every documented pull command then fails for a stranger, and nothing
+          # in the build complains.
           echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
 
       - uses: docker/setup-qemu-action@v3

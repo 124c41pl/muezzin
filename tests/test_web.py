@@ -683,7 +683,7 @@ def test_a_scanned_speaker_can_be_added_and_the_name_is_taken_from_it(panel):
 def test_a_box_that_runs_another_app_is_not_offered_as_an_output(panel):
     web, _, _ = panel
     status, reply = call(web.port, "/api/box/add",
-                         {"name": "raspberrypi", "host": "192.0.2.156", "port": 9874,
+                         {"name": "attic-pi", "host": "192.0.2.156", "port": 9874,
                           "kind": "smart_azan_pi"})
     assert status == 400 and "does not speak" in reply["error"]
 
@@ -960,6 +960,13 @@ def test_the_page_works_on_a_profile_that_has_no_speakers_yet(tmp_path):
         assert len(state["events"]) == 5, "the five adhans are there before any speaker is"
         assert all(not e["targets"] for e in state["upcoming"]), \
             "an untargeted event with no outputs resolves to nothing, quietly"
+        # a brand new install reads this page, not the daemon's log
+        assert any("No speakers" in n for n in state["notices"]), state["notices"]
+        assert any("New York" in n for n in state["notices"]), state["notices"]
+        status, page = call(web.port, "/", raw=True)
+        assert status == 200 and page.startswith("<!doctype html")
+        assert 'id="notices"' in page, "the page has somewhere to put those words"
+        assert '.notice' in page, "and a style that makes them look like a warning"
         status, reply = call(web.port, "/api/speaker/add", {"target": "Landing group"})
         assert status == 200, reply
         assert reply["output"] == "landing-group"
@@ -967,9 +974,46 @@ def test_the_page_works_on_a_profile_that_has_no_speakers_yet(tmp_path):
         assert [o.name for o in added.outputs] == ["landing-group"]
         assert added.targets_for(added.events[0]) == added.outputs, \
             "the adhans reach the speaker the moment it exists"
-        status, page = call(web.port, "/", raw=True)
-        assert status == 200 and page.startswith("<!doctype html")
+        _, state = call(web.port, "/api/state")
+        assert not any("No speakers" in n for n in state["notices"]), \
+            "the warning goes away once the thing it warned about is fixed"
     finally:
         web.stop()
         runner.shutdown()
+
+
+def test_a_profile_that_chose_its_own_city_is_not_lectured(tmp_path):
+    """The band has to earn its space on the page: a household with a speaker of its
+    own and coordinates it typed should see nothing where it would have been, or the
+    page nags about what is fine and stops being read. The profile moves city because
+    the placeholder check is about those three exact values, not about New York."""
+    text = (BASE.replace("latitude: 40.7128, longitude: -74.006",
+                         "latitude: 33.5131, longitude: -111.9051")
+                .replace("timezone: America/New_York", "timezone: America/Phoenix"))
+    profile, _ = profile_for(tmp_path, text)
+    runner = Runner(profile)
+    web = WebPanel(runner, port=0)
+    web.start()
+    try:
+        _, state = call(web.port, "/api/state")
+        assert state["outputs"], "the fixture needs a speaker for this to mean anything"
+        assert state["notices"] == [], state["notices"]
+    finally:
+        web.stop()
+        runner.shutdown()
+
+
+def test_switching_every_speaker_off_says_so_on_the_page(panel):
+    """Whether an output is on lives in the running daemon and never appears in the
+    file, so a house that has gone quiet by switching things off would otherwise be
+    silent with no trace of why. This is the one kind of quiet worth announcing."""
+    web, _, _ = panel
+    _, state = call(web.port, "/api/state")
+    for name in [o["name"] for o in state["outputs"]]:
+        status, reply = call(web.port, "/api/output", {"name": name, "enabled": False})
+        assert status == 200, reply
+    _, state = call(web.port, "/api/state")
+    assert any("switched off" in n for n in state["notices"]), state["notices"]
+    assert not any("No speakers" in n for n in state["notices"]), \
+        "configured but off is a different problem from having nothing at all"
 
