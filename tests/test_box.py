@@ -1,5 +1,5 @@
-"""The box protocol: what the Windows/Linux daemon sends and what a speaker box
-accepts. Kept device-free so it runs anywhere."""
+"""The box protocol: what the daemon sends and what a speaker box accepts, on
+whichever machine each of them landed on. Kept device-free so it runs anywhere."""
 from __future__ import annotations
 
 import base64

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from . import __version__, calc, places, yamledit
+from . import __version__, calc, localplay, places, yamledit
 from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, OutputConfig,
                      Profile, load_profile, uses_starter_location, valid_host)
 
@@ -319,7 +319,8 @@ def cmd_devices(timeout: float) -> int:
     if not speakers and not boxes:
         print("no Cast/Nest speakers and no muezzin boxes found. Check both machines are on the "
               "same LAN/subnet, that mDNS is not blocked (common on 'public' network profiles in "
-              "Windows), and that the Wi-Fi is not client-isolated.")
+              "Windows; on macOS, allow incoming connections when the firewall asks), and that "
+              "the Wi-Fi is not client-isolated.")
         return 1
     if speakers or groups:
         print(f"{'speaker / group':<28} {'model':<26} {'group':<6} address")
@@ -354,8 +355,9 @@ def cmd_box(name: str, port: int, player: str | None, allow_hosts: tuple[str, ..
 
     box = Box(name, port, player, allow_hosts)
     if box.player_name == "none":
-        print("warning: no command-line player found (tried mpg123, ffplay, cvlc, aplay).\n"
-              "On a Pi: sudo apt install mpg123     or pass --player 'your-command'", file=sys.stderr)
+        print(f"warning: no player found on this machine.\n{localplay.install_advice()}\n"
+              "      Pass --player 'your-command' if you have one under another name.",
+              file=sys.stderr)
     if not allow_hosts:
         print("note: this box will not fetch URLs. Add --allow-host <address of the machine\n"
               "      that serves your media> if the daemon should hand it URLs instead of bytes.",
@@ -576,7 +578,7 @@ def main(argv=None) -> int:
     p.add_argument("--name", default="muezzin-box", help="name to advertise on the LAN")
     p.add_argument("--port", type=int, default=8090)
     p.add_argument("--player", default=None,
-                   help="command that plays one file (default: mpg123, ffplay, cvlc or aplay)")
+                   help="command that plays one file (default: what this machine already has)")
     p.add_argument("--allow-host", action="append", type=_host_arg, default=[], metavar="ADDRESS",
                    help="address this box may fetch a recording from; repeat per machine, or "
                         "name .example.com to cover that domain. Without it the box only "

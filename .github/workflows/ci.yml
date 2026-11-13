@@ -18,12 +18,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows matters on its own: the daemon's most common host, it has no
-        # system tzdata, and path containment is case-insensitive there.
-        os: [ubuntu-latest, windows-latest]
+        # Three operating systems on purpose: this program is meant to run on
+        # whichever machine a house already has, and the places they differ are
+        # exactly the places a test should look - Windows has no system tzdata and
+        # case-insensitive paths, macOS reaches a file through afplay rather than
+        # winmm, Linux has whatever player the distro happens to carry.
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.10", "3.12"]
         exclude:
           - os: windows-latest
+            python-version: "3.10"
+          # one mac job is enough to prove the platform, not two
+          - os: macos-latest
             python-version: "3.10"
     steps:
       - uses: actions/checkout@v4
