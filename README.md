@@ -214,7 +214,7 @@ does not see on a Pi are in `docs/HOW-IT-WORKS.md`.
 **Container.** `docker compose up` builds it; or pull what CI publishes:
 
 ```bash
-docker pull ghcr.io/124c41pl/muezzin:0.1.1
+docker pull ghcr.io/124c41pl/muezzin:0.1.2
 ```
 
 Your profile goes in `./config` and your audio in `./media`; nothing personal is
