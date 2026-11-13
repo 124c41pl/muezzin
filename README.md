@@ -140,9 +140,14 @@ cp ~/Downloads/fajr.mp3 media/         # your own audio; any file, any qari
 
 The page gives every prayer its own clip, plus a second column for Fridays, and a
 file picker that puts a new recording into `media_dir` (judged by its first bytes,
-and never overwriting a file that already exists). The two files in `media/` are
-short test tones generated for this repo: `muezzin play-now media/test-chime.wav`
-makes a noise, so you find out now rather than at 5 am whether the wiring is right.
+and never overwriting a file that already exists). Before you assign one, press
+**hear it here** beside the list: that plays the clip out of the computer you are
+looking at, at whatever level that computer is already at, and nothing on the
+network hears it — so you can compare recitations with the speakers silent. The
+level on your computer is yours to set and muezzin never touches it; a level in the
+profile means a speaker muezzin casts to. The two files in `media/` are short test
+tones generated for this repo: `muezzin play-now media/test-chime.wav` makes a
+noise, so you find out now rather than at 5 am whether the wiring is right.
 
 ### Then run it
 
@@ -270,7 +275,8 @@ the device list, along with the player it picked for itself.
 * The media server that hands files to a Cast speaker is deliberately boring: it
   serves what the profile names, lists no folders, and does not answer `Range`
   requests, so a client that insists on seeking before it plays will be annoyed
-  rather than served.
+  rather than served. The browser preview in the page has the same limit: a clip
+  starts at the beginning.
 * One adhan at a time per box; overlapping events queue.
 * `lan_box` discovery by name instead of a required `host:` is not wired in yet;
   giving the host explicitly always works.

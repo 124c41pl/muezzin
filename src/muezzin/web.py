@@ -99,6 +99,14 @@ def _sniff_audio(data: bytes) -> str | None:
     return None
 
 
+# What to tell a browser a recording of each kind is. The file's suffix is what
+# someone chose to call it; the header is what a decoder is actually being handed,
+# so the header decides this - and a kind that is not here is one no browser in
+# the house is likely to play, so the answer is a refusal with a reason in it.
+CONTENT_TYPES = {"mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg",
+                 "flac": "audio/flac", "m4a": "audio/mp4"}
+
+
 def _slug(text: str) -> str:
     """An output name a human can read, from a device name."""
     out = "".join(ch.lower() if ch.isalnum() else "-" for ch in text.strip())
@@ -724,6 +732,36 @@ class WebPanel:
             saved["url"] = self.runner.media.url_for(dest)
         return saved
 
+    def clip(self, name: str) -> tuple[Path, str]:
+        """Which recording the browser should fetch for itself, and as what type.
+
+        This is the preview: someone collecting recordings wants to know what one
+        sounds like before assigning it to a prayer, so the page asks for the bytes
+        and the sound comes out of the machine the page is open on. Nothing is sent
+        to a speaker, and no machine's level is touched - the page has no volume
+        control, because the level on a computer belongs to whoever is in front of
+        it. That is also why this is a read and not a write: a guest should be able
+        to hear the library on a read-only panel.
+
+        Only a plain file name from `media_dir` answers. The header decides the
+        type, so a file called adhan.mp3 that is really something else is served as
+        what it is, or refused if the header is not audio at all.
+        """
+        plain = str(name).replace("\\", "/")
+        if "/" in plain or not plain or plain.startswith("."):
+            raise _Status(400, "needs a plain file name from the list, with no path in it")
+        root = Path(self.runner.profile.media_dir).resolve()
+        full = (root / plain).resolve()
+        if not full.is_relative_to(root) or not full.is_file():
+            raise _Status(404, f"{plain} is not one of the recordings in media_dir")
+        with open(full, "rb") as handle:
+            head = handle.read(12)
+        kind = _sniff_audio(head)
+        if kind not in CONTENT_TYPES:
+            raise _Status(415, f"{plain} does not look like audio by its first bytes, so "
+                               f"this browser would only fail at it")
+        return full, CONTENT_TYPES[kind]
+
     # ---- serving ---------------------------------------------------------
 
     def start(self) -> None:
@@ -797,6 +835,30 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(content)
+
+    def _send_file(self, path: Path, content_type: str) -> None:
+        """A recording, copied through in pieces rather than read into memory: a
+        whole recitation runs to a hundred megabytes, and a browser previewing one
+        should not need this process to hold all of it at once.
+
+        No Range header is honoured, so the preview starts at the beginning and a
+        browser that wants to jump to the middle of a clip does not get to. That is
+        the same limit the media server already has for speakers, and it is written
+        down in the docs rather than left to be discovered.
+        """
+        size = path.stat().st_size
+        self._sent = True
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(size))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(64 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
 
     def _fail(self, status: int, message: str) -> None:
         """Report an error - but never a second time on one connection, which is
@@ -915,6 +977,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         except ValueError:
             self.close_connection = True
             return
+        if self.headers.get("Transfer-Encoding"):
+            # A chunked body has no declared size, so there is nothing safe to
+            # count out and throw away. Close instead of guessing where it ends.
+            self.close_connection = True
+            return
         if length > 0:
             self._discard(length, cap)
 
@@ -937,8 +1004,29 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 wanted = (parse_qs(urlparse(self.path).query).get("refresh") or [""])[0]
                 refresh = wanted.lower() not in ("", "0", "false", "no")
                 self._json(self.panel.speakers(refresh))
+            elif self.path.startswith("/api/clip"):
+                # A recording for the browser to play by itself. A read, so it works
+                # on a read-only panel: hearing what a clip sounds like changes
+                # nothing, anywhere.
+                site = (self.headers.get("Sec-Fetch-Site") or "").casefold()
+                if site not in ("", "same-origin", "none"):
+                    # The one read that hands over a file, so it gets the same
+                    # courtesy the writes get: a browser says honestly whether the
+                    # request came from this page or from somebody else's, and a
+                    # library of recordings is not a public share. curl says
+                    # nothing, and stays allowed; this is a browser guard.
+                    self._json({"error": "recordings are only handed to this page"}, 403)
+                    return
+                name = (parse_qs(urlparse(self.path).query).get("name") or [""])[0]
+                clip, content_type = self.panel.clip(name)
+                self._send_file(clip, content_type)
             else:
                 self._json({"error": f"no such path: {self.path}"}, 404)
+        except _Status as exc:
+            # A refusal this side chose - a name that is not in media_dir, a file
+            # whose header is not audio. It has a status and a reason already, and
+            # turning it into a 500 with a traceback in the log would hide both.
+            self._json({"error": str(exc)}, exc.status)
         except ConnectionError:
             pass  # the page went away mid-response, which is normal
         except Exception as exc:                                  # never kill the thread
@@ -950,10 +1038,16 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         try:
             if not self._host_ok():
+                # Nothing in the body is interpreted, but it is still read off the
+                # socket and thrown away, bounded: a connection left half-read
+                # reaches the page as a reset rather than as the reason for the
+                # refusal, and the next thing on that connection becomes nonsense.
+                self._drain(MAX_UPLOAD)
                 self._json({"error": "this page answers to its own address, not to the name "
                                      "in that request"}, 403)
                 return
             if not self._same_origin():
+                self._drain(MAX_UPLOAD)
                 self._json({"error": "this page only takes writes from its own origin"}, 403)
                 return
             if not self.panel.allow_edit:
@@ -1134,6 +1228,12 @@ PAGE = """<!doctype html>
   <table><thead><tr><th>time</th><th></th><th>every day</th><th>Friday</th></tr></thead><tbody id="sound"></tbody></table>
   <div class="row"><button id="applysound">apply these clips</button><span class="tag" id="soundsay">nothing changed</span></div>
   <div class="row"><input type="file" id="file" accept=".mp3,.m4a,.wav,.ogg,.oga,.flac,.aac,.opus,audio/*"><button id="upload">add this recording</button><span class="tag" id="uploadsay"></span></div>
+  <div class="row"><select id="preview"></select><button id="hear">hear it here</button><span class="tag" id="hearsay">nothing playing</span></div>
+  <div class="fine">That plays in this browser, out of the computer this page is open on, at the level
+   that computer is already set to. There is no volume control here on purpose: the level on a computer
+   belongs to whoever is sitting at it. Nothing on the network hears it - the <b>test</b> button in the
+   Outputs table is the one that sends a recording to a speaker, and the two are easy to tell apart when
+   you are choosing what a prayer should sound like.</div>
   <div class="fine">A clip is picked from what is already in <code>media_dir</code>; the button above
    puts a new recording there. Nothing overwrites a recording that is playing, so two recordings of
    the same adhans need two names.</div>
@@ -1219,6 +1319,9 @@ function render(){
  const pick=$('#media'), want=pick.value;
  pick.innerHTML=st.media_files.map(f=>`<option>${esc(f)}</option>`).join('')||'<option value="">(no audio in media_dir)</option>';
  if(want&&[...pick.options].some(o=>o.value===want)) pick.value=want;
+ const pv=$('#preview'), pvwant=pv.value;
+ pv.innerHTML=st.media_files.map(f=>`<option>${esc(f)}</option>`).join('')||'<option value="">(no audio in media_dir)</option>';
+ if(pvwant&&[...pv.options].some(o=>o.value===pvwant)) pv.value=pvwant;
  $('#mediaurl').textContent=st.media_url?('speakers fetch audio from '+st.media_url):'no media server needed by this profile';
   // A credit has to name a person, because a person is who answers questions about
   // the code. Say who you are with `attribution:` in the profile.
@@ -1361,6 +1464,23 @@ $('#scan').onclick=()=>act(async()=>{ SC=await api('/api/speakers?refresh=1'); }
 $('#upload').onclick=()=>act(async()=>{ up=await uploadFile(); },
  ()=>{ $('#uploadsay').textContent=up.uploaded+' in media_dir';
        say('added '+up.uploaded+(up.url?' · a speaker can reach it at '+up.url:''),'ok'); });
+let playing=null;
+// The preview is the browser asking for the bytes and making the sound itself:
+// no speaker on the network is involved, and no level is set anywhere, because
+// the level on this computer belongs to whoever is using it. Pressing the button
+// again stops it, which is cheaper and more honest than a timer.
+async function hearIt(name){
+ if(playing){ playing.pause(); playing=null; $('#hearsay').textContent='stopped'; return; }
+ if(!name){ say('pick a recording to listen to first','err'); return; }
+ const a=new Audio('/api/clip?name='+encodeURIComponent(name));
+ a.onended=()=>{ if(playing===a){ playing=null; $('#hearsay').textContent='finished'; } };
+ a.onerror=()=>{ if(playing===a){ playing=null; $('#hearsay').textContent=name+' is not a sound this browser can play'; } };
+ playing=a;
+ try{ await a.play(); }
+ catch(err){ if(playing===a){ playing=null; $('#hearsay').textContent='this browser would not start it: '+err.message; } return; }
+ $('#hearsay').textContent='playing '+name+' out of this computer, not a speaker';
+}
+$('#hear').onclick=()=>hearIt($('#preview').value);
 load().catch(e=>{$('#top').textContent=e.message;});
 setInterval(()=>load().catch(()=>{}),60000);
 </script></body></html>
