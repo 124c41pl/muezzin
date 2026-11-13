@@ -50,3 +50,11 @@ where = ["src"]
 # test_calc.py in different folders make collection die with a confusing
 # "use a unique basename" hint before a single test has run.
 testpaths = ["tests"]
+
+# A test that blocks instead of failing would sit until CI's own time limit and
+# tell us nothing at all. faulthandler is standard library, so no dependency is
+# added: after this many seconds of silence it dumps the stack of every thread,
+# which names the test and the line it is stuck on. First use: the macOS job,
+# which on 2026-11-12 had been inside the suite for half an hour while Linux
+# and Windows finished theirs in under a minute.
+faulthandler_timeout = 120
