@@ -30,7 +30,7 @@ from urllib.parse import parse_qs, urlparse
 
 import yaml
 
-from . import __version__, calc, hijri, yamledit
+from . import __version__, calc, hijri, net, yamledit
 from .backends import scan_speakers
 from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, load_profile,
                      uses_starter_location, valid_host)
@@ -732,7 +732,8 @@ class WebPanel:
         class Bound(_Handler):
             panel = self
 
-        self._httpd = http.server.ThreadingHTTPServer(("0.0.0.0", self.port), Bound)
+        # LANServer rather than the standard library's class: see net.py.
+        self._httpd = net.LANServer(("0.0.0.0", self.port), Bound)
         self.port = self._httpd.server_address[1]
         self._thread = threading.Thread(target=self._httpd.serve_forever,
                                         name="muezzin-web", daemon=True)

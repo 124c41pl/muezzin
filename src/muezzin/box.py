@@ -41,10 +41,10 @@ import re
 import shlex
 import tempfile
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-from . import localplay
+from . import localplay, net
 
 log = logging.getLogger("muezzin.box")
 
@@ -76,7 +76,7 @@ class Box:
             self.player_cmd = shlex.split(player)   # a player path with a space in it is normal
             self.player_name = Path(self.player_cmd[0]).name
         self.last: dict = {}
-        self._httpd: ThreadingHTTPServer | None = None
+        self._httpd: net.LANServer | None = None
         self._zeroconf = None
         self._lock = threading.Lock()   # one adhan at a time, not two overlapping
 
@@ -207,7 +207,8 @@ class Box:
             def log_message(self, fmt, *args):
                 log.debug("box http: " + fmt, *args)
 
-        self._httpd = ThreadingHTTPServer(("0.0.0.0", self.port), Handler)
+        # LANServer rather than the standard library's class: see net.py.
+        self._httpd = net.LANServer(("0.0.0.0", self.port), Handler)
         self.port = self._httpd.server_address[1]
         threading.Thread(target=self._httpd.serve_forever, name="muezzin-box-http",
                          daemon=True).start()
