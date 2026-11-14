@@ -11,7 +11,8 @@ import pytest
 
 from muezzin import calc
 from muezzin.config import load_profile
-from muezzin.scheduler import PRAYER_KEYS, ScheduledEvent, _wall_clock, events_for_date, upcoming
+from muezzin.scheduler import (PRAYER_KEYS, ScheduledEvent, _wall_clock, clock_hours,
+                               events_for_date, upcoming)
 
 # 2026-11-09 is a Monday; 2026-11-10 is a Tuesday.
 MONDAY = dt.date(2026, 11, 9)
@@ -536,7 +537,7 @@ def test_the_sound_goes_out_before_the_time_it_belongs_to(tmp_path):
     today = now.date()
     base = calc.compute_times(calc.Location(40.7128, -74.006, "America/New_York"),
                               today, calc.PRESETS["isna"])
-    due = _wall_clock(today, base.dhuhr, "America/New_York")
+    due = _wall_clock(today, base.dhuhr, "America/New_York", base.utc_offset_hours)
     # `offset_min:` only comes in whole minutes, so nudge dhuhr to somewhere in the
     # next minute or so and let the lead pay for the rest of the way to a moment
     # about six seconds from now
@@ -576,4 +577,133 @@ def test_the_sound_goes_out_before_the_time_it_belongs_to(tmp_path):
     early = (sev.when.astimezone(dt.timezone.utc) - played[0]).total_seconds()
     assert early > 0.0, f"the call started {abs(early):.1f} s after the time it belongs to"
     assert abs(early - lead) < 4.0, f"started {early:.1f} s early, wanted {lead:.1f} s"
+
+
+# --- the two days a year the zone moves its own clock -------------------------
+#
+# The engine solves a whole day against one civil offset, the one the zone had at the
+# middle of it, and the numbers that come out are hours on that scale. Most days the
+# clock on the wall agrees with that scale, and nothing about it matters. Twice a year it
+# does not, and then a number can name a minute no clock ever showed, or one that showed
+# twice. The tests below are about paying for that difference.
+
+SPRING = dt.date(2026, 3, 8)      # 02:00 -> 03:00 in America/New_York
+FALLBACK = dt.date(2026, 11, 1)   # 02:00 -> 01:00: an hour that happens twice
+HALF_HOUR = dt.date(2026, 10, 4)  # 02:00 -> 02:30 in Australia/Lord_Howe
+ERIE = calc.Location(42.0995, -80.0565, "America/New_York")
+SANTIAGO = calc.Location(-33.45, -70.66, "America/Santiago")
+
+
+def test_a_day_carries_the_offset_its_zone_had_at_its_midday():
+    """The scale the numbers sit on travels with them, instead of being guessed at."""
+    for day, offset in ((SPRING, -4.0), (FALLBACK, -5.0), (dt.date(2026, 1, 15), -5.0)):
+        times = calc.compute_times(ERIE, day, calc.PRESETS["isna"])
+        assert times.utc_offset_hours == offset, f"{day} was solved on the wrong scale"
+
+
+def test_a_morning_that_jumps_forward_fires_at_the_instant_the_sun_meant():
+    """Half past two on that scale is a minute no clock showed, but it is still a real
+    moment, and it is the moment the speakers are supposed to sound at."""
+    when = _wall_clock(SPRING, 2.5, "America/New_York", -4.0)
+    # The scale runs an hour ahead of the clock that was still on the wall at that
+    # moment, so the reading it had was half past one, not half past three.
+    assert (when.day, when.hour, when.minute) == (8, 1, 30)
+    assert when.utcoffset() == dt.timedelta(hours=-5)
+    # Read as a wall clock instead - which is what this code used to do - the same
+    # number names a moment an hour later: a call an hour late, once a year.
+    late = _wall_clock(SPRING, 2.5, "America/New_York")
+    assert late - when == dt.timedelta(hours=1)
+    assert late.strftime("%H:%M") == "02:30", "02:30 is the minute that morning skipped"
+
+
+def test_an_hour_that_comes_around_twice_still_names_one_moment():
+    """On a 25-hour day one reading happens twice, and the offset a number was measured
+    against is what says which pass through that hour it means."""
+    first = _wall_clock(FALLBACK, 1.5, "America/New_York", -4.0)
+    again = _wall_clock(FALLBACK, 1.5, "America/New_York", -5.0)
+    assert first.utcoffset() == dt.timedelta(hours=-4)
+    assert again.utcoffset() == dt.timedelta(hours=-5)
+    assert (first.hour, first.minute) == (again.hour, again.minute) == (1, 30)
+    # Two datetimes sharing one tzinfo subtract as their wall fields, so the instants
+    # themselves are what has to be compared.
+    first_utc = first.astimezone(dt.timezone.utc)
+    again_utc = again.astimezone(dt.timezone.utc)
+    assert again_utc - first_utc == dt.timedelta(hours=1)
+
+
+def test_a_zone_that_moves_by_half_an_hour_moves_by_half_an_hour():
+    """Lord Howe Island shifts its clocks by thirty minutes, so the error there was
+    thirty minutes rather than an hour. The fix is the arithmetic, not a constant."""
+    when = _wall_clock(HALF_HOUR, 2.0, "Australia/Lord_Howe", 11.0)
+    assert (when.hour, when.minute) == (1, 30)
+    assert when.utcoffset() == dt.timedelta(hours=10, minutes=30)
+    late = _wall_clock(HALF_HOUR, 2.0, "Australia/Lord_Howe")
+    assert late - when == dt.timedelta(minutes=30)
+
+
+def test_an_ordinary_day_comes_back_with_the_numbers_it_went_in_with():
+    """The other 364 days of the year: a wall reading and the value are the same thing,
+    and a timetable that has always been right stays exactly as it was."""
+    times = calc.compute_times(ERIE, dt.date(2026, 6, 21), calc.PRESETS["isna"])
+    shown = clock_hours(times, ERIE.timezone)
+    given = {k for k in PRAYER_KEYS if getattr(times, k, None) is not None}
+    assert set(shown) == given, "a time that exists is never dropped on the way to the page"
+    for key in given:
+        assert shown[key] == pytest.approx(getattr(times, key), abs=1.0 / 3600)
+
+
+def test_a_midnight_inside_the_gap_is_fired_when_the_sun_says_it_is():
+    """Chile springs forward at midnight, so the midnight belonging to 2026-09-05 falls
+    in an hour that no clock in Santiago showed. The instant is the one the sun was at,
+    and the row printed for that day names the reading that instant really had."""
+    from zoneinfo import ZoneInfo
+
+    day = dt.date(2026, 9, 5)
+    times = calc.compute_times(SANTIAGO, day, calc.PRESETS["isna"])
+    assert times.utc_offset_hours == -4.0
+    when = _wall_clock(day, times.midnight, SANTIAGO.timezone, times.utc_offset_hours)
+    assert (when.day, when.hour, when.minute) == (6, 1, 41)
+    assert when.utcoffset() == dt.timedelta(hours=-3)
+    # Read the old way it was scheduled for 00:41 on the morning it lands on, a minute
+    # that morning did not have.
+    assert _wall_clock(day, times.midnight, SANTIAGO.timezone).strftime("%H:%M") == "00:41"
+    midnight = dt.datetime(2026, 9, 5, tzinfo=ZoneInfo(SANTIAGO.timezone))
+    shown = clock_hours(times, SANTIAGO.timezone)["midnight"]
+    assert abs(shown * 3600.0 - (when - midnight).total_seconds()) < 2.0
+    assert shown > 24.0, "it belongs to the next morning, and the table says +1"
+
+
+SANTIAGO_YAML = """
+location: {latitude: -33.45, longitude: -70.66, timezone: America/Santiago}
+method: {preset: isna}
+media_dir: media
+out_dir: "{out}"
+http_port: 0
+outputs:
+  - name: outbox
+    kind: file
+    host: "{out}"
+events:
+  - name: midnight-call
+    at: midnight
+    media: [fajr.mp3]
+"""
+
+
+def test_the_row_a_person_reads_and_the_call_that_fires_are_one_event(tmp_path):
+    """The whole promise a timetable makes, on the awkward day: the minute in the column
+    and the moment the speakers sound are the same event, not an hour apart."""
+    from zoneinfo import ZoneInfo
+
+    day = dt.date(2026, 9, 5)
+    profile, _ = profile_for(tmp_path, SANTIAGO_YAML)
+    fired = events_for_date(profile, day)
+    assert [e.event.name for e in fired] == ["midnight-call"]
+    times = calc.compute_times(profile.location, day, profile.params,
+                               asr_shadow=profile.asr_shadow,
+                               adjustments=profile.adjustments)
+    shown = clock_hours(times, profile.location.timezone)["midnight"]
+    midnight = dt.datetime(day.year, day.month, day.day,
+                           tzinfo=ZoneInfo(profile.location.timezone))
+    assert abs(shown * 3600.0 - (fired[0].when - midnight).total_seconds()) < 2.0
 

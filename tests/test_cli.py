@@ -95,6 +95,21 @@ def test_the_starter_notes_reach_somebody_who_only_ran_the_table(tmp_path, capsy
     assert "note:" not in captured.out, "the notes are not part of the table"
 
 
+def test_the_table_shows_the_minutes_the_clocks_will_actually_show(tmp_path, capsys):
+    """Santiago springs forward at midnight, so the midnight belonging to 2026-09-05
+    falls inside an hour that no clock there showed. The row prints the reading that
+    morning really had, which is the same moment the page and the daemon point at."""
+    path = tmp_path / "muezzin.yaml"
+    text = STARTER.replace("latitude: 40.7128", "latitude: -33.45")
+    text = text.replace("longitude: -74.006", "longitude: -70.66")
+    text = text.replace("timezone: America/New_York", "timezone: America/Santiago")
+    path.write_text(text, encoding="utf-8")
+    assert main(["times", "-c", str(path), "-d", "2026-09-05"]) == 0
+    rows = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("2026-09-05")]
+    assert rows, "no row for the date that was asked for"
+    assert "01:41+1" in rows[0], f"the table printed {rows[0]!r}, which is not a clock reading"
+
+
 def test_a_profile_that_changed_one_number_is_not_lectured(tmp_path):
     """The location note fires on the starter's exact placeholder triple, not on
     New York. A household that typed its own latitude - even in New York, and

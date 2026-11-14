@@ -1,10 +1,13 @@
 """Scheduling: turn a profile's events into wall-clock wakeups and run them.
 
-Times come from calc.compute_times as "decimal hours in local civil time" and
-may fall past midnight (a late isha, a Reykjavik maghrib at 00:04). They are
-converted to timezone-aware datetimes with ZoneInfo, so DST transitions and the
-two days where the clock moves are handled by the tz database rather than by
-hand-rolled arithmetic.
+Times come from calc.compute_times as decimal hours measured against one civil offset:
+the offset the zone had at the middle of that day. They may fall past midnight (a late
+isha, a Reykjavik maghrib at 00:04). On an ordinary day that scale and the clock on the
+wall are the same thing and nothing needs saying about it. On a day when the zone changed
+offset they are not, so the hours here are turned into instants using the offset they were
+measured against and then read back through ZoneInfo: the tz database, and not hand-rolled
+arithmetic, is what knows that a spring-forward morning has no half-past two in it and
+that an hour appears twice on the other day.
 """
 from __future__ import annotations
 
@@ -60,9 +63,40 @@ def events_for_date(profile: Profile, date: dt.date) -> list[ScheduledEvent]:
             log.warning("%s: %s has no computable time on %s (high-latitude rule? skipping)",
                         ev.name, ev.at, date)
             continue
-        when = _wall_clock(date, hours + ev.offset_min / 60.0, tzname)
+        when = _wall_clock(date, hours + ev.offset_min / 60.0, tzname,
+                           times.utc_offset_hours)
         out.append(ScheduledEvent(when, ev))
     return sorted(out, key=lambda e: e.when)
+
+
+def clock_hours(times: calc.PrayerTimes, tzname: str) -> dict:
+    """Each time from `times` as the reading a clock on the wall will show.
+
+    On an ordinary day every number comes back unchanged, which is what the test for an
+    ordinary day checks. Where the zone moved its own clock during the day they do not: a
+    raw value can name a minute no clock ever showed, or name one that showed twice, and a
+    table printing it would be promising a call at a time that did not exist. Going through
+    the instant and back is what makes the row a person reads and the moment the speakers
+    sound be the same event, which is the whole promise a timetable makes.
+
+    The past-midnight convention the tables already use is kept: a time belonging to the
+    evening before comes back negative and one in the next morning above 24, so the same
+    formatter that marks an isha at 00:24 marks these too.
+    """
+    day = dt.date.fromisoformat(times.date)
+    out: dict = {}
+    for key in PRAYER_KEYS:
+        value = getattr(times, key, None)
+        if value is None:
+            continue
+        stamp = _wall_clock(day, value, tzname, times.utc_offset_hours)
+        hours = stamp.hour + (stamp.minute * 60 + stamp.second) / 3600.0
+        if stamp.date() > day:
+            hours += 24.0
+        elif stamp.date() < day:
+            hours -= 24.0
+        out[key] = hours
+    return out
 
 
 def _day_names_to_index(names: Iterable[str]) -> set[int]:
@@ -70,13 +104,27 @@ def _day_names_to_index(names: Iterable[str]) -> set[int]:
     return {table[str(n).lower()[:3]] for n in names}
 
 
-def _wall_clock(date: dt.date, hours: float, tzname: str) -> dt.datetime:
-    """Interpret hours as local wall-clock time on `date` (may spill into the
-    next day), then attach the IANA zone. Ambiguous/Nonexistent times resolve
-    with the tz database's default (fold=0)."""
-    from zoneinfo import ZoneInfo
+def _wall_clock(date: dt.date, hours: float, tzname: str,
+                offset_hours: Optional[float] = None) -> dt.datetime:
+    """The instant a decimal-hours value describes.
+
+    With offset_hours the value is on calc's scale: hours past midnight measured against
+    one fixed civil offset, the one the zone had at the middle of the day. That is the
+    only reading that keeps a call on the right moment on a day the clock moved, because
+    it is the scale the sun's position was solved against. The same hours read as wall
+    clock time land an hour off on a spring-forward morning, and on a fall-back morning
+    the minute they name happened twice, with nothing in the number to say which.
+
+    Without offset_hours the value is taken as wall-clock time on that date, spilling into
+    the next day when it has to, and an ambiguous or impossible minute is resolved by the
+    tz database's default (fold=0).
+    """
+    zone = _zone(tzname)
     naive = dt.datetime(date.year, date.month, date.day) + dt.timedelta(hours=hours)
-    return naive.replace(tzinfo=ZoneInfo(tzname))
+    if offset_hours is None:
+        return naive.replace(tzinfo=zone)
+    scale = dt.timezone(dt.timedelta(hours=offset_hours))
+    return naive.replace(tzinfo=scale).astimezone(zone)
 
 
 def upcoming(profile: Profile, now: Optional[dt.datetime] = None, days: int = 2) -> list[ScheduledEvent]:

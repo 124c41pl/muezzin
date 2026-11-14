@@ -297,9 +297,6 @@ the device list, along with the player it picked for itself.
   a host named with its own `--allow-host`. Neither is a substitute for
   authentication: they stop a stranger's *website* reaching a LAN port, which is a
   different problem from a stranger on the LAN.
-* A prayer time that falls inside a daylight-saving gap — the hour spring forward
-  deletes — comes out an hour off. One event per year at most, at the latitudes
-  that change clocks.
 * If a prayer time does not exist at your latitude, the event is skipped rather
   than moved.
 * Prayer times are the *computed* times for your coordinates. A masjid down the

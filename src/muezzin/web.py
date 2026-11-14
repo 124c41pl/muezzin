@@ -34,7 +34,7 @@ from . import __version__, calc, geocode, hijri, net, yamledit
 from .backends import lead_for, scan_speakers
 from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, load_profile,
                      uses_starter_location, valid_host)
-from .scheduler import PRAYER_KEYS, Runner, upcoming
+from .scheduler import PRAYER_KEYS, Runner, clock_hours, upcoming
 
 log = logging.getLogger("muezzin.web")
 
@@ -268,9 +268,14 @@ class WebPanel:
             date = local_now.date() + dt.timedelta(days=i)
             times = calc.compute_times(p.location, date, p.params,
                                        asr_shadow=p.asr_shadow, adjustments=p.adjustments)
+            # Read off the wall, not off the calculation's scale. The two are the same
+            # number on an ordinary day and differ on the two days a year the zone moves
+            # its own clock, and this row has to agree with the "next" list below, which
+            # is built from the instants the speakers will actually sound at.
+            hours = clock_hours(times, p.location.timezone)
             row = {"date": date.isoformat(),
                    "weekday": date.strftime("%a"),
-                   "times": {k: _fmt(getattr(times, k, None)) for k in PRAYER_KEYS}}
+                   "times": {k: _fmt(hours.get(k)) for k in PRAYER_KEYS}}
             row.update(hijri.day_info(date, p.hijri_offset))
             days.append(row)
         next_events = []

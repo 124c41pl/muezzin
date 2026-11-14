@@ -7,7 +7,10 @@ rules, so any community profile is representable.
 
 Conventions
 -----------
-* All times are *decimal hours in the local civil time* passed in.
+* Times are *decimal hours measured against one civil offset*: the offset the zone had at
+  the middle of that day. On an ordinary day that is the same as local civil time, and on
+  the days a zone changes offset it is not. PrayerTimes.utc_offset_hours names the scale
+  the numbers sit on, and scheduler.clock_hours turns them back into clock readings.
 * Sunrise/sunset angle: 0.833 deg accounts for refraction + solar semidiameter;
   and the horizon dips 0.0347469 * sqrt(elevation_meters) degrees below it.
 * Twilight times solve for the sun reaching -angle degrees below the horizon.
@@ -174,10 +177,23 @@ class PrayerTimes:
     midnight: Optional[float]        # the convention THIS method declares
     true_night: Optional[float]      # sunset -> fajr midpoint (Kuwaiti), always
     shurf: Optional[float] = None
+    # The civil offset these numbers are measured against: the offset the zone had at the
+    # middle of this day, which is the one the geometry was solved with. A day on which
+    # the clock moved has no single such offset, and the numbers are still on the scale
+    # of the one that was in force at noon. Carrying it here is what lets those numbers
+    # be turned back into the instant they describe, instead of into a wall-clock reading
+    # that never appeared on any clock that day.
+    utc_offset_hours: float = 0.0
 
 
 def _local_offset_hours(date, tz: str, lng: float) -> float:
-    """Civil-time offset for solar-noon bookkeeping: noon_local = 12 + (lng-15*off)/15 in local time."""
+    """Civil-time offset for solar-noon bookkeeping: noon_local = 12 + (lng-15*off)/15 in local time.
+
+    One number for the whole day, including on the days a year when the zone itself
+    changes offset: the geometry is solved against it, so the civil times that come out
+    are hours measured on that scale rather than readings off a wall clock. The scale is
+    carried out in utc_offset_hours so the difference can be undone later.
+    """
     from datetime import datetime
     from zoneinfo import ZoneInfo
     naive = datetime(date.year, date.month, date.day, 12, 0, tzinfo=ZoneInfo(tz))
@@ -319,6 +335,7 @@ def compute_times(loc: Location, date, params: MethodParams, asr_shadow: float =
         midnight=midnight,
         true_night=true_night,
         shurf=shurf,
+        utc_offset_hours=tz_offset,
     )
 
 

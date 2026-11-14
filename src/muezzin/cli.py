@@ -208,11 +208,16 @@ def cmd_times(profile: Profile, date, days: int) -> int:
     for note in starter_warnings(profile):
         print(f"# note: {note}", file=sys.stderr)
     print("date        " + "".join(f"{k[:8]:>9}" for k in keys))
+    from .scheduler import clock_hours
     for i in range(days):
         d = date + dt.timedelta(days=i)
         t = calc.compute_times(profile.location, d, profile.params,
                                asr_shadow=profile.asr_shadow, adjustments=profile.adjustments)
-        print(f"{t.date}  " + "".join(f"{_fmt(getattr(t, k)):>9}" for k in keys))
+        # The calculation measures a day against one civil offset; a table people read
+        # has to say what their clocks will show, which is the same thing except on the
+        # days the zone moves its own clock.
+        hours = clock_hours(t, profile.location.timezone)
+        print(f"{t.date}  " + "".join(f"{_fmt(hours.get(k)):>9}" for k in keys))
     return 0
 
 

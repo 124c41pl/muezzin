@@ -300,6 +300,13 @@ Things the engine gets right that a naive implementation does not:
 * Asr solves the shadow rule (1× or 2×), not a fixed offset.
 * Times after midnight are *not* folded back into the day: Isha at `24.4` means
   00:24 the next morning, and the scheduler puts it on the right date.
+* A day is solved against one civil offset, the one the zone had at its own midday, and
+  the numbers carry that offset with them into the scheduler. Twice a year a zone moves
+  its own clock, and then that offset and the wall disagree: the instants are worked out
+  from the offset and read back through the tz database, so a call falling in the hour
+  spring forward deletes still sounds when the sun says it should, and the table prints
+  the reading that moment really had instead of a minute no clock showed. A zone that
+  moves by half an hour, Lord Howe Island among them, moves by half an hour.
 * High latitudes: with `high_latitude_rule: none` a nonexistent Fajr is reported
   as missing rather than invented; the other rules apply the usual fallbacks.
 * Observer elevation moves sunrise earlier and maghrib later (dip correction).
