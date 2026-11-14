@@ -1637,6 +1637,43 @@ def test_the_shape_of_a_map_view_comes_from_one_number(panel):
                                   "are drawn smaller than they were served"
 
 
+def test_a_place_that_was_found_can_be_looked_at_before_it_is_written(panel):
+    """Pressing find-it used to leave one door, and it was the door that writes: somebody
+    searching for a place expected the map to go there, and instead nothing seemed to happen
+    because the only button moved the profile. So a hit now offers look-there, which does
+    what a click on the map does - mark, view, dial and the two boxes move, the nearby towns
+    coming from arithmetic the daemon does for itself - while use-this stays the one button
+    a found place reaches the file through. The number of times the write endpoint appears
+    in the page is pinned so that no third door opens by accident."""
+    _, page = call(panel[0].port, "/", raw=True)
+    assert "async function look(f){" in page
+    assert 'data-look="' in page and ">look there</button>" in page
+    assert "api('/api/near?lat='+encodeURIComponent(f.latitude)" in page, \
+        "a look asks the daemon for its own arithmetic, not a stranger"
+    assert page.count("MP={latitude:W.latitude,longitude:W.longitude};") == 2, \
+        "a found place and a typed place become the view the same way"
+    assert page.count("/api/location") == 2, "write-these and use-this, and no third door"
+    assert "Looking costs nothing and writes nothing" in page, \
+        "the page says which button is the one with consequences"
+
+
+def test_a_look_up_that_found_nothing_answers_where_the_words_were_typed(panel):
+    """The only sign that the geocoder had nothing to say was a banner at the top of a long
+    page, so somebody who pressed find-it on a street address saw a list that stayed empty
+    and took it for a broken panel. The list answers for itself now, and it says the thing
+    that is usually the actual reason: OpenStreetMap's data holds the street more often than
+    it holds the number in front of it. The note waits for an answered look-up, so it can
+    never be read as the answer to a question that was not asked."""
+    _, page = call(panel[0].port, "/", raw=True)
+    assert "let W=null, FH=[], FQ='', MP=null," in page
+    assert "box.innerHTML=FQ?" in page, "the answer appears where the words went in"
+    assert "streets far more often than it holds house numbers" in page
+    assert "FQ=q; FH=j.hits||[]; showFound();" in page, \
+        "a look-up that was never answered leaves no answer behind"
+    assert "holds streets far more often than it holds house numbers" in page, \
+        "said before the typing, not only after the failure"
+
+
 def test_an_answer_that_is_not_a_picture_is_not_shown_as_one(tmp_path, monkeypatch):
     """This origin would be serving the bytes, so a login page or a captive portal from
     somewhere else would arrive at the browser looking like it came from the daemon. The

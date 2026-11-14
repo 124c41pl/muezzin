@@ -241,6 +241,26 @@ running their own instance points at it with `MUEZZIN_GEOCODE`, and `MUEZZIN_CON
 adds a URL of theirs to that name, if they would rather the operator of the lookup be
 able to reach them.
 
+A search answers only as well as the map's data does, and that data is uneven in a way
+worth knowing before a search is taken for something broken: OpenStreetMap maps streets
+far more widely than it maps house numbers, so a line that starts with a number can
+come back empty while the same street on its own answers. Measured on this machine, one
+address asked with its number returned an empty list; the same street without the
+number returned two places on that road and a time zone borrowed from the nearest city
+in the table. Nothing in this program changed between the two asks — the first wanted a
+number that nobody has written down anywhere. So the list under the box the words were
+typed into speaks for itself when the answer is empty, and says what is usually the
+reason and what to type instead; it waits for an answered look-up, so it can never be
+read as the answer to a question that never left the house.
+
+A place that was found can then be looked at before it is kept. **look there** makes it
+the place being looked at — the mark, the view, the dial and the two boxes, which is
+what a click on the map does, and the nearby towns come from the daemon's own table —
+while **use this** stays the button that writes it into the profile. Before, the list
+offered only the second one, so the single action that moved the map was also the single
+action that changed a household's timetable, and somebody who pressed find-it expecting
+the map to go and look saw a page that appeared to do nothing at all.
+
 Coordinates do not come with a time zone attached, from anybody. `timezone:` is a
 separate line and a separate hazard, because a name this machine's tz database does
 not have is a profile that will not load, so it is settled in three steps: take the
@@ -811,7 +831,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 391 tests
+pytest -q                        # 393 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and

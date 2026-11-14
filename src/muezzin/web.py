@@ -1544,7 +1544,9 @@ PAGE = """<!doctype html>
    squares come from tile.openstreetmap.org, fetched by the daemon with this program's name
    on the request and credited where they show, never by your browser. Click the map to move
    the mark and the two boxes above follow it; write-it is what saves them. To keep every
-   request inside this house, put <code>map_tiles: off</code> in the profile.</div>
+   request inside this house, put <code>map_tiles: off</code> in the profile. That map
+   holds streets far more often than it holds house numbers, so a search that starts with
+   a number is the one most often to come back empty: type the street, or the town.</div>
   <div id="map"></div>
  </section>
  <section><h2>Method</h2>
@@ -1795,7 +1797,9 @@ async function act(fn,after){ try{ await fn(); say('',''); if(after)await after(
 // squares of somebody else's map, credited where they appear. The diagram is drawn
 // from bearings and distances and needs no network at all, which is the point of
 // checking numbers before sending anything anywhere.
-let W=null, FH=[], MP=null, MQ=null, MZ=12, MAPTAG='', prefilled=false;
+let W=null, FH=[], FQ='', MP=null, MQ=null, MZ=12, MAPTAG='', prefilled=false;
+// FQ holds the words of the last look-up, so that the answer can be given in the place
+// the person is looking at rather than only in the banner at the top of a long page.
 // How many squares a view is, across and down. One number, because the grid, the mark on
 // it and the click that turns a pixel back into degrees all have to agree about it; when
 // only the grid knew, the mark and the click were quietly a whole square off.
@@ -1837,23 +1841,55 @@ function showWhere(){
  if(W.far_note) h+='<div class="fine warn">'+esc(W.far_note)+'</div>';
  box.innerHTML=h;
 }
+async function look(f){
+ // A place that was found becomes the place being looked at, exactly as a click on the
+ // map does: the mark moves, the map moves with it, the two boxes are refilled and the
+ // nearby-towns dial is redrawn from arithmetic this daemon does for itself, with nobody
+ // asked. What was typed at a geocoder does not come back as an address; only these
+ // numbers do, and only if write-these is pressed afterwards.
+ W=await api('/api/near?lat='+encodeURIComponent(f.latitude)+'&lon='
+  +encodeURIComponent(f.longitude));
+ MP={latitude:W.latitude,longitude:W.longitude};
+ $('#lat').value=f.latitude; $('#lon').value=f.longitude;
+ if(f.timezone) $('#zone').value=f.timezone;
+ showWhere(); drawMap();
+}
 function showFound(){
  const box=$('#found');
- if(!FH.length){ box.innerHTML=''; return; }
+ if(!FH.length){
+  // The answer belongs under the box the words were typed into. A banner at the top of a
+  // long page is easy to miss, and a list that stays empty reads as a page that did
+  // nothing at all, which is why the reason and the way forward are said here.
+  box.innerHTML=FQ?'<div class="fine">Nothing came back for those words. The map holds'
+   +' streets far more often than it holds house numbers, so a line that starts with a'
+   +' number is the one most often to fail where the street on its own works. Try the'
+   +' street without the number, or the town, and then zoom and click the map to point.'
+   +'</div>':'';
+  return;
+ }
  let h='<table><tbody>';
  FH.forEach((f,i)=>{
   h+='<tr><td>'+esc(f.label)+'</td><td class="members">'+f.latitude+', '+f.longitude
-   +'</td><td class="members">'+esc(f.note)+'</td><td>'+(f.timezone
+   +'</td><td class="members">'+esc(f.note)+'</td><td><button data-look="'+i
+   +'">look there</button> '+(f.timezone
     ?(st.read_only?'<span class="unknown">read-only</span>'
                  :'<button data-use="'+i+'">use this</button>')
     :'<span class="unknown">no time zone came with it</span>')+'</td></tr>';
  });
- box.innerHTML=h+'</tbody></table>';
+ box.innerHTML=h+'</tbody></table>'
+  +'<div class="fine">Looking costs nothing and writes nothing: look there moves the map,'
+  +' the two boxes and the dial, and use this is the button that changes the profile.'
+  +'</div>';
  document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
   const f=FH[Number(b.dataset.use)];
   act(()=>api('/api/location',{latitude:f.latitude,longitude:f.longitude,
                                timezone:f.timezone}),
    ()=>say('the location is written: the timetable above is the new one','ok'));
+ });
+ document.querySelectorAll('[data-look]').forEach(b=>b.onclick=()=>{
+  const f=FH[Number(b.dataset.look)];
+  act(async()=>{ await look(f); },
+   ()=>say('the map is looking there and nothing has been written; write-these keeps it','ok'));
  });
 }
 function square(lat,lon,z){
@@ -1960,10 +1996,12 @@ $('#writewhere').onclick=()=>act(()=>api('/api/location',{latitude:$('#lat').val
 $('#findit').onclick=()=>act(async()=>{
  const q=$('#place').value.trim();
  if(!q) throw new Error('type a place first');
- FH=(await api('/api/geocode',{q:q})).hits||[];
- showFound();
-},()=>say(FH.length?('found '+FH.length+', from '+st.geocoder+'; nothing of it is kept')
-                 :'nothing came back for those words. Try fewer of them.','ok'));
+ const j=await api('/api/geocode',{q:q});
+ FQ=q; FH=j.hits||[]; showFound();   // FQ only records a look-up that was answered, so a
+                                     // failed question never leaves an empty-looking answer
+},()=>say(FH.length?('found '+FH.length+', from '+st.geocoder+'; nothing of it is kept,'
+                   +' and nothing has been written yet')
+                 :'nothing matched those words, and what to try instead is under the box','ok'));
 $('#scan').onclick=()=>act(async()=>{ SC=await api('/api/speakers?refresh=1'); },
  ()=>say(((SC.found.speakers||[]).length)+' speakers, '+((SC.found.groups||[]).length)+' groups, '
    +((SC.found.boxes||[]).length)+' boxes','ok'));

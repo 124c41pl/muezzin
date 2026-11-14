@@ -220,12 +220,16 @@ every speaker switched off.
 
 None of that needs a config file. Type numbers and press **check these numbers** to
 be told the nearest names and what clock they would keep, with nobody being asked
-anything; type words and press **find it**, which asks OpenStreetMap once; or click
-the map, which moves the mark, refills the two boxes above it and redraws the dial of
-nearby towns — and still changes nothing on disk until **write it**, because a click
-is a look. Speakers work the same way: **look again**, **use**, and a name you type
-into the row. The YAML is still the only thing that persists, and every write is
-validated before it lands, but it is a window rather than a prerequisite.
+anything; type words and press **find it**, which asks OpenStreetMap once — that map
+holds streets far more often than it holds house numbers, so the search most often to
+come back empty is the one that starts with a number, and the answer says so in the
+list under the box you typed in; or click the map, or press **look there** beside
+something the search found, which moves the mark, refills the two boxes above it and
+redraws the dial of nearby towns — and still changes nothing on disk until **write
+it**, because a click is a look. Speakers work the same way: **look again**, **use**,
+and a name you type into the row. The YAML is still the only thing that persists, and
+every write is validated before it lands, but it is a window rather than a
+prerequisite.
 
 The map is on from the first run, and that is the one honest exception to "this asks
 nobody anything": its squares come from `tile.openstreetmap.org`, fetched by the
