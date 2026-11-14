@@ -337,6 +337,22 @@ def test_numbers_from_the_wrong_side_of_the_world_are_called_far(tmp_path, capsy
     assert "40.7128" in path.read_text(encoding="utf-8"), "nothing was written"
 
 
+def test_numbers_south_of_the_equator_are_typed_the_way_they_read(tmp_path, capsys,
+                                                                 monkeypatch):
+    """A leading dash is a latitude, not a switch. argparse reads one as another option,
+    which would have this program answer "expected one argument" to a question about
+    Sydney, Australia - and only on some Python versions, which is worse."""
+    path = tmp_path / "muezzin.yaml"
+    monkeypatch.chdir(tmp_path)
+    main(["init"])
+    assert main(["where", "--coords", "-33.8683,151.2093", "--write",
+                 "-c", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "Sydney, Australia" in out and "0 km away" in out
+    written = path.read_text(encoding="utf-8")
+    assert "-33.86" in written and "Australia/Sydney" in written
+
+
 def test_the_command_refuses_numbers_it_cannot_read(tmp_path, capsys, monkeypatch):
     path = tmp_path / "muezzin.yaml"
     monkeypatch.chdir(tmp_path)
