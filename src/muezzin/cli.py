@@ -400,6 +400,26 @@ def _where_online(text: str | None, config: Path, write: bool, choose: int) -> i
     return _write_location(config, values)
 
 
+def _pair_coords(argv: list[str]) -> list[str]:
+    """Let someone south of the equator type their own latitude.
+
+    argparse reads a value that begins with a dash as another flag, so
+    `--coords -33.8683,151.2093` would be answered with "expected one argument" -
+    a complaint about Sydney, Australia, from a program asking for a place. The
+    fix is the spelling argparse accepts, done on its behalf: the pair is joined
+    to the option with an equals sign.
+    """
+    fixed = list(argv)
+    index = 0
+    while index < len(fixed):
+        if (fixed[index] == "--coords" and index + 1 < len(fixed)
+                and fixed[index + 1].startswith("-") and "," in fixed[index + 1]):
+            fixed[index] = f"--coords={fixed[index + 1]}"
+            del fixed[index + 1]
+        index += 1
+    return fixed
+
+
 def _two_numbers(text: str) -> tuple[float, float]:
     """Read `42.1292,-80.0851`, the way a map page or a phone shows it, and nothing else.
 
@@ -705,7 +725,8 @@ def main(argv=None) -> int:
                         "only printing it")
     p.add_argument("--coords", metavar="LAT,LON",
                    help="say what a set of numbers means, nearest known city first, so a "
-                        "coordinate copied from somewhere can be checked")
+                        "coordinate copied from somewhere can be checked. A pair south of "
+                        "the equator is typed as it reads: --coords -33.87,151.21")
     p.add_argument("--online", action="store_true",
                    help="ask OpenStreetMap's Nominatim: answers for a street rather than "
                         "only a city, at the cost that the words you typed leave this "
@@ -761,6 +782,8 @@ def main(argv=None) -> int:
     p = sub.add_parser("init", help="write a starter profile")
     p.add_argument("-c", "--config", type=Path, default=Path("muezzin.yaml"))
 
+    # A latitude that starts with a dash is a place, not a switch: see _pair_coords.
+    argv = _pair_coords(sys.argv[1:] if argv is None else list(argv))
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
