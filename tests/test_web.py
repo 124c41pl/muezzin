@@ -1070,15 +1070,46 @@ def test_two_editors_and_a_button_never_write_the_file_at_the_same_time(panel):
     assert not list(tmp_path.glob("*.webtmp"))
 
 
-def test_the_page_shows_where_you_are_to_a_metre_not_a_millimetre(panel):
-    """The state reply goes to a page that anyone on the wifi can open, and six
-    decimal places of position is a front door with a number on it. The file keeps
-    what it had; only what is handed to the browser is rounded."""
+def test_the_position_the_page_hands_back_is_the_position_on_disk(panel):
+    """This used to round the position to two decimals on its way to the browser, on the
+    reasoning that an open page on the wifi should not print the house's exact address.
+    That reasoning did not survive the reply it was written into, which carries the whole
+    profile - exact address included - and it broke something else: the Where boxes are
+    filled from these two numbers, so pressing write-it without touching anything moved
+    the house by up to a kilometre. Shortening is the header line's job, where a person is
+    reading a label rather than editing a value."""
     web, _, _ = panel
     _, st = call(web.port, "/api/state")
-    assert st["location"]["latitude"] == 40.71
-    assert st["location"]["longitude"] == -74.01
+    assert st["location"]["latitude"] == 40.7128
+    assert st["location"]["longitude"] == -74.006
     assert "40.7128" in st["config_text"], "the profile the daemon runs on is untouched"
+    _, page = call(web.port, "/", raw=True)
+    assert "location.latitude.toFixed(2)" in page, "the header lost its own shortening"
+
+
+def test_pressing_write_it_without_touching_the_boxes_moves_nothing(panel, tmp_path):
+    """The likeliest way a household finishes setting its position is to press the button
+    and leave the two boxes as they came. So whatever the page was handed has to be what
+    it hands back: a reply that had shortened the numbers on the way out would write the
+    house a kilometre from where it is, with nothing said about it, and every time in the
+    profile would follow the new spot. Read back through the loader rather than by eye,
+    because a location may be written as a block or on one line and both have to survive.
+    """
+    def place(path):
+        loc = load_profile(path).location
+        return (loc.latitude, loc.longitude, loc.timezone)
+
+    web, _, _ = panel
+    _, st = call(web.port, "/api/state")
+    path = tmp_path / "muezzin.yaml"
+    before = place(path)
+    status, _ = call(web.port, "/api/location", {
+        "latitude": st["location"]["latitude"],
+        "longitude": st["location"]["longitude"],
+        "timezone": st["location"]["timezone"]})
+    assert status == 200, status
+    after = place(path)
+    assert after == before, f"write-it moved the house: {before} -> {after}"
 
 
 def test_a_scan_that_is_still_going_on_says_so_instead_of_making_you_wait(panel, monkeypatch):
@@ -1394,7 +1425,7 @@ def test_writing_a_location_keeps_the_comments_and_the_shape_of_the_file(tmp_pat
                                                       "longitude": 50.8851,
                                                       "timezone": "Asia/Tehran"})
         assert status == 200, st
-        assert st["location"] == {"latitude": 34.64, "longitude": 50.89,
+        assert st["location"] == {"latitude": 34.6416, "longitude": 50.8851,
                                  "timezone": "Asia/Tehran"}, st
         text = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
         assert "latitude: 34.6416" in text and "timezone: Asia/Tehran" in text

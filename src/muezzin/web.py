@@ -304,12 +304,15 @@ class WebPanel:
             "today": hijri.day_info(local_now.date(), p.hijri_offset),
             "hijri_offset": p.hijri_offset,
             "attribution": p.attribution,
-            # Two decimals is about a kilometre, which is enough for the page to
-            # say "this is your street" without putting the exact address of the
-            # house on an unauthenticated LAN port. The file keeps the precise
-            # numbers, and the editor below shows them.
-            "location": {"latitude": round(p.location.latitude, 2),
-                         "longitude": round(p.location.longitude, 2),
+            # The position as the file holds it. Two decimals used to be sent here, on
+            # the reasoning that an unauthenticated page on the LAN should not print the
+            # house's exact address - but that page also serves the profile YAML, which
+            # says it in full, and the Where boxes are filled from these two numbers, so
+            # all the rounding achieved was that pressing write-it without touching them
+            # moved the position by up to a kilometre. The header line shortens them
+            # where shortening is what is wanted, and nothing else has to lose digits.
+            "location": {"latitude": round(p.location.latitude, 6),
+                         "longitude": round(p.location.longitude, 6),
                          "timezone": p.location.timezone, "elevation_m": p.location.elevation_m},
             # What the page may show that other people made, and who made it. off means
             # no map appears and no tile request leaves the house at all.
@@ -597,8 +600,11 @@ class WebPanel:
             saved = self.save_config(yamledit.set_in_block(text, "location", {
                 "latitude": latitude, "longitude": longitude, "timezone": zone}))
         location = self.runner.profile.location
-        saved["location"] = {"latitude": round(location.latitude, 2),
-                             "longitude": round(location.longitude, 2),
+        # Full precision, the same shape /api/state sends: one shape for a location
+        # across this API, so nothing that fills a box from a reply has to know which
+        # digits that reply threw away.
+        saved["location"] = {"latitude": round(location.latitude, 6),
+                             "longitude": round(location.longitude, 6),
                              "timezone": location.timezone}
         saved["notices"] = self.notices()
         log.info("location set to %.6f, %.6f (%s)", location.latitude, location.longitude,
@@ -1588,7 +1594,7 @@ function syncYaml(){
 }
 function render(){
  const nx=st.upcoming[0]||null;
- $('#top').textContent=`${st.method.label} · ${st.location.latitude}, ${st.location.longitude} · ${st.location.timezone} · asr ${st.method.asr} · ${st.method.midnight} midnight · ${st.now}`+(st.read_only?' · read-only':'');
+ $('#top').textContent=`${st.method.label} · ${st.location.latitude.toFixed(2)}, ${st.location.longitude.toFixed(2)} · ${st.location.timezone} · asr ${st.method.asr} · ${st.method.midnight} midnight · ${st.now}`+(st.read_only?' · read-only':'');
  $('#hijri').innerHTML=`${esc(st.today.hijri)} AH <span class="ar">${esc(st.today.hijri_ar)}</span>`
   +(st.hijri_offset?` <span class="tag">hijri_offset ${st.hijri_offset>0?'+':''}${st.hijri_offset}</span>`:'');
  $('#next').innerHTML=nx
