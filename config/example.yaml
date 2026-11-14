@@ -42,6 +42,16 @@ outputs:
     kind: file                # writes a copy of what it would have played
     host: /app/out
 
+  # A speaker muezzin has to find on the network is handed the recording a few
+  # seconds before the time it belongs to, so the first note is already in the air
+  # when that time arrives. The number comes from what this kind of speaker costs;
+  # write it only to overrule that, and write 0 to start exactly on the minute.
+  # For longer notice use offset_min on the event, which moves the printed time too.
+  # - name: study
+  #   kind: google_cast
+  #   target: Study speaker
+  #   lead_seconds: 8
+
 events:
   - name: fajr-adhan
     at: fajr

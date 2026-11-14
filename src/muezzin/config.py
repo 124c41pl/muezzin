@@ -63,6 +63,14 @@ WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 # lands on some other weekday.
 MAX_OFFSET_MIN = 1440
 
+# `lead_seconds:` on an output: how early to start playing, so the sound is
+# already going when the moment arrives. A few seconds covers a speaker finding
+# its way onto the network; somebody who wants the call to be a heads-up ten
+# minutes early is asking for something else, and that belongs on the event as
+# `offset_min`, where the printed time moves with it. Past ten minutes the
+# number is almost certainly a typo, so it is refused where it is typed.
+MAX_LEAD_SECONDS = 600.0
+
 
 def _inside(root: Path, rel) -> Path:
     """Resolve `rel` under `root`, and refuse if the result escapes it."""
@@ -82,6 +90,7 @@ class OutputConfig:
     host: Optional[str] = None
     port: Optional[int] = None
     volume: Optional[float] = None   # a speaker's level; a computer's is never touched
+    lead_seconds: Optional[float] = None  # start this many seconds before the moment
     enabled: bool = True
 
 
@@ -236,6 +245,15 @@ def load_profile(path) -> Profile:
             if not 0 < port < 65536:
                 raise ValueError(f"{path}: output {item.get('name')!r} has port {port}, which is "
                                  "not between 1 and 65535")
+        lead = item.get("lead_seconds")
+        if lead is not None:
+            lead = float(lead)
+            if not 0.0 <= lead <= MAX_LEAD_SECONDS:
+                raise ValueError(
+                    f"{path}: output {item.get('name')!r} has lead_seconds {lead:g}, which is not a "
+                    f"number of seconds between 0 and {MAX_LEAD_SECONDS:g}. A lead is how early the "
+                    "sound starts so that the first note lands on the moment; for longer notice, put "
+                    "offset_min on the event, where the printed time moves with it.")
         outputs.append(OutputConfig(
             name=str(item["name"]),
             kind=kind,
@@ -243,6 +261,7 @@ def load_profile(path) -> Profile:
             host=host,
             port=port,
             volume=(float(item["volume"]) if item.get("volume") is not None else None),
+            lead_seconds=lead,
             enabled=bool(item.get("enabled", True)),
         ))
 

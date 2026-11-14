@@ -367,3 +367,213 @@ def test_disabling_an_output_waits_for_the_note_it_was_playing(tmp_path, monkeyp
     finally:
         runner.shutdown()
 
+
+SLOW_HOUSE = """
+location: {latitude: 40.7128, longitude: -74.006, timezone: America/New_York}
+method: {preset: isna, adjustments: {dhuhr: 0}}
+media_dir: media
+out_dir: "{out}"
+http_port: 0
+outputs:
+  - name: nest
+    kind: google_cast
+    target: Study speaker
+  - name: box
+    kind: lan_box
+    host: 127.0.0.1
+  - name: drawer
+    kind: file
+    host: "{out}"
+  - name: porch
+    kind: google_cast
+    target: Porch speaker
+    lead_seconds: 0
+events:
+  - name: fajr-adhan
+    at: fajr
+    media: [fajr.mp3]
+"""
+
+
+def test_the_slowest_speaker_an_event_wants_sets_the_lead(tmp_path, monkeypatch):
+    """A speaker on the network has to be found by name, connected to, and told to
+    fetch a file before anyone hears a note, and that costs seconds nobody can know
+    in advance. So the moment is paid for a little early, by as much as the slowest
+    speaker this event wants needs. What a profile says for one speaker beats what
+    its kind usually costs, and `lead_seconds: 0` is an answer, not an absence:
+    exactly on the minute."""
+    from muezzin import scheduler
+    from muezzin.scheduler import Runner, lead_of, tidy_is_safe
+
+    profile, _ = profile_for(tmp_path, SLOW_HOUSE)
+    assert lead_of([profile.output("nest")]) == 8.0       # a Nest: found on the LAN
+    assert lead_of([profile.output("box")]) == 1.0        # a box one request away
+    assert lead_of([profile.output("drawer")]) == 0.0     # writing a file is instant
+    assert lead_of([profile.output("porch")]) == 0.0      # told to be exactly on time
+    assert lead_of([]) == 0.0
+
+    monkeypatch.setattr(Runner, "_build_backends", lambda self: {})
+    runner = Runner(profile)
+    try:
+        sev = events_for_date(profile, TUESDAY)[0]
+        names = [o.name for o in profile.targets_for(sev.event)]
+        assert names == ["nest", "box", "drawer", "porch"]
+        assert runner.lead(sev) == 8.0, "the slowest target is the one that gets paid for"
+    finally:
+        runner.shutdown()
+
+    # closing a parked player means talking to a speaker, and a speaker that has
+    # gone quiet answers slowly, so that work stops when the moment is close
+    assert tidy_is_safe(1000.0, 0.0)
+    assert not tidy_is_safe(scheduler.IDLE_TIDY - 1.0, 0.0)
+
+
+def test_a_parked_player_waits_for_a_quiet_moment(tmp_path, monkeypatch):
+    """The daemon spends its life asleep between calls, and that is where it shuts
+    down the players a reload parked. Half a minute before Fajr is not a quiet
+    moment: that talk with a sleeping speaker is on its own long enough to be the
+    reason the house hears the call late."""
+    from muezzin.scheduler import Runner
+
+    profile, _ = profile_for(tmp_path)
+    runner = Runner(profile)
+    try:
+        closed = []
+
+        def tidy_and_wake():
+            closed.append(True)
+            runner._stop.set()            # end the sleep just after the first tidy
+
+        monkeypatch.setattr(runner, "_close_retired", tidy_and_wake)
+        monkeypatch.setattr(runner._stop, "wait", lambda seconds: None)   # no real waiting
+        runner._sleep(4.0, runner.generation)
+        assert not closed, "the speakers were tidied up four seconds before a call"
+        runner._sleep(45.0, runner.generation)
+        assert closed, "with 45 seconds to spare the parked player should have been closed"
+    finally:
+        runner.shutdown()
+
+
+def test_two_speakers_hear_the_call_at_the_same_instant(tmp_path):
+    """One speaker that spends six seconds being found on the network used to make
+    the wired box in the kitchen start six seconds behind it, so the house heard
+    the adhan twice, badly out of step. Each speaker is handed the recording on its
+    own thread, and the event still counts as unfinished until the last one is
+    done, so a test click cannot interrupt a call that is going out."""
+    from muezzin.scheduler import Runner
+
+    text = BASE.replace('    host: "{out}"',
+                        '    host: "{out}"\n  - name: slow\n    kind: file\n    host: "{out}"')
+    profile, _ = profile_for(tmp_path, text)
+    runner = Runner(profile)
+    try:
+        order, hold = [], threading.Event()
+
+        class Slow:
+            def play(self, paths, volume=None):
+                order.append("slow in")
+                hold.wait(10)
+                order.append("slow out")
+
+            def close(self):
+                pass
+
+        class Quick:
+            def play(self, paths, volume=None):
+                order.append("quick")
+
+            def close(self):
+                pass
+
+        runner.backends = {"slow": Slow(), "outbox": Quick()}
+        sev = events_for_date(profile, TUESDAY)[0]
+        runner._pending.put(sev)
+        deadline = time.time() + 5.0
+        while "quick" not in order and time.time() < deadline:
+            time.sleep(0.05)
+        assert "quick" in order, "one slow speaker held the other one back"
+        assert runner._pending.unfinished_tasks, "the call was counted as finished while a " \
+                                                 "speaker was still playing it"
+        hold.set()
+        deadline = time.time() + 5.0
+        while runner._pending.unfinished_tasks and time.time() < deadline:
+            time.sleep(0.05)
+        assert not runner._pending.unfinished_tasks
+        assert order.count("slow out") == 1, "the slow speaker was cut off"
+    finally:
+        runner.shutdown()
+
+
+SOON = """
+location: {latitude: 40.7128, longitude: -74.006, timezone: America/New_York}
+method: {preset: isna, adjustments: {dhuhr: 0}}
+media_dir: media
+out_dir: "{out}"
+http_port: 0
+outputs:
+  - name: drawer
+    kind: file
+    host: "{out}"
+    lead_seconds: {lead}
+events:
+  - name: dhuhr-call
+    at: dhuhr
+    offset_min: {shift}
+    media: [dua.mp3]
+"""
+
+
+def test_the_sound_goes_out_before_the_time_it_belongs_to(tmp_path):
+    """The promise the lead exists for: the first note is in the air at the
+    computed time rather than a few seconds after it, because the daemon woke late
+    and the speaker then needed seconds to find itself on the network. `when` is
+    not moved - the page and `muezzin next` still print the time the sun gives."""
+    from zoneinfo import ZoneInfo
+
+    from muezzin.scheduler import Runner
+
+    now = dt.datetime.now(ZoneInfo("America/New_York"))
+    today = now.date()
+    base = calc.compute_times(calc.Location(40.7128, -74.006, "America/New_York"),
+                              today, calc.PRESETS["isna"])
+    due = _wall_clock(today, base.dhuhr, "America/New_York")
+    # `offset_min:` only comes in whole minutes, so nudge dhuhr to somewhere in the
+    # next minute or so and let the lead pay for the rest of the way to a moment
+    # about six seconds from now
+    shift = int((now + dt.timedelta(seconds=30) - due).total_seconds() // 60) + 1
+    when = due + dt.timedelta(minutes=shift)
+    lead = (when - (now + dt.timedelta(seconds=6))).total_seconds()
+    assert 0.0 < lead < 600.0, f"the test put the call at {lead:.0f} s out, which does not fit"
+
+    profile, _ = profile_for(tmp_path, SOON.replace("{shift}", str(shift))
+                             .replace("{lead}", f"{lead:.3f}"))
+    sev = events_for_date(profile, today)[0]
+    assert abs((sev.when - when).total_seconds()) < 1.0, "the call is not where the test put it"
+
+    runner = Runner(profile)
+    played = []
+
+    class Stamp:
+        def play(self, paths, volume=None):
+            played.append(dt.datetime.now(dt.timezone.utc))
+
+        def close(self):
+            pass
+
+    runner.backends = {"drawer": Stamp()}
+    thread = threading.Thread(target=runner.run_forever, daemon=True)
+    thread.start()
+    try:
+        deadline = time.time() + 20.0
+        while not played and time.time() < deadline:
+            time.sleep(0.05)
+    finally:
+        runner.stop()
+        thread.join(10)
+        runner.shutdown()
+
+    assert played, "the daemon never handed the recording to the speaker"
+    early = (sev.when.astimezone(dt.timezone.utc) - played[0]).total_seconds()
+    assert early > 0.0, f"the call started {abs(early):.1f} s after the time it belongs to"
+    assert abs(early - lead) < 4.0, f"started {early:.1f} s early, wanted {lead:.1f} s"
+

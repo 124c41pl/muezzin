@@ -308,6 +308,7 @@ outputs:
     kind: google_cast
     target: Study speaker        # `muezzin devices` prints these names
     volume: 0.4                  # a speaker's level; a computer has none
+    lead_seconds: 8              # how early this speaker gets the recording
   - name: house-group
     kind: google_cast
     target: Whole-house group             # Google Home groups work, including one speaker
@@ -354,6 +355,41 @@ path outside it is refused at load time. That limit is deliberate: this is a
 program that runs unattended on a LAN with no password in front of it, and the web
 page can add outputs, so "writes a copy somewhere" is only safe if "somewhere" is
 one folder you chose.
+
+### Why the sound starts a little before the time printed anywhere
+
+Every time on the page and in `muezzin times` is the time the sun gives. What
+reaches a speaker does not always start on that minute, and that is a decision
+rather than a slip. Reaching a Cast speaker means browsing the LAN for its name,
+opening a connection to it, and telling it to go and fetch a URL from the daemon -
+and a speaker that has been quiet for an hour takes seconds to answer. Starting on
+the minute means the first note arrives a handful of seconds late, every time,
+because the cost is only ever paid after the moment has gone. So the daemon wakes
+early and hands the recording over a few seconds before the moment, which is what
+puts the first note at the time instead of behind it.
+
+How early is what that kind of speaker costs: eight seconds for a Cast speaker,
+one for a Pi box that is a single request away, nothing for a computer's own
+speakers or a file output, which start instantly. The slowest speaker an event
+wants sets the lead for that event, so a house with one slow speaker hears
+everything a few seconds early rather than hearing that one speaker late. Each
+speaker is handed the recording on its own thread, so a Nest still being looked up
+cannot hold the wired box in the kitchen behind it; before this, two speakers in
+one house heard the same adhan several seconds apart. `lead_seconds:` on an output
+overrules the default, `0` means exactly on the minute, and a number over ten
+minutes is refused at load time because past that it is a typo.
+
+Longer notice than a few seconds is `offset_min` on the event, which moves the
+printed time along with it. The distinction matters: a lead is a technical head
+start that leaves the arithmetic alone - the times a household checked against its
+local masjid stay exactly where the check put them - while an offset is a change to
+the schedule, said out loud everywhere.
+
+One more thing stops in the last half-minute before an event: the housekeeping the
+daemon otherwise does while it waits, shutting down players that a reload parked.
+Closing one means talking to a speaker, and a sleeping speaker has been measured
+answering in tens of seconds, which on its own would be the reason a call arrived
+late. Parked players wait for the next quiet stretch instead.
 
 ### Google Nest / Chromecast, no Google account
 
@@ -709,7 +745,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 360 tests
+pytest -q                        # 368 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and

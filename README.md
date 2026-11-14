@@ -170,7 +170,10 @@ muezzin daemon --web                   # leave it running, with the page on :802
 ```
 
 `muezzin next` is the one to trust: it shows the schedule as the daemon sees it —
-wall clock, weekday filter, and which output each event resolves to.
+wall clock, weekday filter, and which output each event resolves to. A speaker
+muezzin has to find on the network gets the recording a few seconds before that
+time, so the first note is already in the air when the time arrives; `next` says so
+in brackets, and the times themselves do not move.
 
 ## Install
 
@@ -299,6 +302,12 @@ the device list, along with the player it picked for itself.
   rather than served. The browser preview in the page has the same limit: a clip
   starts at the beginning.
 * One adhan at a time per box; overlapping events queue.
+* Network speakers are handed the recording a few seconds before the time, because
+  finding a speaker and getting it to start takes seconds and can only be measured
+  after the fact. The number is a per-kind estimate, not a measurement of your
+  particular speaker: on a crowded LAN a Nest can still answer slower than eight
+  seconds. `lead_seconds:` on an output sets it by hand, `0` starts on the minute,
+  and a lead never changes a printed time — longer notice is `offset_min`.
 * `lan_box` discovery by name instead of a required `host:` is not wired in yet;
   giving the host explicitly always works.
 * The Hijri date is tabular arithmetic, not a sighting, and `hijri_offset` is there
