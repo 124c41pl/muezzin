@@ -331,16 +331,19 @@ the device list, along with the player it picked for itself.
 * The map is the one thing here that asks somebody something without being told to,
   so the promise is stated with the exception in it: with `map_tiles: off` this
   daemon asks nobody anything, and with the default it asks for nine squares per
-  view, a second apart, one fetch each and kept forever — except that a square the
-  tile server was too busy to answer gets exactly one more ask, never a third. Those
-  squares sit in `muezzin-tiles/` beside the profile and nothing prunes that folder —
-  it is a few hundred kilobytes per zoom level a household looks at, and deleting it
-  is safe, since the squares just come back. A public tile layer can still be
-  stretched, and then a square or two of a view stays dim; the page marks which ones,
-  and **try those again** asks for exactly those and nobody else. A dim square is one
-  that never arrived, which is not the same thing as one that arrived with almost
-  nothing in it: measured, the square of lake west of Erie is 103 bytes at zoom 12
-  and the one beside it, with a shoreline in it, is 4,687.
+  view — three across and three down — a second apart, one fetch each and kept
+  forever, except that a square the tile server was too busy to answer gets exactly
+  one more ask, never a third. Those squares sit in `muezzin-tiles/` beside the
+  profile and nothing prunes that folder — it is a few hundred kilobytes per zoom
+  level a household looks at, and deleting it is safe, since the squares just come
+  back. A public tile layer can still be stretched, and then a square or two of a
+  view stays dim; the page marks which ones, and **try those again** asks for exactly
+  those and nobody else. A dim square is one that never arrived, which is not the
+  same thing as one that arrived with almost nothing in it: measured, the square of
+  lake west of Erie is 103 bytes at zoom 12 and the one beside it, with a shoreline
+  in it, is 4,687. The nine are laid out as a grid, not a flow, so the box is full
+  whichever shape the window is, which is what makes a gap in it mean one thing: a
+  square that did not arrive.
 * Clicking the map points at something; it does not survey it. What comes back is
   the square the cursor was over, so how close that is depends on the zoom: about a
   tenth of a degree at zoom 12, a few metres at zoom 17. It is fine for choosing

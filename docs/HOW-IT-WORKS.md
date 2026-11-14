@@ -259,10 +259,11 @@ map. The browser never talks to the tile server, so the page is still only ever 
 from this address — and a grey square costs nothing, because the times come out of the
 engine and not out of a map.
 
-A view of that map is nine squares, and a browser sends all nine at once, while the
-public layer asks for something nearer one request a second. So the daemon holds the
-nine in a queue and lets one out at a time. What happens when a square does not come
-depends on how it did not come. A square the server refused is left alone, because
+A view of that map is nine squares, three across and three down, and a browser sends
+all nine at once, while the public layer asks for something nearer one request a
+second. So the daemon holds the nine in a queue and lets one out at a time. What
+happens when a square does not come depends on how it did not come. A square the
+server refused is left alone, because
 going back for a refusal is nothing but more traffic at somebody who already said no.
 A square that came back as a connection that never finished, or with a 429 or a 5xx on
 it, is asked for once more a second later and then left: one moment's grace for a
@@ -279,6 +280,19 @@ again and again for something it was already handed over.
 What a view that did fail shows is dim squares and **try those again** beside the zoom
 buttons: that redraws the view, the kept squares come off the disk, and only the
 missing ones cost anybody a request.
+
+How those nine are laid out matters as much as how they are fetched, and it was the
+actual fault once. The squares used to be floats, which wrap to whatever width the
+window happens to give them: in a panel narrower than three squares side by side the
+row broke in the middle, the rest stacked up beside it, and a corner of the box stayed
+empty. That is what a person looks at and reads as a map with pieces missing — and
+nothing was missing, every square had arrived and the page had put them in the wrong
+place. So a view now has one number for its shape, three across and three down, and the
+grid the browser draws, the mark on it, and the arithmetic that turns a click back into
+degrees all read that same number. The squares are cells rather than floats, which also
+means the one honest way to tell a failure apart from an empty piece of ground: a square
+that did not arrive stays a dim cell where it belongs, and the box around them is exactly
+as wide as the squares in it.
 
 Clicking that map is a look, not a write. It moves the mark, refills the latitude and
 longitude boxes and redraws the dial of nearby towns from the numbers, and the profile
@@ -797,7 +811,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 390 tests
+pytest -q                        # 391 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and

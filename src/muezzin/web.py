@@ -1492,12 +1492,16 @@ PAGE = """<!doctype html>
     which works with the network unplugged, and squares of somebody else's map, which
     the daemon fetches and credits where they appear - on by default, and stopped by
     map_tiles: off. The dot is where the numbers are, not a picture of anything, and
-    clicking the map moves it without writing anything down. */
- .mapbox { position:relative; display:inline-block; margin-top:8px; border:1px solid var(--line);
-  cursor:crosshair }
+    clicking the map moves it without writing anything down.
+    A view is a fixed number of squares across and down, laid out as a grid whose cell
+    size is one custom property, so the squares cover the box edge to edge. They used to
+    be floats, which wrapped to whatever width the window happened to give them: a
+    complete set of squares came out ragged with a hole in the corner, and the hole looked
+    exactly like a square that had failed to arrive. */
+ .mapbox { --sq:min(256px,29vw); position:relative; display:inline-grid; cursor:crosshair;
+  margin-top:8px; border:1px solid var(--line) }
  .rename { width:16ch; padding:3px 6px }
- .mapbox img { float:left; width:256px; height:256px }
- .mapbox:after { content:""; display:block; clear:both }
+ .mapbox img { width:100%; height:100%; display:block }
  .spot { position:absolute; width:9px; height:9px; margin:-4px 0 0 -4px; border-radius:50%;
   background:var(--gold); box-shadow:0 0 0 3px rgba(11,20,17,.8) }
  .cities { display:inline-block; vertical-align:top; margin-left:14px }
@@ -1792,6 +1796,10 @@ async function act(fn,after){ try{ await fn(); say('',''); if(after)await after(
 // from bearings and distances and needs no network at all, which is the point of
 // checking numbers before sending anything anywhere.
 let W=null, FH=[], MP=null, MQ=null, MZ=12, MAPTAG='', prefilled=false;
+// How many squares a view is, across and down. One number, because the grid, the mark on
+// it and the click that turns a pixel back into degrees all have to agree about it; when
+// only the grid knew, the mark and the click were quietly a whole square off.
+const MG=3;
 function fillWhere(){
  if(prefilled) return;
  prefilled=true;
@@ -1861,11 +1869,13 @@ function plant(ev){
  // boxes above are refilled, the nearby-towns dial follows - because that part is
  // arithmetic this daemon does for itself, with nobody asked - and the numbers still only
  // reach the profile when write-it is pressed. The maths is square() turned around: the
- // same squares at the same zoom, pixels back into degrees. North here is the top of the
- // map, which is not the same as where a compass points.
+ // same squares at the same zoom, pixels back into degrees, measured against the width the
+ // squares were really drawn at, since in a narrow window they come out smaller than the
+ // 256 px they are served as. North here is the top of the map, which is not the same as
+ // where a compass points.
  if(!MQ) return;
  const r=ev.currentTarget.getBoundingClientRect(), n=MQ.n;
- const u=MQ.x-1+(ev.clientX-r.left)/256, v=MQ.y-1+(ev.clientY-r.top)/256;
+ const u=MQ.x0+(ev.clientX-r.left)*MG/r.width, v=MQ.y0+(ev.clientY-r.top)*MG/r.height;
  const la=((360/Math.PI)*Math.atan(Math.exp(Math.PI*(1-2*v/n)))-90).toFixed(4);
  const lo=((u*360/n-180)).toFixed(4);
  $('#lat').value=la; $('#lon').value=lo;
@@ -1881,19 +1891,29 @@ function drawMap(){
  if(stamp===MAPTAG) return;      // the 60 second refresh must not fetch squares again
  MAPTAG=stamp;
  const q=square(p.latitude,p.longitude,MZ);
- MQ=q;                    // the click handler needs this to turn a pixel back into numbers
+ const rad=Math.floor(MG/2);   // an odd MG puts the mark in the middle square of the view
+ q.x0=q.x-rad; q.y0=q.y-rad;   // the square in the top-left of the view, which both the
+ MQ=q;                         // mark and the click work their way out from
  let cells='';
- for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
-  const x=Math.min(q.n-1,Math.max(0,q.x+dx)), y=Math.min(q.n-1,Math.max(0,q.y+dy));
-  cells+='<img src="/api/tile?z='+MZ+'&x='+x+'&y='+y+'" width="256" height="256" alt="">';
+ for(let dy=0;dy<MG;dy++)for(let dx=0;dx<MG;dx++){
+  const x=Math.min(q.n-1,Math.max(0,q.x0+dx)), y=Math.min(q.n-1,Math.max(0,q.y0+dy));
+  cells+='<img src="/api/tile?z='+MZ+'&x='+x+'&y='+y+'" alt="">';
  }
+ // MG squares across and MG down, told to the stylesheet from here so the two cannot
+ // disagree about the shape of a view. A grid of cells, not floats: the squares cover the
+ // box edge to edge whatever width the window gives them, and a square that did not arrive
+ // stays a dim cell in its own place instead of collapsing the layout into a hole. The box
+ // itself is inline-grid, so it is exactly as wide as the squares in it: that is what the
+ // mark's percentages and the click's fractions are measured against.
  box.innerHTML='<div class="row"><button id="zout">farther</button><span class="tag">zoom '
   +MZ+'</span><button id="zin">closer</button><span class="fine">map data '
   +esc(st.map_credit)+' &middot; click it to point</span><button id="zagain" hidden '
   +'title="a square that stayed dim did not arrive: this asks for the dim ones again">'
   +'try those again</button></div><div class="mapbox" role="img" '
-  +'aria-label="the area around these numbers; click it to move the position boxes">'+cells+'<span class="spot" style="left:'
-  +((q.fx-q.x+1)*256).toFixed(1)+'px;top:'+((q.fy-q.y+1)*256).toFixed(1)+'px"></span></div>';
+  +'style="grid-template-columns:repeat('+MG+',var(--sq));grid-auto-rows:var(--sq)" '
+  +'aria-label="the area around these numbers; click it to move the position boxes">'+cells
+  +'<span class="spot" style="left:'+((q.fx-q.x0)*100/MG).toFixed(2)+'%;top:'
+  +((q.fy-q.y0)*100/MG).toFixed(2)+'%"></span></div>';
  // A square that did not arrive stays dim and brings up the button next to it: the map
  // is the one part of this page that depends on somebody else being awake. Pressing it
  // redraws the view, and the squares the daemon already has come back from its own shelf

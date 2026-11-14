@@ -1610,6 +1610,31 @@ def test_a_pixel_of_the_map_turns_back_into_the_numbers_it_came_from(panel):
     _, page = call(panel[0].port, "/", raw=True)
     assert "Math.log(Math.tan(Math.PI/4" in page, "the page lost the forward formula"
     assert "Math.atan(Math.exp(" in page, "the page lost the way back from a pixel"
+    # the click divides the width the box was really drawn at by the number of squares
+    # across it, so the mark's position and a click's are the same arithmetic in opposite
+    # directions, and neither depends on a square happening to be 256 px on this screen.
+    assert "MG/r.width" in page and "MG/r.height" in page
+
+
+def test_the_shape_of_a_map_view_comes_from_one_number(panel):
+    """A view is MG squares across and MG down, and three parts of the page have to agree
+    about that number: the grid the browser is told to draw, where the mark is put on it,
+    and the arithmetic that turns a pixel of a click back into degrees. They used to be
+    written out separately, and the squares were floated into whatever width the window gave
+    them, so a complete view came out ragged with a hole in the corner that looked exactly
+    like squares nobody had fetched. Nothing here runs JavaScript, so the page is read as
+    text, and 3 times 3 is also the count the README promises the tile server per view."""
+    _, page = call(panel[0].port, "/", raw=True)
+    assert page.count("const MG=3;") == 1, "a view needs one number for its shape"
+    assert "for(let dy=0;dy<MG;dy++)for(let dx=0;dx<MG;dx++){" in page
+    assert "repeat('+MG+',var(--sq))" in page, "the grid is told the same number"
+    assert "display:inline-grid" in page, "the box must be exactly as wide as its squares"
+    assert "float:left" not in page, "floated squares wrap to whatever room the window gives"
+    assert "q.x0=q.x-rad" in page and "Math.max(0,q.x0+dx)" in page
+    assert "MQ.x0+(ev.clientX-r.left)*MG/r.width" in page
+    assert "(q.fx-q.x0)*100/MG" in page, "the mark is a share of the box, not a pixel count"
+    assert "px;top:" not in page, "a mark in pixels is a whole square off once the squares " \
+                                  "are drawn smaller than they were served"
 
 
 def test_an_answer_that_is_not_a_picture_is_not_shown_as_one(tmp_path, monkeypatch):
