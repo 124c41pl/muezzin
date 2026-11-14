@@ -225,8 +225,11 @@ def cmd_methods() -> int:
     width = max(len(k) for k in calc.PRESETS)
     for key, p in sorted(calc.PRESETS.items()):
         isha = f"isha {p.isha_angle} deg" if p.isha_angle is not None else f"isha +{p.isha_interval} min"
-        extra = "  jafari-midnight" if p.midnight_from_fajr else ""
-        print(f"{key:<{width}}  fajr {p.fajr_angle} deg   {isha:<20}  {p.label}{extra}")
+        # Which way the night ends, printed on every row. Naming only the Ja'fari rows
+        # would leave the others described by an absence, which is how a list of
+        # methods starts reading as one school's list.
+        night = "night ends at Fajr" if p.midnight_from_fajr else "night ends at sunrise"
+        print(f"{key:<{width}}  fajr {p.fajr_angle} deg   {isha:<20}  {p.label}  {night}")
     print("\nOverride any single value in the profile's `method:` block; the preset is a starting point.")
     return 0
 

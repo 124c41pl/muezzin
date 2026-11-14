@@ -116,8 +116,9 @@ method:
   asr_shadow: hanafi        # standard (default) or hanafi
 ```
 
-The page has the same choice as a dropdown, with the Ja'fari methods grouped apart
-and the Asr rule beside it, and the calendar on the page follows whatever you pick.
+The page has the same choice as a dropdown, in two groups by where the night ends —
+the Sunni methods at sunrise, the Ja'fari methods at Fajr — with the Asr rule beside
+it, and the calendar on the page follows whatever you pick.
 What the other fields mean — midnight conventions, maghrib by angle instead of by
 sunset, high-latitude fallbacks, elevation, per-prayer minute nudges — is in
 `docs/HOW-IT-WORKS.md`.

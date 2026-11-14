@@ -336,13 +336,16 @@ class WebPanel:
             # they are about to knock on.
             "geocoder": geocode.provider(),
             "method": {"label": p.params.label, "preset": preset,
-                       "shia": p.params.midnight_from_fajr,
+                       "jafari": p.params.midnight_from_fajr,
                        "fajr_angle": p.params.fajr_angle,
                        "isha_angle": p.params.isha_angle,
                        "isha_interval": p.params.isha_interval,
                        "shurf_angle": p.params.shurf_angle,
                        "maghrib_angle_offset": p.params.maghrib_angle_offset,
-                       "midnight": "jafari (sunset to fajr)" if p.params.midnight_from_fajr else "solar",
+                       # The header prints this beside the word midnight, so the pair
+                       # reads "solar midnight" or "jafari midnight" and says which
+                       # night the file is using without a sentence about it.
+                       "midnight": "jafari" if p.params.midnight_from_fajr else "solar",
                        "asr": "hanafi" if p.asr_shadow == 2.0 else "standard",
                        "high_latitude_rule": p.params.high_latitude_rule},
             # what the file pins that a preset name would otherwise decide, so the
@@ -363,11 +366,11 @@ class WebPanel:
             "events": [{"name": e.name, "at": e.at, "offset_min": e.offset_min,
                         "media": e.media, "targets": e.targets, "volume": e.volume,
                         "days": e.days} for e in p.events],
-            # the picker's choices, from the same table `muezzin methods` prints.
-            # The Ja'fari group is decided by which midnight the school uses, not
-            # by a label someone wrote, so it cannot drift out of step with them.
+            # the picker's choices, from the same table `muezzin methods` prints. The
+            # flag is the engine's own: which midnight a method solves for. The page
+            # groups on it, so it cannot drift out of step with the numbers.
             "presets": [{"name": key, "label": value.label,
-                         "shia": value.midnight_from_fajr}
+                         "jafari": value.midnight_from_fajr}
                         for key, value in sorted(calc.PRESETS.items())],
             "prayers": list(PRAYER_KEYS),
             "scan_at": self.scan_at,
@@ -1550,10 +1553,12 @@ PAGE = """<!doctype html>
  <section><h2>Method</h2>
   <div class="row"><select id="preset"></select><select id="asr"></select><button id="applymethod">apply method</button></div>
   <div class="fine" id="overrides"></div>
-  <div class="fine">The list is every school muezzin ships with, Ja'fari ones grouped apart
-   because they count midnight from Maghrib. If the numbers you follow are not in the list,
-   write the angles under <code>method:</code> in the profile - they stay put when you change
-   the name here.</div>
+  <div class="fine">That list is every method muezzin ships with, in two groups by where
+   the night is taken to end. The Sunni methods end it at sunrise; the Ja'fari ones end
+   it at Fajr, which is why the second group's midnight sits earlier in the evening. The
+   page is not arguing about it, it is only telling you which numbers moved. If the
+   figures you follow are not in the list, write them under <code>method:</code> in the
+   profile - they stay put when you change the name here.</div>
   <div class="row"><span class="tag">Hijri date</span><button id="hijminus">&minus;1</button><span id="hijridays">0</span><button id="hijplus">+1</button></div>
   <div class="fine">Arithmetic cannot see the moon, so this is where you tell it what you saw.</div>
  </section>
@@ -1606,7 +1611,7 @@ const NAME={fajr:'Fajr',sunrise:'Sunrise',dhuhr:'Dhuhr',asr:'Asr',maghrib:'Maghr
 const AR={fajr:'الفجر',sunrise:'الشروق',dhuhr:'الظهر',asr:'العصر',maghrib:'المغرب',
  isha:'العشاء',midnight:'نصف الليل',true_night:'نصف الليل الشرعي',shurf:'الشفع',sunset:'الغروب'};
 // The table reads as a day, not as a dictionary: sunset sits immediately before
-// maghrib because on a Shia profile they are a few minutes apart and the whole
+// maghrib because on a Ja'fari profile they are a few minutes apart and the whole
 // point is to see the difference.
 const ORDER=['fajr','sunrise','dhuhr','asr','sunset','maghrib','isha','midnight',
  'true_night','shurf'];
@@ -1684,8 +1689,12 @@ function render(){
 let note=[], SC=null, sent=0, up={};
 function renderMethod(){
  const cur=st.method.preset||'', p=$('#preset');
- const groups=[["Not Ja'fari",[]],["Ja'fari (midnight from Maghrib)",[]]];
- (st.presets||[]).forEach(x=>groups[x.shia?1:0][1].push(x));
+ // The two groups are decided by where the night ends, which is arithmetic in the
+ // preset, not by a label somebody wrote: so the grouping cannot drift out of step with
+ // the numbers, and the first group is named for what it is rather than by what the
+ // second one is not.
+ const groups=[["Sunni (night ends at sunrise)",[]],["Ja'fari (night ends at Fajr)",[]]];
+ (st.presets||[]).forEach(x=>groups[x.jafari?1:0][1].push(x));
  p.innerHTML=(cur?'':'<option value="" selected>(angles written by hand)</option>')
   +groups.map(g=>`<optgroup label="${esc(g[0])}">${g[1].map(x=>
     `<option value="${esc(x.name)}"${x.name===cur?' selected':''}>${esc(x.label)}</option>`).join('')}</optgroup>`).join('');

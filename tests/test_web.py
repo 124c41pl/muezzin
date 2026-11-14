@@ -231,7 +231,7 @@ def test_a_valid_edit_is_saved_and_the_running_daemon_picks_it_up(panel):
     assert "preset: qom" in (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
     _, st = call(web.port, "/api/state")
     assert st["method"]["label"].startswith("Qom")
-    assert st["method"]["midnight"] == "jafari (sunset to fajr)"
+    assert st["method"]["midnight"] == "jafari"
     assert [o["name"] for o in st["outputs"]] == ["spare", "outbox"]
     # the editor must keep showing the file it just wrote, not the temp file it
     # validated the edit against
@@ -460,12 +460,26 @@ def test_the_state_names_the_methods_the_page_can_offer(panel):
     _, st = call(web.port, "/api/state")
     names = {p["name"] for p in st["presets"]}
     assert {"isna", "qom", "tehran", "shia_ithna_ashari"} <= names
-    jafari = {p["name"] for p in st["presets"] if p["shia"]}
+    jafari = {p["name"] for p in st["presets"] if p["jafari"]}
     assert {"qom", "tehran", "shia_ithna_ashari", "qom_khamenei_12"} == jafari, \
-        "the page groups by which midnight a school uses, so this set is load-bearing"
+        "the page groups by which midnight a method solves for, so this set is load-bearing"
     assert st["method"]["preset"] == "isna"
+    assert st["method"]["midnight"] == "solar"
     assert st["prayers"] == list(PRAYER_KEYS)
     assert {e["name"] for e in st["events"]} == {"fajr-adhan", "dhuhr-nudge", "friday-tune"}
+
+
+def test_the_method_list_names_both_groups_for_what_they_are(panel):
+    """A dropdown where one group is called "Not Ja'fari" makes the other group the
+    normal one and asks every household opening the page to place itself against that
+    word before it has chosen anything. Both names here state where the night ends,
+    which is the arithmetic the list is actually grouped by, and neither leans on the
+    other."""
+    web, _, _ = panel
+    _, page = call(web.port, "/", raw=True)
+    assert "Not Ja'fari" not in page, "one group is defined by the absence of the other"
+    assert "Sunni (night ends at sunrise)" in page
+    assert "Ja'fari (night ends at Fajr)" in page
 
 
 def test_choosing_a_method_moves_the_times_on_the_page(panel):

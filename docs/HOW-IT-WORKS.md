@@ -91,12 +91,15 @@ sighting, that is what the offset is for.
 
 ## Choosing the calculation from the page
 
-The Method section is the same table `muezzin methods` prints, in a dropdown, with
-the Ja'fari schools in a group of their own — what separates them structurally is
-which midnight they count, so the grouping is decided by `midnight_from_fajr`
-rather than by a label someone typed. Asr is its own control because the shadow
-rule is not a school: a Shafi'i household that prays the later Asr is normal, and
-a dropdown that conflated the two would be a quiet way of getting it wrong.
+The Method section is the same table `muezzin methods` prints, in a dropdown, in two
+groups: Sunni (the night ends at sunrise) and Ja'fari (the night ends at Fajr). That
+is the difference which moves a midnight, so the grouping comes from
+`midnight_from_fajr` in the numbers rather than from a label someone typed — and
+neither group is named as the absence of the other. Calling one "Not Ja'fari" would
+put a household answering a question about who it is before it had chosen anything,
+and would say the other group is the default. Asr is its own control because the
+shadow rule is not a school: a Shafi'i household that prays the later Asr is normal,
+and a dropdown that conflated the two would be a quiet way of getting it wrong.
 
 Picking a name rewrites the `preset:` line inside `method:` and leaves the rest of
 the file where it was, comments and all. It also leaves alone any angle you wrote
@@ -785,7 +788,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 375 tests
+pytest -q                        # 395 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and
