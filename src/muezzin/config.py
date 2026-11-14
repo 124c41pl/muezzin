@@ -106,11 +106,24 @@ class EventConfig:
     days: Optional[list[str]] = None         # e.g. ["fri"] to restrict
 
 
-# What the page is allowed to draw for "where is this station". `off` answers from the
-# coordinates and the table of city centres muezzin carries, so nothing leaves the
-# network. `osm` also shows map tiles, which the daemon fetches from
-# tile.openstreetmap.org on the owner's behalf - asked for by name, never by default.
+# What the page is allowed to draw for "where is this house". `osm`, the default,
+# shows map squares that the daemon fetches from tile.openstreetmap.org on the
+# owner's behalf - asked for with this program's name on the request, kept on
+# disk, one request per square. `off` answers from the coordinates and the table
+# of city centres muezzin carries, so that nothing at all leaves the network: the
+# times, the schedule and playback are identical either way. This is the only
+# thing muezzin fetches by itself, which is why it is spelled out here and named
+# on the page under the map.
 MAP_TILES = ("off", "osm")
+
+# YAML 1.1, which safe_load follows, reads off, on, yes, no, true and false as
+# booleans, so the documented opt-out line `map_tiles: off` arrives here as False and
+# not as a word. A profile that will not load because of the one line written to switch
+# something off is a bug in the reader, not in the person who typed it, so those
+# spellings are translated here and the error is kept for words that mean neither.
+TILE_WORDS = {"off": "off", "false": "off", "no": "off", "none": "off",
+              "osm": "osm", "openstreetmap": "osm", "true": "osm", "yes": "osm",
+              "on": "osm"}
 
 
 @dataclass
@@ -125,7 +138,7 @@ class Profile:
     http_port: int = 8010            # serves media to Cast devices
     hijri_offset: int = 0            # shift the displayed Hijri date to match your moon
     attribution: Optional[str] = None  # whose name the page shows in its credit line
-    map_tiles: str = "off"           # off, or osm: let the page show a map made by others
+    map_tiles: str = "osm"           # off, or osm: let the page show a map made by others
     out_dir: Optional[Path] = None   # the only directory `kind: file` outputs may write into
     path: Optional[Path] = None
 
@@ -336,14 +349,16 @@ def load_profile(path) -> Profile:
 
     # The position diagram on the page is arithmetic and always available. Map tiles are
     # a different kind of thing: they come from somebody else's machine. So the knob is
-    # spelled out, and a typo is an error rather than an accident that quietly starts
-    # sending requests away from this network.
-    tiles = str(raw.get("map_tiles", "off")).strip().casefold()
-    if tiles not in MAP_TILES:
+    # spelled out, the default is said out loud on the page, and a typo is an error
+    # rather than an accident that quietly stops - or starts - sending requests away
+    # from this network.
+    tiles = TILE_WORDS.get(str(raw.get("map_tiles", "osm")).strip().casefold())
+    if tiles is None:
         raise ValueError(f"{path}: map_tiles is one of {', '.join(MAP_TILES)}, got "
-                         f"{raw.get('map_tiles')!r}. off draws the position from the "
-                         "coordinates alone; osm also brings in map tiles from "
-                         "tile.openstreetmap.org, which the page then has to credit.")
+                         f"{raw.get('map_tiles')!r}. osm is the default and draws the "
+                         "position on squares from tile.openstreetmap.org, which the page "
+                         "then has to credit; off keeps every request inside this network "
+                         "and draws the position from the coordinates alone.")
 
     return Profile(location=loc, params=params, asr_shadow=shadow, adjustments=adj,
                    media_dir=media_dir, outputs=outputs, events=events,

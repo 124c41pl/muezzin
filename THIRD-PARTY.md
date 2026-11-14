@@ -52,7 +52,7 @@ code, and the licence permits using it that way. If you strip `dev` out of a bui
 
 | what | who makes it | what their terms ask | what muezzin does |
 | --- | --- | --- | --- |
-| the squares in the page's map | [OpenStreetMap](https://www.openstreetmap.org/copyright) tile servers | the map data is ODbL 1.0, that tile style is CC BY-SA 4.0, and both ask to be credited | shown only when a profile sets `map_tiles: osm`; the daemon fetches one square per request, checks the bytes are a PNG, keeps it under `muezzin-tiles/`, and prints the credit under the map |
+| the squares in the page's map | [OpenStreetMap](https://www.openstreetmap.org/copyright) tile servers | the map data is ODbL 1.0, that tile style is CC BY-SA 4.0, and both ask to be credited | on by default, with `map_tiles: off` in the profile to put it away; the daemon fetches one square per request, checks the bytes are a PNG, keeps it under `muezzin-tiles/`, and prints the credit under the map |
 | the places `muezzin where --online` answers with | [Nominatim](https://nominatim.org/), on the same OpenStreetMap data | the same credit, an identifying User-Agent, and no more than roughly one request a second | one request per search, no key and no account; nothing is stored, logged, or repeated back |
 
 One vendor for both, on purpose. OpenStreetMap asks for a name in a header; a
@@ -82,11 +82,14 @@ asks nothing of a stranger again.
   the daemon, with no CDN, no web fonts and no analytics; the times are computed on
   your own machine from your own numbers; and the only URLs muezzin fetches *as
   sound* are the ones in your own profile, and only because you put them there. Two
-  things can reach out, and both are choices rather than defaults, each named where
-  you make it: finding a place by its words (step 1, and the find-it box on the page)
-  sends the words you typed once, to Nominatim, and keeps nothing; the map on the
-  page (`map_tiles: osm`) has the daemon fetch the squares it shows, once each, into
-  `muezzin-tiles/`. A profile with neither asks nothing of anybody.
+  things can reach out, and each is named where you meet it. Finding a place by its
+  words (step 1, and the find-it box on the page) happens only because a person
+  pressed a button: the words go once, to Nominatim, and nothing is kept. The map on
+  the page is a default rather than a choice, because where the numbers point is the
+  first thing a household has to get right and a helper nobody can find is no help:
+  the daemon fetches the squares it shows, once each, into `muezzin-tiles/`. That one
+  is also the one that can be switched off where it is written down, `map_tiles: off`.
+  A profile with that line, and no find-it button pressed, asks nothing of anybody.
 * The Arabic on the page is a handful of prayer, month and weekday names, and the
   geometry is girih-style tiling drawn in CSS. There is no figurative imagery and
   no religious artwork, so nothing here is a depiction anyone has to be careful

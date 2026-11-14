@@ -50,11 +50,14 @@ imagery anywhere, and no Qur'anic text used as decoration. Prayer names appear i
 Arabic beside the English labels — الفجر، الشروق، الظهر، العصر، المغرب، العشاء،
 نصف الليل، الشفع — and the Hijri date sits in the header and on every day row.
 
-Every pixel of that is in the one file the daemon already serves: no font, icon
-set, script or tile is fetched from anywhere. That is a requirement rather than a
-taste. The page has to work the night the WAN link is down, and it has to work on
-a network with no internet at all; and a control panel on your LAN should not
-hand a visitor's browser off to a third-party CDN on its way to loading a comma.
+Every font, icon, script and the lattice itself are in the one file the daemon already
+serves: nothing the page needs in order to look like a page is fetched from anywhere.
+That is a requirement rather than a taste. The page has to work the night the WAN link
+is down, and it has to work on a network with no internet at all; and a control panel on
+your LAN should not hand a visitor's browser off to a third-party CDN on its way to
+loading a comma. The one picture on it that does come from further away is the map, and
+that comes to the daemon rather than to your browser — *Finding out where you are* says
+what it asks, and which single line stops it.
 
 ## The Hijri date, and why the page says out loud that it is arithmetic
 
@@ -196,6 +199,15 @@ calls itself; removing one rewrites the `events:` that named it and refuses, nam
 the event, if that output was the only place an adhan could reach. Unplugging a
 speaker should never be able to silently orphan a Fajr.
 
+The name in that row is a box to type into, and renaming is the same trap arrived at
+from the other side: a name is not a caption over a speaker, it is what every event
+`targets:` list points at. So one rename writes the output's own `name:` and every
+`targets:` list that named it in a single write, and tells the page which events moved.
+A name another output already answers to is refused, and so is renaming a speaker nobody
+has — inventing an output through a typo in a box is a way to take the schedule down. The
+word is slugged the way adding one slugs it, so `Kitchen speaker` lands in the file as
+`kitchen-speaker` and the page shows what it settled on.
+
 Discovery is deliberately narrow. A box is listed, and can be used, only if it
 advertises muezzin's own protocol (`_muezzin._tcp`), and `POST /api/box/add` adds
 one of those and nothing else. The way to get sound out of a second machine is to
@@ -234,12 +246,21 @@ the zone of the nearest city in the table, within 150 km, and print which city w
 borrowed; otherwise say plainly that there is no honest guess and let the person type
 the name. The panel will not write a zone `ZoneInfo` cannot open.
 
-The map on the page is `map_tiles: osm`, off by default. The daemon fetches each
-256-pixel square once, keeps it under `muezzin-tiles/` beside the profile, checks that
-the bytes really are a PNG before serving them from its own origin, and prints
-"© OpenStreetMap contributors" under the map. The browser never talks to the tile
-server, so the page is still only ever a page from this address — and a grey square
-costs nothing, because the times come out of the engine and not out of a map.
+The map on the page is on by default, which makes it the one thing here that goes
+outside without being told to, so it is said in three places: under the map as a
+credit, on the page beside it, and here. `map_tiles: off` in the profile is the whole
+way back. The daemon fetches each 256-pixel square once, keeps it under
+`muezzin-tiles/` beside the profile, checks that the bytes really are a PNG before
+serving them from its own origin, and prints "© OpenStreetMap contributors" under the
+map. The browser never talks to the tile server, so the page is still only ever a page
+from this address — and a grey square costs nothing, because the times come out of the
+engine and not out of a map.
+
+Clicking that map is a look, not a write. It moves the mark, refills the latitude and
+longitude boxes and redraws the dial of nearby towns from the numbers, and the profile
+changes only when **write it** is pressed. Two reasons: a click is easy to make by
+accident, and the position a household settles on is the one thing that should be
+deliberate, because every time in this program is downstream of it.
 
 ## The calculation is data, not an enum
 
@@ -745,7 +766,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 368 tests
+pytest -q                        # 374 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and
