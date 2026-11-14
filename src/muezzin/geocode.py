@@ -36,7 +36,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Optional
 from zoneinfo import ZoneInfo
 
 from . import places
@@ -45,7 +44,7 @@ from .places import Place
 __all__ = ["Hit", "search", "reverse", "nearest_named", "GeocodeError", "NeedsInternet",
            "RefusedLookup", "TileMissing", "TileBusy", "user_agent", "provider",
            "zone_known", "ENDPOINT", "TILE_HOST", "MAP_CREDIT", "tile_url", "fetch_tile",
-           "tile_is_thin", "TILE_SPACING", "TILE_RETRY_ZOOM", "ZONE_NEAR_KM", "FAR_KM"]
+           "TILE_SPACING", "TILE_RETRY_WAIT", "ZONE_NEAR_KM", "FAR_KM"]
 
 # The one host a lookup goes to, unless the person running this points it at a
 # Nominatim they run themselves. Overriding is a real use case - someone in Qatar who
@@ -128,14 +127,12 @@ TILE_SPACING = 1.1
 TILE_RETRY_CODES = frozenset({408, 429, 500, 502, 503, 504})
 TILE_RETRY_WAIT = 1.0
 
-# A street-level square from the public layer is 15 to 40 KB. One that is a well-formed
-# PNG but far smaller is usually the placeholder an overloaded server hands back, which
-# is why it shows up on some squares of a view and not others. Below this size the
-# square is asked for again, and never kept in the cache as though it were the map.
-# Zoom is part of the test because a square of open ocean a zoom level or two out really
-# is a few hundred bytes, and nobody should be retrying for that.
-TILE_MIN_BYTES = 4096
-TILE_RETRY_ZOOM = 10
+# There is deliberately no rule here about how big a square ought to be, because the
+# measurement says not to have one: the square of lake west of Erie at zoom 12 is 103
+# bytes, and the square beside it with a shoreline in it is 4,687. A flat colour
+# compresses to almost nothing, so a small PNG can be a perfectly good map, and a rule
+# built on size would have the daemon asking a stranger again and again for something
+# it already handed over.
 
 # The tile and address data here is OpenStreetMap's, under the ODbL, and their usage
 # policy asks that it be shown as theirs. A page that shows somebody else's map without
@@ -405,20 +402,6 @@ def tile_url(zoom: int, x: int, y: int) -> str:
 PNG_HEAD = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
 
 
-def tile_is_thin(zoom, body: bytes) -> bool:
-    """A picture, but too small to be the street map it was asked to be.
-
-    Only ever true of bytes that passed the header check in `fetch_tile`: this is not
-    asking whether the answer was rubbish, only whether it was a square of a map that
-    had almost nothing in it, which is how a busy server's placeholder looks.
-    """
-    try:
-        level = int(zoom)
-    except (TypeError, ValueError):
-        return False
-    return level >= TILE_RETRY_ZOOM and len(body) < TILE_MIN_BYTES
-
-
 def _one_tile(url: str) -> bytes:
     """One request for one square, with the answer checked before it is believed."""
     try:
@@ -449,28 +432,19 @@ def fetch_tile(zoom: int, x: int, y: int) -> bytes:
     from this page's own address is how somebody else's markup ends up looking like ours.
 
     A view of the page is nine squares, and the public layer says no more than about one
-    request a second, so a square that fails is retried once rather than repeatedly: that
-    is the difference between a hole in the map and one more request at a server that is
-    already stretched. Only a server that looked busy is asked again, and only a moment
-    later. A square that arrives as a picture with almost nothing in it gets the same
-    single second chance, because that is what a placeholder looks like.
+    request a second, so a square that fails is asked for once more rather than
+    repeatedly: that is the difference between a hole in the map and one more request at
+    a server that is already stretched. Only a server that looked busy is asked again,
+    and only a moment later. A square the server refused is not asked again at all.
     """
     url = tile_url(zoom, x, y)
-    best: Optional[bytes] = None
-    trouble: Optional[str] = None
+    trouble = None
     for ask in (1, 2):
         if ask > 1:
             time.sleep(TILE_RETRY_WAIT)
         try:
-            body = _one_tile(url)
+            return _one_tile(url)
         except TileBusy as exc:
             trouble = str(exc)
-            continue
-        if best is None or len(body) > len(best):
-            best = body
-        if not tile_is_thin(zoom, body):
-            return body
-    if best is not None:
-        return best             # a thin square still beats a hole in the middle of a map
     raise TileBusy(f"{trouble}. The map is a courtesy on the page; the times do not "
                    "need it") from None

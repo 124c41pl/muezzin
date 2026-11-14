@@ -647,9 +647,12 @@ class WebPanel:
 
         The asks go out one at a time, a beat apart: a view of the page is nine squares
         and a browser sends all nine at once, while the public layer asks to be treated
-        like a person browsing. And a square that came back as a picture with almost
-        nothing in it - what a stretched server's placeholder looks like - is served once
-        and not kept, so the next look asks again instead of preserving the hole.
+        like a person browsing; and a square that never came, refused or answered by a
+        server too busy to answer, is a 502 with a reason in it, which the page marks as
+        a square that is missing rather than as a pale patch of ground. Nothing is done
+        here about how big a square ought to be, because measuring it says not to: the
+        square of lake west of Erie is 103 bytes at zoom 12 and the one beside it, with
+        a shoreline in it, is 4,687, so a small picture is not evidence of anything.
         """
         if self.runner.profile.map_tiles != "osm":
             raise _Status(403, "this profile keeps the map off: map_tiles: off. Put "
@@ -668,13 +671,7 @@ class WebPanel:
         try:
             target = self._tile_dir() / str(zoom) / f"{x}-{y}.png"
             if target.is_file():
-                kept = target.read_bytes()
-                if not geocode.tile_is_thin(zoom, kept):
-                    return kept
-                # Asked for once and kept forever is the deal, but one busy afternoon
-                # should not put a hole in the map for the rest of the house's life.
-                log.info("the kept square at zoom %s is %s bytes, so it is asked for again",
-                         zoom, len(kept))
+                return target.read_bytes()
         except OSError:
             pass                              # a cache that will not read is not fatal
         with self.tile_lock:
@@ -686,19 +683,15 @@ class WebPanel:
                 body = geocode.fetch_tile(zoom, x, y)
             except geocode.GeocodeError as exc:
                 raise _Status(502, str(exc)) from None
-        if geocode.tile_is_thin(zoom, body):
-            log.info("the square at zoom %s came back with %s bytes, which is not a map",
-                     zoom, len(body))
-        else:
-            try:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                scratch = target.with_name(f"{x}-{y}.writing")
-                scratch.write_bytes(body)
-                os.replace(scratch, target)   # never a half-written square on disk
-            except OSError as exc:
-                # The map is a courtesy; a read-only volume or a full disk should not cost
-                # anyone the picture they asked for right now.
-                log.info("the map square was not kept: %s", exc)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            scratch = target.with_name(f"{x}-{y}.writing")
+            scratch.write_bytes(body)
+            os.replace(scratch, target)       # never a half-written square on disk
+        except OSError as exc:
+            # The map is a courtesy; a read-only volume or a full disk should not cost
+            # anyone the picture they asked for right now.
+            log.info("the map square was not kept: %s", exc)
         return body
 
     def _event_row(self, rows: list[dict], at: str, friday: bool) -> Optional[dict]:

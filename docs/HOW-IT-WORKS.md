@@ -261,14 +261,23 @@ engine and not out of a map.
 
 A view of that map is nine squares, and a browser sends all nine at once, while the
 public layer asks for something nearer one request a second. So the daemon holds the
-nine in a queue and lets one out at a time. Two things go wrong on a busy afternoon and
-they are not treated the same way: a square the server refused is left alone, because
-asking again would be nothing but more traffic at somebody already stretched, while a
-square that arrives as a picture with almost nothing in it — the placeholder a loaded
-server hands back, and the reason one patch of a view comes up pale — is asked for once
-more a second later, shown to the page if it comes back thin again, and never written to
-the cache. A square that stayed missing is left dim with **try those again** beside the
-zoom buttons: that redraws the view, the kept squares come off the disk, and only the
+nine in a queue and lets one out at a time. What happens when a square does not come
+depends on how it did not come. A square the server refused is left alone, because
+going back for a refusal is nothing but more traffic at somebody who already said no.
+A square that came back as a connection that never finished, or with a 429 or a 5xx on
+it, is asked for once more a second later and then left: one moment's grace for a
+server that was juggling nine squares, and nowhere near enough to be the reason it is
+juggling ten.
+
+There is deliberately no rule about how big a square ought to be, and the measurement
+is what settled that. The square of lake west of Erie at zoom 12 is 103 bytes — at
+that zoom it is water, and a flat colour compresses to almost nothing — while the
+square beside it, with a shoreline in it, is 4,687 bytes. A small picture can be a
+perfectly good map, so a rule built on size would have this program asking a stranger
+again and again for something it was already handed over.
+
+What a view that did fail shows is dim squares and **try those again** beside the zoom
+buttons: that redraws the view, the kept squares come off the disk, and only the
 missing ones cost anybody a request.
 
 Clicking that map is a look, not a write. It moves the mark, refills the latitude and
@@ -788,7 +797,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 395 tests
+pytest -q                        # 390 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and
