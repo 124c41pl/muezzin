@@ -25,6 +25,13 @@ from .config import EventConfig, Profile
 # prayer times - so it gets logged and skipped instead.
 LATE_GRACE = dt.timedelta(minutes=15)
 
+# How much time an event must still have before the daemon will do housekeeping
+# while it waits - closing the players a reload parked. That work means talking to
+# speakers, and a speaker that has gone quiet answers slowly. Doing it inside the
+# last half-minute before a call is one of the ways a call ends up late, so the
+# daemon stops tidying when the moment gets close.
+IDLE_TIDY = 30.0
+
 log = logging.getLogger("muezzin.scheduler")
 
 PRAYER_KEYS = ("fajr", "sunrise", "dhuhr", "asr", "maghrib", "isha",
@@ -83,6 +90,29 @@ def upcoming(profile: Profile, now: Optional[dt.datetime] = None, days: int = 2)
     for i in range(-1, days + 1):
         out.extend(events_for_date(profile, local_today + dt.timedelta(days=i)))
     return [e for e in out if e.when >= now]
+
+
+def lead_of(targets: Iterable) -> float:
+    """Seconds before the moment a set of speakers should start playing: the cost
+    of the slowest one, or what the profile says for it. `Runner.lead` and
+    `muezzin next` both read this, so what the daemon does and what the command
+    line promises are the same number."""
+    from . import backends as B
+    leads = [B.lead_for(out) for out in targets]
+    return max(leads) if leads else 0.0
+
+
+def tidy_is_safe(deadline: float, now: float) -> bool:
+    """Is there enough slack before the next moment to bother shutting down the
+    players that a reload parked?
+
+    Closing one means talking to a speaker, and a speaker that has gone quiet
+    answers slowly: tens of seconds has been measured on a real LAN. Doing that
+    in the last half-minute before a call is on its own enough to make the call
+    late, so the daemon stops tidying as the moment gets close and lets parked
+    players wait for the next quiet stretch. Waking on time outranks tidying up.
+    """
+    return deadline - now >= IDLE_TIDY
 
 
 def _zone(name: str):
@@ -248,6 +278,7 @@ class Runner:
             log.warning("%s: no enabled output matched %s", ev.name, ev.targets or "(all)")
             return
         with self._play_lock:
+            wanted = []
             for out in targets:
                 backend = self.backends.get(out.name)
                 if backend is None:
@@ -257,11 +288,49 @@ class Runner:
                     log.error("%s: %s is named as a target but has no player (disabled?), "
                               "so it stays quiet", ev.name, out.name)
                     continue
-                try:
-                    log.info("%s -> %s (%s)", ev.name, out.name, out.kind)
-                    backend.play(media, ev.volume)
-                except Exception as exc:                    # one dead speaker must not stop the rest
-                    log.error("%s on %s failed: %s", ev.name, out.name, exc)
+                wanted.append((out, backend))
+            if len(wanted) < 2:
+                for out, backend in wanted:
+                    self._play_one(ev, out, backend, media)
+                return
+            # Several speakers to reach, so each gets its own thread: a Nest that
+            # takes six seconds to be found on the network must not make the wired
+            # box in the kitchen start six seconds behind it, because then one
+            # house hears the call twice. The event as a whole still holds the play
+            # lock, so a test click from the page waits for the adhan instead of
+            # landing on top of it, and a speaker that fails is logged while the
+            # others play on.
+            threads = [threading.Thread(target=self._play_one, args=(ev, out, backend, media),
+                                        name=f"muezzin-{out.name}", daemon=True)
+                       for out, backend in wanted]
+            for player in threads:
+                player.start()
+            for player in threads:
+                player.join()
+
+    def _play_one(self, ev: EventConfig, out, backend, media: list[Path]) -> None:
+        """One speaker's share of one event. Errors stop at this speaker."""
+        try:
+            log.info("%s -> %s (%s)", ev.name, out.name, out.kind)
+            backend.play(media, ev.volume)
+        except Exception as exc:                    # one dead speaker must not stop the rest
+            log.error("%s on %s failed: %s", ev.name, out.name, exc)
+
+    def lead(self, sev: ScheduledEvent) -> float:
+        """How early to start, in seconds: whatever the slowest speaker this event
+        wants needs to get itself going.
+
+        A Cast speaker has to be looked up by name on the network, connected to,
+        and told to fetch a URL before anybody hears a note, and muezzin cannot
+        know how long that takes until it has happened. Paying for it a little
+        early is what puts the first note at the time instead of after it. The
+        biggest number among the targets wins, so a house with one slow speaker
+        hears everything a few seconds early rather than hearing that speaker
+        late; `lead_seconds:` on an output sets it by hand, and `0` on all of them
+        means start exactly on the minute. The timetable everybody reads is
+        untouched: the page and `muezzin next` still print the computed time.
+        """
+        return lead_of(self.profile.targets_for(sev.event))
 
     def _drain(self) -> None:
         """The player thread: fire queued events one at a time."""
@@ -283,15 +352,22 @@ class Runner:
         """Ask run_forever to come back at its earliest convenience."""
         self._stop.set()
 
-    def _sleep(self, seconds: float, generation: int) -> bool:
+    def _sleep(self, seconds: float, generation: int, tidy: bool = True) -> bool:
         """Sleep up to `seconds`, coming back early if the config changed or we
-        were asked to stop. True means: the queue you are holding is stale."""
+        were asked to stop. True means: the queue you are holding is stale.
+
+        `tidy` says whether housekeeping (closing players a reload parked) may be
+        done here. It is off for the "nothing is scheduled" sleep, where there is
+        no moment to be late for and the loop should sleep its full hour.
+        """
         deadline = time.monotonic() + max(0.0, seconds)
         while not self._stop.is_set() and self.generation == generation:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
             self._stop.wait(min(remaining, 5.0))
+            if tidy and not tidy_is_safe(deadline, time.monotonic()):
+                break
             # the daemon spends most of its life in this loop, so this is where
             # parked players get shut down while the speakers are idle
             self._close_retired()
@@ -323,20 +399,28 @@ class Runner:
                    if self._watermark is None or e.when > self._watermark]
             if not due:
                 log.warning("nothing scheduled in the next two days")
-                self._sleep(3600.0, generation)
+                self._sleep(3600.0, generation, tidy=False)
                 continue
             sev = due[0]
-            delay = (sev.when - dt.datetime.now(dt.timezone.utc)).total_seconds()
+            lead = self.lead(sev)
+            # The instant the recording gets handed to the speakers, which is a
+            # little earlier than the instant the recording is about. Everything
+            # anyone reads - the page, `muezzin next`, LATE_GRACE below - still
+            # measures against sev.when, the computed time.
+            start = sev.when - dt.timedelta(seconds=lead)
+            delay = (start - dt.datetime.now(dt.timezone.utc)).total_seconds()
             if delay >= 0:
-                log.info("next: %s at %s (%.0f min)", sev.event.name,
-                         sev.when.strftime("%Y-%m-%d %H:%M %Z"), delay / 60.0)
+                log.info("next: %s at %s (%.0f min%s)", sev.event.name,
+                         sev.when.strftime("%Y-%m-%d %H:%M %Z"), delay / 60.0,
+                         f", handed to the speakers {lead:g} s early" if lead > 0 else "")
                 while delay > 0:
                     if self._sleep(min(delay, 3600.0), generation):
                         break
-                    delay = (sev.when - dt.datetime.now(dt.timezone.utc)).total_seconds()
+                    delay = (start - dt.datetime.now(dt.timezone.utc)).total_seconds()
             else:
+                late = (dt.datetime.now(dt.timezone.utc) - sev.when).total_seconds() / 60.0
                 log.warning("%s came due %.0f min ago, playing it now",
-                            sev.event.name, -delay / 60.0)
+                            sev.event.name, max(0.0, late))
             if self.generation != generation or self._stop.is_set():
                 continue
             if not self._still_worth_saying(sev):
