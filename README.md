@@ -228,11 +228,12 @@ validated before it lands, but it is a window rather than a prerequisite.
 
 The map is on from the first run, and that is the one honest exception to "this asks
 nobody anything": its squares come from `tile.openstreetmap.org`, fetched by the
-daemon with this program's name on the request, one request per square, kept on disk,
-and credited under the map as "© OpenStreetMap contributors". Your browser still only
-ever talks to the daemon's own address. `map_tiles: off` in the profile puts even that
-away; the position is then drawn from the numbers and the nearby towns, which is the
-same arithmetic and needs no network at all.
+daemon with this program's name on the request, one per square and never two at the
+same instant, kept on disk, and credited under the map as "© OpenStreetMap
+contributors". Your browser still only ever talks to the daemon's own address.
+`map_tiles: off` in the profile puts even that away; the position is then drawn from
+the numbers and the nearby towns, which is the same arithmetic and needs no network at
+all.
 
 Saving re-validates before writing, and a bad edit is never written to disk: the
 error you see is the one the CLI would print. A good one is picked up without a
@@ -329,10 +330,14 @@ the device list, along with the player it picked for itself.
 * The map is the one thing here that asks somebody something without being told to,
   so the promise is stated with the exception in it: with `map_tiles: off` this
   daemon asks nobody anything, and with the default it asks for nine squares per
-  view, one fetch each, forever. Those squares sit in `muezzin-tiles/` beside the
-  profile and nothing prunes that folder — it is a few hundred kilobytes per zoom
-  level a household looks at, and deleting it is safe, since the squares just come
-  back.
+  view, one fetch each, kept forever — except a square that comes back as a busy
+  server's placeholder, which is shown once and not kept, so the next look asks for
+  it again. Those squares sit in `muezzin-tiles/` beside the profile and nothing
+  prunes that folder — it is a few hundred kilobytes per zoom level a household
+  looks at, and deleting it is safe, since the squares just come back. A public tile
+  layer can still be stretched, and then a square or two of a view stays dim until
+  it is not; the page marks which ones, and **try those again** asks for exactly
+  those.
 * Clicking the map points at something; it does not survey it. What comes back is
   the square the cursor was over, so how close that is depends on the zoom: about a
   tenth of a degree at zoom 12, a few metres at zoom 17. It is fine for choosing

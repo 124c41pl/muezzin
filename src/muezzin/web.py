@@ -23,6 +23,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
@@ -179,6 +180,14 @@ class WebPanel:
         self.scan_lock = threading.Lock()  # one speaker scan at a time
         self._scan = None                 # last scan_speakers() result, and when
         self.scan_at = None
+        # Map squares: one ask out at a time, a beat apart. The browser sends the nine
+        # squares of a view all at once and the public tile layer asks to be treated like
+        # one person browsing, which means about one request a second. This is not
+        # self.lock: a queue of pictures has nothing to do with a config write, and a
+        # square held up behind a speaker scan should not hold up an edit either.
+        self.tile_lock = threading.Lock()
+        self.tile_spacing = geocode.TILE_SPACING
+        self._tile_next = 0.0             # when the next square may be asked for
         self._httpd = None
         self._thread = None
 
@@ -632,6 +641,12 @@ class WebPanel:
         for the house instead of once per screen. What comes back is checked to be a
         picture before this origin serves it, so an error page or a hijacked answer does
         not arrive at the browser looking like it came from here.
+
+        The asks go out one at a time, a beat apart: a view of the page is nine squares
+        and a browser sends all nine at once, while the public layer asks to be treated
+        like a person browsing. And a square that came back as a picture with almost
+        nothing in it - what a stretched server's placeholder looks like - is served once
+        and not kept, so the next look asks again instead of preserving the hole.
         """
         if self.runner.profile.map_tiles != "osm":
             raise _Status(403, "this profile keeps the map off: map_tiles: off. Put "
@@ -650,22 +665,37 @@ class WebPanel:
         try:
             target = self._tile_dir() / str(zoom) / f"{x}-{y}.png"
             if target.is_file():
-                return target.read_bytes()
+                kept = target.read_bytes()
+                if not geocode.tile_is_thin(zoom, kept):
+                    return kept
+                # Asked for once and kept forever is the deal, but one busy afternoon
+                # should not put a hole in the map for the rest of the house's life.
+                log.info("the kept square at zoom %s is %s bytes, so it is asked for again",
+                         zoom, len(kept))
         except OSError:
             pass                              # a cache that will not read is not fatal
-        try:
-            body = geocode.fetch_tile(zoom, x, y)
-        except geocode.GeocodeError as exc:
-            raise _Status(502, str(exc)) from None
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            scratch = target.with_name(f"{x}-{y}.writing")
-            scratch.write_bytes(body)
-            os.replace(scratch, target)       # never a half-written square on disk
-        except OSError as exc:
-            # The map is a courtesy; a read-only volume or a full disk should not cost
-            # anyone the picture they asked for right now.
-            log.info("the map square was not kept: %s", exc)
+        with self.tile_lock:
+            wait = self._tile_next - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)             # the others in this view wait their turn
+            self._tile_next = time.monotonic() + self.tile_spacing
+            try:
+                body = geocode.fetch_tile(zoom, x, y)
+            except geocode.GeocodeError as exc:
+                raise _Status(502, str(exc)) from None
+        if geocode.tile_is_thin(zoom, body):
+            log.info("the square at zoom %s came back with %s bytes, which is not a map",
+                     zoom, len(body))
+        else:
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                scratch = target.with_name(f"{x}-{y}.writing")
+                scratch.write_bytes(body)
+                os.replace(scratch, target)   # never a half-written square on disk
+            except OSError as exc:
+                # The map is a courtesy; a read-only volume or a full disk should not cost
+                # anyone the picture they asked for right now.
+                log.info("the map square was not kept: %s", exc)
         return body
 
     def _event_row(self, rows: list[dict], at: str, friday: bool) -> Optional[dict]:
@@ -1857,12 +1887,24 @@ function drawMap(){
  }
  box.innerHTML='<div class="row"><button id="zout">farther</button><span class="tag">zoom '
   +MZ+'</span><button id="zin">closer</button><span class="fine">map data '
-  +esc(st.map_credit)+' &middot; click it to point</span></div><div class="mapbox" role="img" '
+  +esc(st.map_credit)+' &middot; click it to point</span><button id="zagain" hidden '
+  +'title="a square that stayed dim did not arrive: this asks for the dim ones again">'
+  +'try those again</button></div><div class="mapbox" role="img" '
   +'aria-label="the area around these numbers; click it to move the position boxes">'+cells+'<span class="spot" style="left:'
   +((q.fx-q.x+1)*256).toFixed(1)+'px;top:'+((q.fy-q.y+1)*256).toFixed(1)+'px"></span></div>';
- document.querySelectorAll('#map img').forEach(i=>{ i.onerror=()=>{ i.style.opacity=.15; }; });
+ // A square that did not arrive stays dim and brings up the button next to it: the map
+ // is the one part of this page that depends on somebody else being awake. Pressing it
+ // redraws the view, and the squares the daemon already has come back from its own shelf
+ // without anyone being asked again.
+ document.querySelectorAll('#map img').forEach(i=>{
+  i.onerror=()=>{ i.style.opacity=.15; const b=$('#zagain'); if(b){ b.hidden=false; } };
+ });
  $('#zin').onclick=()=>{ if(MZ<18){ MZ++; drawMap(); } };
  $('#zout').onclick=()=>{ if(MZ>3){ MZ--; drawMap(); } };
+ // Forcing a redraw is the whole retry: the memo that keeps the 60 second refresh from
+ // fetching squares is cleared, so the view is built again, and the daemon answers the
+ // squares it already kept from its own shelf.
+ $('#zagain').onclick=()=>{ MAPTAG=''; drawMap(); };
  document.querySelector('.mapbox').onclick=plant;
 }
 // the scan is expensive and the daemon caches it, so arriving at the page shows

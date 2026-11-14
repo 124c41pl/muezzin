@@ -367,8 +367,27 @@ def test_the_command_refuses_numbers_it_cannot_read(tmp_path, capsys, monkeypatc
 # anyone is shown them; the clock does not arrive at all, so it is never implied.
 
 # A PNG header, then a square of somebody's map. The header is spelled as numbers
-# because an escape sequence in a test file is a thing a person can misread.
-PICTURE = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + b"a square of map"
+# because an escape sequence in a test file is a thing a person can misread. The body is
+# padded to the size a real street-level square is, so nothing here trips the "too small
+# to be a map" rule by accident; that rule gets its own tests below.
+PICTURE = (bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + b"a square of map"
+           + b"." * geocode.TILE_MIN_BYTES)
+THIN = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + b"placeholder"
+
+
+class AnsweredTwice:
+    """A server that gives one answer to the first ask and another to the second."""
+
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.calls: list[str] = []
+
+    def __call__(self, url: str, accept: str = "application/json") -> bytes:
+        self.calls.append(url)
+        reply = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
+        if isinstance(reply, BaseException):
+            raise reply
+        return reply
 
 
 def test_the_two_distances_are_named_because_two_places_need_them():
@@ -417,6 +436,7 @@ def test_bytes_that_are_not_a_picture_are_not_handed_to_a_browser(monkeypatch):
 
 
 def test_a_map_that_is_not_there_costs_nobody_the_times(monkeypatch):
+    monkeypatch.setattr(geocode, "TILE_RETRY_WAIT", 0.0)
     monkeypatch.setattr(geocode, "_open",
                         FakeNetwork(error=urllib.error.URLError("no route")))
     with pytest.raises(geocode.TileMissing) as caught:
@@ -440,3 +460,79 @@ def test_a_map_server_that_cannot_be_verified_is_not_listened_to(monkeypatch):
     with pytest.raises(geocode.TileMissing) as caught:
         geocode.fetch_tile(1, 1, 1)
     assert "could not be verified" in str(caught.value)
+
+
+# A view of the page is nine squares, and a browser sends all nine at once, which is how
+# a map meant for one person browsing ends up answered with placeholders. The answers
+# here are all about the difference between a server that is busy and a server that said
+# no: only the first is worth asking again, and only once.
+
+def test_a_square_that_was_refused_is_not_chased(monkeypatch):
+    """A clean no is a no. The second ask exists for a server that stumbled, not for one
+    that does not have that square, and asking it anyway is traffic nobody asked for."""
+    refused = urllib.error.HTTPError(geocode.TILE_HOST, 403, "go away", {}, None)
+    net = FakeNetwork(error=refused)
+    monkeypatch.setattr(geocode, "_open", net)
+    with pytest.raises(geocode.TileMissing):
+        geocode.fetch_tile(12, 3456, 1721)
+    assert len(net.calls) == 1, "a refusal is answered once, not hunted"
+
+
+def test_a_busy_square_is_asked_for_once_more_and_not_a_third_time(monkeypatch):
+    """One second chance is the whole policy: enough for a server that slipped between
+    answering nine squares, nowhere near enough to be the reason it slips again."""
+    monkeypatch.setattr(geocode, "TILE_RETRY_WAIT", 0.0)
+    busy = urllib.error.HTTPError(geocode.TILE_HOST, 503, "busy", {}, None)
+    net = AnsweredTwice(busy, PICTURE)
+    monkeypatch.setattr(geocode, "_open", net)
+    assert geocode.fetch_tile(12, 3456, 1721) == PICTURE
+    assert len(net.calls) == 2, "the second ask is the last one"
+
+
+def test_a_square_that_arrives_almost_empty_is_asked_for_again(monkeypatch):
+    """A well-formed PNG with almost nothing in it is what a stretched server hands back,
+    and it is why a view can end up with one pale hole where a street should be."""
+    monkeypatch.setattr(geocode, "TILE_RETRY_WAIT", 0.0)
+    net = AnsweredTwice(THIN, PICTURE)
+    monkeypatch.setattr(geocode, "_open", net)
+    assert geocode.fetch_tile(12, 3456, 1721) == PICTURE
+    assert len(net.calls) == 2
+
+
+def test_a_square_of_open_water_is_left_at_one_request(monkeypatch):
+    """A square that is mostly sea a couple of zoom levels out really is a few hundred
+    bytes. Small only counts as wrong at the zooms where a square has streets in it."""
+    net = FakeNetwork(body=THIN)
+    monkeypatch.setattr(geocode, "_open", net)
+    assert geocode.fetch_tile(2, 1, 1) == THIN
+    assert len(net.calls) == 1, "a small square at a small zoom is not a mistake"
+
+
+def test_the_bigger_of_two_thin_answers_is_the_one_shown(monkeypatch):
+    """Both asks came back thin, so neither is the map; showing the one with more in it
+    beats a hole, and the panel keeps it off the cache so a later look tries again."""
+    monkeypatch.setattr(geocode, "TILE_RETRY_WAIT", 0.0)
+    fuller = THIN + b"and a road" * 8
+    net = AnsweredTwice(THIN, fuller)
+    monkeypatch.setattr(geocode, "_open", net)
+    assert geocode.fetch_tile(12, 3456, 1721) == fuller
+
+
+def test_a_square_that_never_arrives_says_it_was_asked_twice(monkeypatch):
+    monkeypatch.setattr(geocode, "TILE_RETRY_WAIT", 0.0)
+    busy = urllib.error.HTTPError(geocode.TILE_HOST, 502, "bad gateway", {}, None)
+    net = AnsweredTwice(busy)
+    monkeypatch.setattr(geocode, "_open", net)
+    with pytest.raises(geocode.TileMissing) as caught:
+        geocode.fetch_tile(12, 3456, 1721)
+    assert len(net.calls) == 2
+    note = str(caught.value)
+    assert "busy" in note and "the times do not need it" in note
+
+
+def test_the_size_that_stops_counting_as_a_map_depends_on_the_zoom():
+    assert geocode.tile_is_thin(geocode.TILE_RETRY_ZOOM, THIN)
+    assert geocode.tile_is_thin(18, THIN)
+    assert not geocode.tile_is_thin(2, THIN), "small zooms have genuinely small squares"
+    assert not geocode.tile_is_thin(12, PICTURE)
+    assert not geocode.tile_is_thin("not a number", THIN), "a zoom arrives from a browser"

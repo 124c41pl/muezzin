@@ -1274,7 +1274,12 @@ SOLO_ANSWER = json.dumps([
      "display_name": "Mid-Atlantic, somewhere"},
 ]).encode("utf-8")
 
-PNG = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + b"a square of somebody's map"
+# A square of the map, big enough to be one. The padding matters: a few hundred bytes at
+# a street-level zoom is what a stretched tile server hands back instead of a map, and
+# that distinction has its own tests further down.
+PNG = (bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+       + b"a square of somebody's map" + b"." * geocode.TILE_MIN_BYTES)
+THIN_PNG = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + b"placeholder"
 
 
 def test_checking_a_set_of_numbers_asks_nobody_anything(panel, monkeypatch):
@@ -1648,6 +1653,7 @@ def test_a_map_that_cannot_be_reached_costs_nobody_the_times(tmp_path, monkeypat
     def refused(url, accept="application/json"):
         raise urllib.error.URLError("no route to host")
 
+    monkeypatch.setattr(geocode, "TILE_RETRY_WAIT", 0.0)
     monkeypatch.setattr(geocode, "_open", refused)
     web, _, _ = _serve(tmp_path, MAPPED)
     try:
@@ -1657,5 +1663,89 @@ def test_a_map_that_cannot_be_reached_costs_nobody_the_times(tmp_path, monkeypat
         assert st["upcoming"], "the times went down with the map"
     finally:
         web.runner.shutdown()
+
+
+# Nine squares per view, one public server, and a household that notices a hole in the
+# middle of its map long before it notices anything else on the page. What follows is the
+# difference between a square that came back wrong and a square that is really missing:
+# the first gets asked for again, the second is marked and left alone.
+
+def test_a_square_too_small_to_be_a_map_is_served_once_and_not_kept(tmp_path,
+                                                                    monkeypatch):
+    """The placeholder a stretched tile server hands back is a well-formed PNG a few
+    hundred bytes big. Kept, it is a hole in this house's map for good; shown once and
+    left off the shelf, the next look at the page asks again."""
+    monkeypatch.setattr(geocode, "TILE_RETRY_WAIT", 0.0)
+    monkeypatch.setattr(geocode, "_open",
+                        lambda url, accept="application/json": THIN_PNG)
+    web, _, _ = _serve(tmp_path, MAPPED)
+    try:
+        status, body, _ = get_bytes(web.port, "/api/tile?z=12&x=1135&y=1517")
+        assert status == 200 and body == THIN_PNG, "this look still gets what came back"
+        folder = tmp_path / "muezzin-tiles"
+        kept = list(folder.rglob("*.png")) if folder.exists() else []
+        assert kept == [], f"a placeholder was kept as though it were the map: {kept}"
+    finally:
+        web.runner.shutdown()
+
+
+def test_a_placeholder_already_on_the_shelf_is_asked_for_again(tmp_path, monkeypatch):
+    """A cache written before this rule existed holds a square of a hundred bytes. The
+    read has to notice, or one busy afternoon stays in the middle of the map forever."""
+    folder = tmp_path / "muezzin-tiles" / "12"
+    folder.mkdir(parents=True)
+    stub = folder / "1135-1517.png"
+    stub.write_bytes(THIN_PNG)
+    asks: list[str] = []
+    monkeypatch.setattr(geocode, "_open",
+                        lambda url, accept="application/json": asks.append(url) or PNG)
+    web, _, _ = _serve(tmp_path, MAPPED)
+    try:
+        status, body, _ = get_bytes(web.port, "/api/tile?z=12&x=1135&y=1517")
+        assert status == 200 and body == PNG, (status, body[:40])
+        assert asks == [geocode.tile_url(12, 1135, 1517)], "the placeholder was believed"
+        assert stub.read_bytes() == PNG, "the square that came back was not kept"
+    finally:
+        web.runner.shutdown()
+
+
+def test_the_squares_of_one_view_go_out_one_at_a_time(tmp_path, monkeypatch):
+    """A browser sends all nine at once, and the tile layer asks to be treated like one
+    person browsing, which is about one request a second. Being polite here is also what
+    makes the view come back complete: the empty squares are what a server answers when
+    it is asked for nine at the same instant."""
+    clock: list[float] = []
+
+    def timed(url, accept="application/json"):
+        clock.append(time.monotonic())
+        return PNG
+
+    monkeypatch.setattr(geocode, "_open", timed)
+    web, _, _ = _serve(tmp_path, MAPPED)
+    try:
+        web.tile_spacing = 0.4      # the rule itself, without the suite waiting on it
+        threads = [threading.Thread(target=get_bytes,
+                                    args=(web.port, f"/api/tile?z=12&x={1000 + n}&y=1517"))
+                   for n in range(3)]
+        for one in threads:
+            one.start()
+        for one in threads:
+            one.join()
+        assert len(clock) == 3, f"the page should have asked for three squares: {clock}"
+        gaps = [later - sooner for sooner, later in zip(clock, clock[1:])]
+        assert all(gap >= 0.35 for gap in gaps), f"the asks went out together: {gaps}"
+    finally:
+        web.runner.shutdown()
+
+
+def test_the_page_says_what_a_dim_square_means_and_how_to_ask_again(panel):
+    """A square that did not arrive has to be legible as that, rather than as a pale
+    patch of ground: the mark says which, and the button is the way to fix it without
+    reloading the whole page."""
+    web, _, _ = panel
+    _, page = call(web.port, "/", raw=True)
+    assert "i.style.opacity=.15" in page, "a square that did not arrive is invisible"
+    assert 'id="zagain"' in page and "try those again" in page, "no way to ask again"
+    assert "MAPTAG=''" in page, "the retry has to clear the memo that stops the asking"
 
 

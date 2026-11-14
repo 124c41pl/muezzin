@@ -249,12 +249,24 @@ the name. The panel will not write a zone `ZoneInfo` cannot open.
 The map on the page is on by default, which makes it the one thing here that goes
 outside without being told to, so it is said in three places: under the map as a
 credit, on the page beside it, and here. `map_tiles: off` in the profile is the whole
-way back. The daemon fetches each 256-pixel square once, keeps it under
+way back. The daemon fetches each 256-pixel square, keeps it under
 `muezzin-tiles/` beside the profile, checks that the bytes really are a PNG before
 serving them from its own origin, and prints "© OpenStreetMap contributors" under the
 map. The browser never talks to the tile server, so the page is still only ever a page
 from this address — and a grey square costs nothing, because the times come out of the
 engine and not out of a map.
+
+A view of that map is nine squares, and a browser sends all nine at once, while the
+public layer asks for something nearer one request a second. So the daemon holds the
+nine in a queue and lets one out at a time. Two things go wrong on a busy afternoon and
+they are not treated the same way: a square the server refused is left alone, because
+asking again would be nothing but more traffic at somebody already stretched, while a
+square that arrives as a picture with almost nothing in it — the placeholder a loaded
+server hands back, and the reason one patch of a view comes up pale — is asked for once
+more a second later, shown to the page if it comes back thin again, and never written to
+the cache. A square that stayed missing is left dim with **try those again** beside the
+zoom buttons: that redraws the view, the kept squares come off the disk, and only the
+missing ones cost anybody a request.
 
 Clicking that map is a look, not a write. It moves the mark, refills the latitude and
 longitude boxes and redraws the dial of nearby towns from the numbers, and the profile
