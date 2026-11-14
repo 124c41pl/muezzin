@@ -623,9 +623,9 @@ class WebPanel:
         not arrive at the browser looking like it came from here.
         """
         if self.runner.profile.map_tiles != "osm":
-            raise _Status(403, "this profile shows no map. If you want one, put "
-                               "map_tiles: osm in the profile - the page will then say "
-                               "whose map it is")
+            raise _Status(403, "this profile keeps the map off: map_tiles: off. Put "
+                               "map_tiles: osm there and the daemon will fetch the squares "
+                               "itself, and say whose map they are")
         try:
             zoom, x, y = int(zoom), int(x), int(y)
         except (TypeError, ValueError):
@@ -853,6 +853,47 @@ class WebPanel:
             saved = self.save_config(yamledit.delete_entry(text, "outputs", row["index"]))
         saved["removed_output"] = name
         saved["events_rewritten"] = orphaned
+        return saved
+
+    def rename_output(self, payload: dict) -> dict:
+        """Give an output the name this house calls it by, without anyone opening a file.
+
+        A name is not a label: it is what events point at. So one rename has to land in
+        two places, the output's own `name:` and every event `targets:` list that names
+        it. Changing only the first leaves an event naming a speaker that no longer
+        exists, and the loader refuses such a profile - the schedule would go down for a
+        word. This is the same trap as deleting an output, arrived at from the other
+        side, so it is handled the same way: rewrite the references in the one write and
+        tell the page which events moved.
+        """
+        old = str(payload.get("from") or "").strip()
+        asked = str(payload.get("to") or "").strip()
+        # The guard is on what was typed, not on the slug: _slug has a fallback name for
+        # a word with no letters or digits in it, and silently renaming somebody's
+        # speaker to `output` because their box was empty would be a surprise at Fajr.
+        if not asked or not any(c.isalnum() for c in asked):
+            raise ValueError("what should it be called? one word, like kitchen-box")
+        new = _slug(asked)
+        with self._editing() as text:
+            rows = yamledit.entries(text, "outputs")
+            row = next((r for r in rows if yamledit.entry_scalar(r, "name") == old), None)
+            if row is None:
+                raise ValueError(f"no output called {old} in this profile")
+            taken = {(yamledit.entry_scalar(r, "name") or "").lower() for r in rows}
+            if new.lower() in taken:
+                raise ValueError(f"there is already an output called {new}")
+            moved = [ev["name"] for ev in yamledit.entries(text, "events")
+                     if old in (yamledit.entry_list(ev, "targets") or [])]
+            for ev_name in moved:                          # indices stay put: nothing is
+                ev = next(r for r in yamledit.entries(text, "events") if r["name"] == ev_name)
+                targets = [new if t == old else t          # added or removed, so an
+                           for t in (yamledit.entry_list(ev, "targets") or [])]
+                text = yamledit.edit_entry(text, "events", ev["index"], {"targets": targets})
+            saved = self.save_config(yamledit.edit_entry(text, "outputs", row["index"],
+                                                         {"name": new}))
+        saved["renamed"] = new
+        saved["was_called"] = old
+        saved["events_rewritten"] = moved
         return saved
 
     def save_upload(self, filename: str, data: bytes) -> dict:
@@ -1292,6 +1333,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self._json(self.panel.add_box(body))
             elif self.path == "/api/output/remove":
                 self._json(self.panel.remove_output(str(body["name"])))
+            elif self.path == "/api/output/rename":
+                self._json(self.panel.rename_output(body))
             else:
                 self._json({"error": f"no such path: {self.path}"}, 404)
         except _Status as exc:
@@ -1409,10 +1452,13 @@ PAGE = """<!doctype html>
   margin:10px 0 0; font-size:13.5px; max-width:1200px }
  .fine.warn { color:var(--bad) }
  /* How a position gets shown: a diagram of bearings drawn here from the numbers,
-    which works with the network unplugged, and - only when the profile asked for
-    a map - squares of somebody else's map, fetched by the daemon and credited
-    where they appear. The dot is where the numbers are, not a picture of anything. */
- .mapbox { position:relative; display:inline-block; margin-top:8px; border:1px solid var(--line) }
+    which works with the network unplugged, and squares of somebody else's map, which
+    the daemon fetches and credits where they appear - on by default, and stopped by
+    map_tiles: off. The dot is where the numbers are, not a picture of anything, and
+    clicking the map moves it without writing anything down. */
+ .mapbox { position:relative; display:inline-block; margin-top:8px; border:1px solid var(--line);
+  cursor:crosshair }
+ .rename { width:16ch; padding:3px 6px }
  .mapbox img { float:left; width:256px; height:256px }
  .mapbox:after { content:""; display:block; clear:both }
  .spot { position:absolute; width:9px; height:9px; margin:-4px 0 0 -4px; border-radius:50%;
@@ -1453,9 +1499,11 @@ PAGE = """<!doctype html>
    muezzin carries, and asks nobody anything. Finding a place by its words sends what you
    typed to <span id="geocoder"></span> - once, and only because you pressed find-it; it is
    not kept, not written to the profile, not put in the log, and the times themselves never
-   ask anyone. A map is off unless the profile says <code>map_tiles: osm</code>; with it on,
-   the squares are fetched by the daemon and credited where they show, never by your
-   browser.</div>
+   ask anyone. The map below is the one thing that asks for something on its own: its
+   squares come from tile.openstreetmap.org, fetched by the daemon with this program's name
+   on the request and credited where they show, never by your browser. Click the map to move
+   the mark and the two boxes above follow it; write-it is what saves them. To keep every
+   request inside this house, put <code>map_tiles: off</code> in the profile.</div>
   <div id="map"></div>
  </section>
  <section><h2>Method</h2>
@@ -1557,9 +1605,16 @@ function render(){
     `<tr class="${nx&&nx.at===k&&nx.date===d.date?'now':''}"><td class="pl">${esc(NAME[k]||k)}</td>`
     +`<td class="ar">${esc(AR[k]||'')}</td><td class="t">${esc(v)}</td></tr>`).join('')}</table></div>`).join('');
  $('#upcoming').innerHTML=st.upcoming.map(e=>`<tr><td>${esc(e.when)}</td><td>${esc(e.name)}<span class="tag">${esc(e.at)}${e.offset_min?` ${e.offset_min>0?'+':''}${e.offset_min}m`:''}</span></td><td>${esc(e.targets.join(', '))||'(none enabled)'}</td><td>${esc(e.media.join(', '))}</td></tr>`).join('')||'<tr><td colspan=4>nothing scheduled in the next two days</td></tr>';
- $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td>${esc(o.name)}</td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td><button data-test="${esc(o.name)}">test</button></td></tr>`).join('');
+ $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td><button data-test="${esc(o.name)}">test</button></td></tr>`).join('');
  document.querySelectorAll('.switch').forEach(b=>b.onclick=()=>act(()=>api('/api/output',{name:b.dataset.name,enabled:b.getAttribute('aria-checked')!=='true'})));
  document.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>act(()=>api('/api/test',{output:b.dataset.test,media:$('#media').value?[$('#media').value]:[]})));
+ // The name is the box you type in, not a label: events point at speakers by that word,
+ // so a rename rewrites the events too and says which ones moved. Names are flattened to
+ // one safe word, and the reply is the word that actually got written.
+ document.querySelectorAll('.rename').forEach(i=>i.onchange=()=>{ const was=i.dataset.was,
+  to=i.value.trim(); if(!to||to===was){ load(); return; } let rn=null;
+  act(async()=>{ rn=await api('/api/output/rename',{from:was,to:to}); },
+   ()=>say('now called '+rn.renamed+(rn.events_rewritten.length?', and '+rn.events_rewritten.join(', ')+' asks for it by the new name':', and no event named it yet'),'ok')); });
  const pick=$('#media'), want=pick.value;
  pick.innerHTML=st.media_files.map(f=>`<option>${esc(f)}</option>`).join('')||'<option value="">(no audio in media_dir)</option>';
  if(want&&[...pick.options].some(o=>o.value===want)) pick.value=want;
@@ -1575,7 +1630,7 @@ function render(){
  renderMethod();renderSound();renderFound();renderWhere();
  syncYaml();
  $('#save').disabled=$('#reload').disabled=st.read_only;
- document.querySelectorAll('.switch,[data-test]').forEach(b=>b.disabled=st.read_only);
+ document.querySelectorAll('.switch,[data-test],.rename').forEach(b=>b.disabled=st.read_only);
  // Checking numbers and finding a place stay live on a read-only panel: looking
  // changes nothing. Only the buttons that write a line into the profile go dark.
  ['#preset','#asr','#applymethod','#hijminus','#hijplus','#applysound','#upload','#file','#writewhere'].forEach(s=>{ $(s).disabled=st.read_only; });
@@ -1693,7 +1748,7 @@ async function act(fn,after){ try{ await fn(); say('',''); if(after)await after(
 // squares of somebody else's map, credited where they appear. The diagram is drawn
 // from bearings and distances and needs no network at all, which is the point of
 // checking numbers before sending anything anywhere.
-let W=null, FH=[], MP=null, MZ=12, MAPTAG='', prefilled=false;
+let W=null, FH=[], MP=null, MQ=null, MZ=12, MAPTAG='', prefilled=false;
 function fillWhere(){
  if(prefilled) return;
  prefilled=true;
@@ -1758,14 +1813,32 @@ function square(lat,lon,z){
  const fy=n*(1-Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))/Math.PI)/2;
  return {n:n, x:Math.floor(fx), y:Math.floor(fy), fx:fx, fy:fy};
 }
+function plant(ev){
+ // Clicking the map is a way of pointing, not a way of writing. The mark moves, the two
+ // boxes above are refilled, the nearby-towns dial follows - because that part is
+ // arithmetic this daemon does for itself, with nobody asked - and the numbers still only
+ // reach the profile when write-it is pressed. The maths is square() turned around: the
+ // same squares at the same zoom, pixels back into degrees. North here is the top of the
+ // map, which is not the same as where a compass points.
+ if(!MQ) return;
+ const r=ev.currentTarget.getBoundingClientRect(), n=MQ.n;
+ const u=MQ.x-1+(ev.clientX-r.left)/256, v=MQ.y-1+(ev.clientY-r.top)/256;
+ const la=((360/Math.PI)*Math.atan(Math.exp(Math.PI*(1-2*v/n)))-90).toFixed(4);
+ const lo=((u*360/n-180)).toFixed(4);
+ $('#lat').value=la; $('#lon').value=lo;
+ MP={latitude:Number(la),longitude:Number(lo)};
+ act(async()=>{ W=await api('/api/near?lat='+la+'&lon='+lo); },
+  ()=>say('the mark moved to '+la+', '+lo+': press write-it to keep those numbers. The time zone is still yours to set, and nothing has been saved yet.','ok'));
+}
 function drawMap(){
  const box=$('#map');
- if(st.map_tiles!=='osm'){ box.innerHTML=''; MAPTAG=''; return; }
+ if(st.map_tiles!=='osm'){ box.innerHTML=''; MAPTAG=''; MQ=null; return; }
  const p=MP||{latitude:st.location.latitude,longitude:st.location.longitude};
  const stamp=MZ+'|'+p.latitude+','+p.longitude;
  if(stamp===MAPTAG) return;      // the 60 second refresh must not fetch squares again
  MAPTAG=stamp;
  const q=square(p.latitude,p.longitude,MZ);
+ MQ=q;                    // the click handler needs this to turn a pixel back into numbers
  let cells='';
  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
   const x=Math.min(q.n-1,Math.max(0,q.x+dx)), y=Math.min(q.n-1,Math.max(0,q.y+dy));
@@ -1773,12 +1846,13 @@ function drawMap(){
  }
  box.innerHTML='<div class="row"><button id="zout">farther</button><span class="tag">zoom '
   +MZ+'</span><button id="zin">closer</button><span class="fine">map data '
-  +esc(st.map_credit)+'</span></div><div class="mapbox" role="img" '
-  +'aria-label="the area around these numbers">'+cells+'<span class="spot" style="left:'
+  +esc(st.map_credit)+' &middot; click it to point</span></div><div class="mapbox" role="img" '
+  +'aria-label="the area around these numbers; click it to move the position boxes">'+cells+'<span class="spot" style="left:'
   +((q.fx-q.x+1)*256).toFixed(1)+'px;top:'+((q.fy-q.y+1)*256).toFixed(1)+'px"></span></div>';
  document.querySelectorAll('#map img').forEach(i=>{ i.onerror=()=>{ i.style.opacity=.15; }; });
  $('#zin').onclick=()=>{ if(MZ<18){ MZ++; drawMap(); } };
  $('#zout').onclick=()=>{ if(MZ>3){ MZ--; drawMap(); } };
+ document.querySelector('.mapbox').onclick=plant;
 }
 // the scan is expensive and the daemon caches it, so arriving at the page shows
 // what was last seen if there is a last-seen; the button is for when speakers

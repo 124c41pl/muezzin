@@ -20,11 +20,11 @@ text is not written into the profile, and the request carries no identifier of t
 household beyond the User-Agent the policy requires.
 
 The same file also carries the other outward thing this program can do: fetching one
-square of the OpenStreetMap map when a profile asks for a map on the page. That is off
-unless the profile says `map_tiles: osm`, it is fetched by the daemon rather than by
-each browser so the request identifies this program the way the tile policy asks, each
-square is fetched once and kept, and what comes back is only passed on if it really is a
-picture.
+square of the OpenStreetMap map for the page. That one is on by default, because the map
+is how a household notices where its numbers actually point, and `map_tiles: off` in the
+profile puts it away. It is fetched by the daemon rather than by each browser so the
+request identifies this program the way the tile policy asks, each square is fetched once
+and kept, and what comes back is only passed on if it really is a picture.
 """
 from __future__ import annotations
 

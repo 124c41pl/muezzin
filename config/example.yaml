@@ -7,10 +7,11 @@ location:
   longitude: 51.0753
   timezone: Asia/Tehran
 
-# Whether the page shows a map behind those numbers. Off means no map and nothing
-# asked of anybody; osm has this daemon fetch the squares once each, keep them in
-# `muezzin-tiles/` beside this file, and credit the map on the page. The times never
-# need it: a grey square changes nothing else on the page.
+# Whether the page shows a map behind those numbers. osm is what you get by default:
+# this daemon fetches each square once, keeps it in `muezzin-tiles/` beside this file,
+# and credits the map on the page. Un-comment the line below to have no map, nothing
+# asked of anybody, and the position drawn from the numbers alone. The times need
+# neither: a grey square changes nothing else on the page.
 # map_tiles: off
 
 # Any of the 18 presets, or a preset with the angles you actually use.

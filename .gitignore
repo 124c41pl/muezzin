@@ -9,6 +9,10 @@ dist/
 
 # runtime leftovers
 out/
+# the map squares this daemon fetched for one household's page. Deleting the folder is
+# safe - the squares are just fetched again - and a cache of one family's neighbourhood
+# has no business riding along in anyone's commit.
+muezzin-tiles/
 media/*
 !media/README.md
 # two short tones generated for testing, not recordings of anyone's voice or

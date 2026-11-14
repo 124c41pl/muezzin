@@ -31,15 +31,18 @@ Two decisions do most of the work:
    method               media server       lan_box       (muezzin box, any machine)
    events                                  file          (copy somewhere)
                          |
-                    http://this-host:8020   your browser: times, schedule,
-                                            speakers, and the YAML itself
+                    http://this-host:8020   your browser: the map, the times,
+                                            the speakers, and the YAML itself
 ```
 
 ## Start here: four steps
 
 Get the location right, choose the calculation, find the speakers, give each
 prayer a recording. In that order, because each step is measured by the one
-before it.
+before it. All four are things you click on the page — check or click out a
+position, pick from a list, look for speakers and press use, pick a file — and for
+most households that is the whole setup. The command is printed first at each step
+because it is the quickest way to see, in plain text, what a step actually wrote.
 
 ### 1. Where you are
 
@@ -131,8 +134,11 @@ never writes anything to your profile, so the list is only ever what you chose.
 
 The usual way in is the page: **look again**, then **use** beside a device. Groups
 are spelled out with their members, so a whole-house group and the two speakers
-inside it are three different things you can point Fajr at. If you would rather
-edit the file, the starter leaves the entries commented out under `outputs:`.
+inside it are three different things you can point Fajr at. The name in that row is a
+box you type in — `kitchen`, `landing-group`, whatever this house calls it — and the
+events that used the old name follow it in the same write, because a name is what an
+event points at rather than a caption over it. If you would rather edit the file, the
+starter leaves the entries commented out under `outputs:`.
 
 ```yaml
 outputs:
@@ -204,19 +210,29 @@ wifi — which is how you stand in the kitchen and find out whether the speaker 
 just added is actually reachable.
 
 On it: three days of times for the method in the profile; the next events and
-which output each resolves to; every output with an on/off switch and a **test**
-button; the method dropdown; a clip per prayer and a Friday column; what is on the
-LAN right now, with **use** / **stop using**; a **Where** section — type numbers and
-press **check these numbers** to be told the nearest names and what clock they would
-keep, with nobody being asked anything, or type words and press **find it**, which
-asks OpenStreetMap once; and the profile YAML itself with a save button. A band above
+which output each resolves to; every output with a name you can type in, an on/off
+switch and a **test** button; the method dropdown; a clip per prayer and a Friday
+column; what is on the LAN right now, with **use** / **stop using**; a **Where**
+section with a map on it; and the profile YAML itself with a save button. A band above
 it says out loud whatever is still missing — a location nobody chose, no speakers, or
 every speaker switched off.
 
-Put `map_tiles: osm` in the profile and a small map appears behind those numbers. The
-squares are fetched by the daemon and kept on disk, so the page still only ever talks
-to this address, and the credit "© OpenStreetMap contributors" sits under the map.
-Without that line there is no map, and the page asks nothing of anybody.
+None of that needs a config file. Type numbers and press **check these numbers** to
+be told the nearest names and what clock they would keep, with nobody being asked
+anything; type words and press **find it**, which asks OpenStreetMap once; or click
+the map, which moves the mark, refills the two boxes above it and redraws the dial of
+nearby towns — and still changes nothing on disk until **write it**, because a click
+is a look. Speakers work the same way: **look again**, **use**, and a name you type
+into the row. The YAML is still the only thing that persists, and every write is
+validated before it lands, but it is a window rather than a prerequisite.
+
+The map is on from the first run, and that is the one honest exception to "this asks
+nobody anything": its squares come from `tile.openstreetmap.org`, fetched by the
+daemon with this program's name on the request, one request per square, kept on disk,
+and credited under the map as "© OpenStreetMap contributors". Your browser still only
+ever talks to the daemon's own address. `map_tiles: off` in the profile puts even that
+away; the position is then drawn from the numbers and the nearby towns, which is the
+same arithmetic and needs no network at all.
 
 Saving re-validates before writing, and a bad edit is never written to disk: the
 error you see is the one the CLI would print. A good one is picked up without a
@@ -313,6 +329,17 @@ the device list, along with the player it picked for itself.
 * The Hijri date is tabular arithmetic, not a sighting, and `hijri_offset` is there
   because the moon decides, not an integer. It is display only: no prayer time
   reads it.
+* The map is the one thing here that asks somebody something without being told to,
+  so the promise is stated with the exception in it: with `map_tiles: off` this
+  daemon asks nobody anything, and with the default it asks for nine squares per
+  view, one fetch each, forever. Those squares sit in `muezzin-tiles/` beside the
+  profile and nothing prunes that folder — it is a few hundred kilobytes per zoom
+  level a household looks at, and deleting it is safe, since the squares just come
+  back.
+* Clicking the map points at something; it does not survey it. What comes back is
+  the square the cursor was over, so how close that is depends on the zoom: about a
+  tenth of a degree at zoom 12, a few metres at zoom 17. It is fine for choosing
+  where the house is, and the numbers can be typed in over it at any time.
 * In a container, mDNS discovery and local audio are the weak points: the image
   has no audio device, and on Docker Desktop (Windows or macOS) host networking is
   not really available either. As the brain that drives network speakers, a

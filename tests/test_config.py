@@ -250,3 +250,30 @@ def test_a_lead_that_is_not_a_lead_is_refused(tmp_path):
         load_profile(write(tmp_path, BASE.replace("target: Study speaker",
                                                   "target: Study speaker\n    lead_seconds: 5000")))
 
+
+def test_the_map_is_on_from_the_first_run_and_one_line_puts_it_back(tmp_path):
+    """A feature that only appears once someone has found the right line to write in a
+    file is a feature most people never meet, so the map is what a new profile gets. What
+    stays available is the way out, in one line: the position is still drawn from the
+    numbers, which is why the timetable is the same either way.
+
+    That line is spelled `off`, and YAML reads off, no, yes and on as booleans, so the
+    reader has to meet it halfway: the documented spelling, the plain-language one, and
+    the boolean each of them arrives as all load. A word that means neither of the two is
+    an error rather than a shrug, because the difference between them is whether this
+    network went and asked somebody something.
+    """
+    def variant(spelling):
+        return BASE.replace("media_dir: media\n",
+                            f"media_dir: media\nmap_tiles: {spelling}\n")
+
+    assert load_profile(write(tmp_path, BASE)).map_tiles == "osm"
+    for spelling, want in (("off", "off"), ("no", "off"), ("none", "off"),
+                           ("yes", "osm"), ("openstreetmap", "osm"), ("OSM", "osm")):
+        assert load_profile(write(tmp_path, variant(spelling))).map_tiles == want, spelling
+    p = load_profile(write(tmp_path, variant("off")))
+    assert p.params.fajr_angle == 15.0, "turning the map off moved the times"
+    for junk in ("local", "maybe"):
+        with pytest.raises(ValueError, match="one of off, osm"):
+            load_profile(write(tmp_path, variant(junk)))
+

@@ -4,6 +4,7 @@ reach the file the daemon reads, and a disabled output must stay silent."""
 from __future__ import annotations
 
 import json
+import math
 import re
 import threading
 import time
@@ -822,6 +823,41 @@ def test_removing_a_speaker_says_which_events_it_took_with_it(two_outputs):
     assert fajr["targets"] == ["outbox"], "an event that did not use it is left alone"
 
 
+def test_an_output_can_be_named_from_the_page_and_the_events_follow(two_outputs):
+    """A name is not a caption: it is the word events use to point at a speaker. So the
+    rename has to land in the `targets:` lists in the same write, or the profile that was
+    just saved would be unreadable and the call would never go out again. The name the
+    household typed is flattened to one safe word, and the reply says which word that was
+    rather than quietly keeping a different one."""
+    web, _, tmp_path = two_outputs
+    status, reply = call(web.port, "/api/output/rename",
+                         {"from": "second", "to": "Kitchen speaker"})
+    assert status == 200, reply
+    assert reply["renamed"] == "kitchen-speaker"
+    assert sorted(reply["events_rewritten"]) == ["dhuhr-nudge", "friday-tune"]
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "name: kitchen-speaker" in on_disk
+    assert "second" not in on_disk, "an event still pointed at the name that no longer exists"
+    _, st = call(web.port, "/api/state")
+    assert {o["name"] for o in st["outputs"]} == {"outbox", "kitchen-speaker"}
+    fajr = next(e for e in st["events"] if e["name"] == "fajr-adhan")
+    assert fajr["targets"] == ["outbox"], "an event that never named it is left alone"
+
+
+def test_a_rename_that_would_collide_or_lead_nowhere_is_refused(two_outputs):
+    """Two outputs cannot answer to one word, and renaming a speaker nobody has is a way
+    of inventing a speaker. Both are refused before anything is written, so a typo in the
+    box cannot take the schedule down."""
+    web, _, tmp_path = two_outputs
+    before = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    for payload, why in (({"from": "second", "to": "outbox"}, "already"),
+                         ({"from": "nobody", "to": "kitchen"}, "no output called nobody"),
+                         ({"from": "second", "to": "   "}, "called")):
+        status, reply = call(web.port, "/api/output/rename", payload)
+        assert status == 400 and why in reply["error"], (payload, status, reply)
+    assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before
+
+
 def test_the_hijri_knob_moves_the_date_the_page_shows(panel):
     web, _, tmp_path = panel
     status, reply = call(web.port, "/api/hijri", {"days": -1})
@@ -1186,6 +1222,10 @@ LOCATED = BASE.replace(
     "  timezone: America/New_York   # IANA name: DST is handled by the tz database\n")
 
 MAPPED = BASE.replace("media_dir: media\n", "media_dir: media\nmap_tiles: osm\n")
+# The map is on now without anyone being asked to turn it on, so what a test has to
+# reach for is the line that puts it back: a household that wants nothing leaving the
+# house writes this, and everything except the pictures keeps working.
+UNMAPPED = BASE.replace("media_dir: media\n", "media_dir: media\nmap_tiles: off\n")
 
 # Two answers shaped like the lookup's own rows: one carries a time zone in its extra
 # tags, the other does not. Qom rather than anyone's home address, because a fixture
@@ -1412,10 +1452,11 @@ def test_the_page_is_told_who_it_may_ask_and_whose_map_it_shows(panel):
     web, _, _ = panel
     _, st = call(web.port, "/api/state")
     assert st["geocoder"] == geocode.provider() == "nominatim.openstreetmap.org"
-    assert st["map_tiles"] == "off"
+    assert st["map_tiles"] == "osm", "the map is the default, not a thing to discover"
     assert st["map_credit"] == geocode.MAP_CREDIT
     _, page = call(web.port, "/", raw=True)
-    assert "map_tiles: osm" in page, "the way to turn the map on is not written down"
+    assert "map_tiles: off" in page, "the page does not say how to stop the map"
+    assert "tile.openstreetmap.org" in page, "the page does not say who the map comes from"
     assert "Where" in page
 
 
@@ -1430,17 +1471,36 @@ def test_the_page_never_asks_anyone_to_hold_a_key(panel):
         assert forbidden not in lowered, forbidden
 
 
-def test_no_map_squares_until_the_profile_asks_for_a_map(panel, monkeypatch):
-    """A map on the page means somebody else's servers get asked for pictures, so the
-    default is no map and the way to want one is a line in the profile - not a checkbox
-    that reads as harmless."""
+def test_the_map_is_there_without_anyone_having_to_dig_for_it(panel, monkeypatch):
+    """Where the numbers point is the first thing a household needs to get right, and a
+    helper that only appears once someone has found the right line to write in a file is
+    a helper most people never meet. So the squares come by default, fetched here and
+    kept here, with the stopping place written next to them on the page."""
     asks = []
     monkeypatch.setattr(geocode, "_open",
-                        lambda url, accept="application/json": asks.append(url) or PNG)
+                        lambda url, accept="application/json": asks.append((url, accept)) or PNG)
     web, _, _ = panel
     status, body, ctype = get_bytes(web.port, "/api/tile?z=12&x=1&y=1")
-    assert status == 403 and b"map_tiles: osm" in body, (status, body)
-    assert asks == [], "the map was fetched for a profile that never asked for one"
+    assert status == 200 and ctype == "image/png", (status, body[:60], ctype)
+    assert asks == [(geocode.tile_url(12, 1, 1), "image/png")], asks
+    _, page = call(web.port, "/", raw=True)
+    assert "click it to point" in page, "nothing on the page says the map can be pointed at"
+
+
+def test_one_line_keeps_every_request_inside_the_house(tmp_path, monkeypatch):
+    """The map is the default, and the way out of it has to be one honest line rather
+    than an archaeology dig: with it, the position is still drawn, from the numbers alone,
+    and this daemon asks nobody for a picture."""
+    asks = []
+    monkeypatch.setattr(geocode, "_open",
+                        lambda url, accept="application/json": asks.append((url, accept)) or PNG)
+    web, _, _ = _serve(tmp_path, UNMAPPED)
+    try:
+        status, body, _ = get_bytes(web.port, "/api/tile?z=12&x=1&y=1")
+        assert status == 403 and b"map_tiles: off" in body, (status, body)
+        assert asks == [], "a profile that said off still went out for a picture"
+    finally:
+        web.runner.shutdown()
 
 
 def test_a_map_square_is_brought_once_and_then_kept_for_the_house(tmp_path, monkeypatch):
@@ -1467,6 +1527,41 @@ def test_a_map_square_is_brought_once_and_then_kept_for_the_house(tmp_path, monk
         assert len(asks) == 1, "the second request should have come off the disk"
     finally:
         web.runner.shutdown()
+
+
+def test_a_pixel_of_the_map_turns_back_into_the_numbers_it_came_from(panel):
+    """Clicking the map is the page turning one of its own squares back into degrees, in
+    JavaScript, which no test in this file can run. So the same arithmetic is written here
+    once, in Python, and the page is checked to carry the two halves of it it depends on.
+    A factor of two lost from the vertical formula - the usual mistake, since the tan
+    half-angle and the sinh form differ only by that factor - puts every household's mark
+    on the wrong patch of ground, and nothing else here would notice."""
+
+    def forward(lat, lon, z):
+        n = 2.0 ** z
+        return (n * (lon + 180) / 360,
+                n * (1 - math.log(math.tan(math.pi / 4 + lat * math.pi / 360)) / math.pi) / 2)
+
+    def back(u, v, z):
+        n = 2.0 ** z
+        return ((360 / math.pi) * math.atan(math.exp(math.pi * (1 - 2 * v / n))) - 90,
+                u * 360 / n - 180)
+
+    for lat, lon, z in ((42.1295, -80.0853, 12), (51.5072, -0.1276, 15),
+                        (-33.8688, 151.2093, 9), (35.6895, 139.6917, 17)):
+        x, y = forward(lat, lon, z)
+        la, lo = back(x, y, z)
+        assert abs(la - lat) < 1e-9 and abs(lo - lon) < 1e-9, (lat, lon, la, lo)
+        # a click in the middle of the square the point is in reads back as that point,
+        # loosely: one square of the map is the tolerance here, and how wide that is
+        # depends on the zoom rather than on a number picked for one case.
+        wide = 360.0 / 2.0 ** z
+        la, lo = back(math.floor(x) + 0.5, math.floor(y) + 0.5, z)
+        assert abs(la - lat) < wide and abs(lo - lon) < wide, (lat, lon, z, la, lo)
+
+    _, page = call(panel[0].port, "/", raw=True)
+    assert "Math.log(Math.tan(Math.PI/4" in page, "the page lost the forward formula"
+    assert "Math.atan(Math.exp(" in page, "the page lost the way back from a pixel"
 
 
 def test_an_answer_that_is_not_a_picture_is_not_shown_as_one(tmp_path, monkeypatch):
