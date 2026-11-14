@@ -612,7 +612,7 @@ def cmd_next(profile: Profile, days: int) -> int:
     """Show what the daemon would actually do: events, wall clock, targets, media."""
     from zoneinfo import ZoneInfo
 
-    from .scheduler import upcoming
+    from .scheduler import lead_of, upcoming
 
     rows = upcoming(profile, days=days)
     tz = profile.location.timezone
@@ -628,7 +628,12 @@ def cmd_next(profile: Profile, days: int) -> int:
     for sev in rows:
         targets = profile.targets_for(sev.event)
         names = ", ".join(f"{t.name}" for t in targets) or "NO TARGETS"
-        print(f"{sev.when:%a %d %b %H:%M}  {sev.event.name:<16} -> {names}"
+        # Say out loud that the sound starts before the printed time, and by how
+        # much: this is the command people trust, so a call that goes out a few
+        # seconds early should read as a decision and not as a surprise.
+        early = lead_of(targets)
+        note = f" (played {early:g} s early)" if early > 0 else ""
+        print(f"{sev.when:%a %d %b %H:%M}  {sev.event.name:<16} -> {names}{note}"
               f"   [{' '.join(sev.event.media)}]")
     return 0
 

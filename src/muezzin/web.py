@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, urlparse
 import yaml
 
 from . import __version__, calc, geocode, hijri, net, yamledit
-from .backends import scan_speakers
+from .backends import lead_for, scan_speakers
 from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, load_profile,
                      uses_starter_location, valid_host)
 from .scheduler import PRAYER_KEYS, Runner, upcoming
@@ -149,6 +149,16 @@ def _numbers(payload: dict) -> tuple[float, float]:
         raise ValueError("latitude runs -90 to 90 and longitude -180 to 180, north and "
                          "east being positive")
     return round(latitude, 6), round(longitude, 6)
+
+
+def _lead_shown(seconds: float):
+    """How early this speaker gets the recording, spelled the way a person reads it.
+
+    Eight seconds is 8 on the page, not 8.0; a speaker that was told to start a
+    third of a second early still gets its third.
+    """
+    value = float(seconds)
+    return int(value) if value.is_integer() else round(value, 2)
 
 
 class WebPanel:
@@ -349,7 +359,10 @@ class WebPanel:
             "notices": self.notices(),
             "max_upload": MAX_UPLOAD,
             "outputs": [{"name": o.name, "kind": o.kind, "target": o.target, "host": o.host,
-                         "port": o.port, "volume": o.volume, "enabled": o.enabled}
+                         "port": o.port, "volume": o.volume, "enabled": o.enabled,
+                         # how early this speaker gets handed the recording, so the
+                         # first note is in the air when the printed time arrives
+                         "lead": _lead_shown(lead_for(o))}
                         for o in p.outputs],
         }
 
@@ -1424,6 +1437,7 @@ PAGE = """<!doctype html>
  <section><h2>Timetable</h2><div id="days"></div></section>
  <section><h2>Next events</h2><table><thead><tr><th>when</th><th>event</th><th>speakers</th><th>media</th></tr></thead><tbody id="upcoming"></tbody></table></section>
  <section><h2>Outputs</h2><table><thead><tr><th>name</th><th>kind</th><th>target</th><th>on</th><th></th></tr></thead><tbody id="outputs"></tbody></table>
+  <div class="fine">A speaker muezzin has to find on the network gets the recording a few seconds before the time it belongs to, so the first note is already in the air when that time arrives; the number in brackets is that head start. A profile sets it per speaker with lead_seconds, and 0 means exactly on the minute. Everywhere else on this page the times shown are the computed ones.</div>
   <div class="row"><select id="media"></select><span class="tag" id="mediaurl"></span></div>
  </section>
  <section class="wide"><h2>Where</h2>
@@ -1543,7 +1557,7 @@ function render(){
     `<tr class="${nx&&nx.at===k&&nx.date===d.date?'now':''}"><td class="pl">${esc(NAME[k]||k)}</td>`
     +`<td class="ar">${esc(AR[k]||'')}</td><td class="t">${esc(v)}</td></tr>`).join('')}</table></div>`).join('');
  $('#upcoming').innerHTML=st.upcoming.map(e=>`<tr><td>${esc(e.when)}</td><td>${esc(e.name)}<span class="tag">${esc(e.at)}${e.offset_min?` ${e.offset_min>0?'+':''}${e.offset_min}m`:''}</span></td><td>${esc(e.targets.join(', '))||'(none enabled)'}</td><td>${esc(e.media.join(', '))}</td></tr>`).join('')||'<tr><td colspan=4>nothing scheduled in the next two days</td></tr>';
- $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td>${esc(o.name)}</td><td>${esc(o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td><button data-test="${esc(o.name)}">test</button></td></tr>`).join('');
+ $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td>${esc(o.name)}</td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td><button data-test="${esc(o.name)}">test</button></td></tr>`).join('');
  document.querySelectorAll('.switch').forEach(b=>b.onclick=()=>act(()=>api('/api/output',{name:b.dataset.name,enabled:b.getAttribute('aria-checked')!=='true'})));
  document.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>act(()=>api('/api/test',{output:b.dataset.test,media:$('#media').value?[$('#media').value]:[]})));
  const pick=$('#media'), want=pick.value;

@@ -44,6 +44,12 @@ class Backend(abc.ABC):
     # its level is a property of the room. Everything else is a computer, and a
     # computer's volume belongs to the person who owns that computer.
     takes_volume = False
+    # How far ahead of the moment an output belongs to its recording gets handed
+    # over, so the first note is already in the air when that moment arrives.
+    # A speaker on the network has to be found, woken, connected to and told to
+    # fetch a URL before anybody hears anything, and all of that costs seconds.
+    # `lead_seconds:` in the profile sets it for one output.
+    lead_seconds = 0.0
     # Safety net so a stream that stalls cannot block the rest of the day's jobs.
     max_play_seconds = 30 * 60
 
@@ -137,6 +143,12 @@ class CastBackend(Backend):
     takes_volume = True       # the one kind whose level is ours to ask for
     READY_SECONDS = 15.0    # how long the speaker has to send its first status
     START_SECONDS = 10.0    # how long it has to say PLAYING once handed a file
+    # What the speaker costs before it makes a sound: a browse of the network
+    # for its name (four seconds if it answers slowly), a handshake with the
+    # receiver, then the launch of the file. Measured on a warm LAN that is two
+    # to eight seconds, which is exactly the difference between an adhan that
+    # lands on the time and one that lands after it.
+    lead_seconds = 8.0
     poll_seconds = 1.0      # how often to ask; a test may shrink it
 
     def _effective_volume(self, volume: Optional[float]) -> float:
@@ -288,6 +300,9 @@ class LanBoxBackend(Backend):
     """
     kind = "lan_box"
     needs_urls = True
+    # One request across the LAN and then the box starts its own player: a second
+    # covers the round trip and the player waking up, and nothing more is owed.
+    lead_seconds = 1.0
 
     def play(self, media, volume=None):
         host = self.cfg.host or self.cfg.target
@@ -331,6 +346,18 @@ def build(cfg, media_server=None) -> Backend:
         raise BackendError(f"output {cfg.name!r}: unknown kind {cfg.kind!r} "
                            f"(known: {', '.join(sorted(KINDS))})")
     return cls(cfg, media_server)
+
+
+def lead_for(cfg) -> float:
+    """Seconds before the moment this output should start, per the profile or per
+    what its kind of speaker costs. An output that says nothing takes the default
+    for its kind; an output that says `lead_seconds: 0` starts exactly on time.
+    """
+    named = getattr(cfg, "lead_seconds", None)
+    if named is not None:
+        return max(0.0, float(named))
+    cls = KINDS.get(getattr(cfg, "kind", None))
+    return float(getattr(cls, "lead_seconds", 0.0)) if cls else 0.0
 
 
 def _content_type(path: Path) -> str:

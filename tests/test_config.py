@@ -225,3 +225,28 @@ def test_an_offset_for_a_name_that_is_not_a_prayer_is_refused(tmp_path):
     with pytest.raises(ValueError, match="whole minutes"):
         load_profile(write(tmp_path, BASE + "adjustments: {fajr: soon}\n"))
 
+
+def test_a_speaker_can_say_how_early_it_needs_to_start(tmp_path):
+    """`lead_seconds:` on an output is the head start a slow speaker needs so the
+    first note is in the air at the time, not after it. Saying nothing means: take
+    the default for this kind of speaker. `0` is a real answer, not an absent one -
+    it means exactly on the minute."""
+    p = load_profile(write(tmp_path, BASE.replace("target: Study speaker",
+                                                  "target: Study speaker\n    lead_seconds: 2")))
+    assert p.output("study").lead_seconds == 2.0
+    assert p.output("spare").lead_seconds is None
+
+
+def test_a_lead_that_is_not_a_lead_is_refused(tmp_path):
+    """A negative lead means starting late, and an hour of lead is somebody typing
+    minutes. Both are refused where they are typed, and the message points at the
+    knob that really does move the printed time."""
+    for bad in ("-3", "9000"):
+        with pytest.raises(ValueError, match="between 0 and"):
+            load_profile(write(tmp_path, BASE.replace(
+                "target: Study speaker",
+                f"target: Study speaker\n    lead_seconds: {bad}")))
+    with pytest.raises(ValueError, match="offset_min"):
+        load_profile(write(tmp_path, BASE.replace("target: Study speaker",
+                                                  "target: Study speaker\n    lead_seconds: 5000")))
+

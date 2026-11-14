@@ -117,3 +117,41 @@ def test_a_starter_with_everything_switched_off_says_so(tmp_path):
                     .replace("  #   volume: 0.5", ""), encoding="utf-8")
     notes = starter_warnings(load_profile(path))
     assert any("disabled" in n for n in notes), notes
+
+
+SPEAKERS = """
+location: {latitude: 40.7128, longitude: -74.006, timezone: America/New_York}
+method: {preset: isna}
+media_dir: media
+outputs:
+  - name: study
+    kind: google_cast
+    target: Study speaker
+  - name: porch
+    kind: google_cast
+    target: Porch speaker
+    lead_seconds: 0
+events:
+  - name: fajr-adhan
+    at: fajr
+    media: [fajr.mp3]
+"""
+
+
+def test_next_says_the_sound_starts_a_few_seconds_early(tmp_path, capsys):
+    """`next` is the command people trust, so it promises the same number the
+    daemon keeps: the time stays the computed one, and the note says the recording
+    reaches a speaker that has to be found on the network a little before it. A
+    speaker told `lead_seconds: 0` gets no note, because it starts on the minute."""
+    path = tmp_path / "muezzin.yaml"
+    path.write_text(SPEAKERS, encoding="utf-8")
+    assert main(["next", "-c", str(path)]) == 0
+    rows = [ln for ln in capsys.readouterr().out.splitlines() if "fajr-adhan" in ln]
+    assert len(rows) >= 2, rows
+    assert "(played 8 s early)" in rows[0], rows[0]
+    assert "-> study, porch" in rows[0], "the slowest of the two is what gets paid for"
+    quiet = SPEAKERS.replace("  - name: study\n    kind: google_cast\n    target: Study speaker\n", "")
+    path.write_text(quiet, encoding="utf-8")
+    assert main(["next", "-c", str(path)]) == 0
+    line = [ln for ln in capsys.readouterr().out.splitlines() if "fajr-adhan" in ln][0]
+    assert "early" not in line, line

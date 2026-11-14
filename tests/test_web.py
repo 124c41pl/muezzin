@@ -17,7 +17,7 @@ from muezzin import geocode
 from muezzin.cli import STARTER
 from muezzin.config import load_profile
 from muezzin.scheduler import PRAYER_KEYS, Runner
-from muezzin.web import WebPanel, _fmt
+from muezzin.web import WebPanel, _fmt, _lead_shown
 
 from test_scheduler import BASE, profile_for, write
 
@@ -203,6 +203,21 @@ def test_an_invalid_edit_is_refused_and_the_file_is_untouched(panel):
     assert not list(tmp_path.glob("*.webtmp"))
     _, st = call(web.port, "/api/state")
     assert st["outputs"][0]["kind"] == "file"
+
+
+def test_the_page_says_a_network_speaker_gets_a_head_start(panel):
+    """Every time printed on this page is the computed one, so an adhan that
+    starts a few seconds early has to be explained where the speakers are listed.
+    Left unexplained it reads as a clock that is wrong, in a program whose whole
+    job is the clock. A file output needs no head start, so it says `0`."""
+    web, _, _ = panel
+    _, st = call(web.port, "/api/state")
+    assert st["outputs"][0]["lead"] == 0.0, "writing a copy out is instant"
+    assert _lead_shown(8.0) == 8, "eight seconds on the page reads 8s early, not 8.0s early"
+    assert _lead_shown(0.333) == 0.33
+    _, html = call(web.port, "/", raw=True)
+    assert "lead_seconds" in html, "the page names the knob that sets it by hand"
+    assert "the times shown are the computed ones" in html
 
 
 def test_a_valid_edit_is_saved_and_the_running_daemon_picks_it_up(panel):
