@@ -63,6 +63,50 @@ def test_the_compose_file_parses_and_keeps_what_discovery_needs():
     assert "Docker Desktop" in text, "the one thing Windows users hit must be said out loud"
 
 
+def _instruction(text: str, word: str) -> str:
+    """The Dockerfile's single ENTRYPOINT or CMD line, or a loud failure."""
+    lines = [line.strip() for line in text.splitlines() if line.strip().upper().startswith(word)]
+    assert len(lines) == 1, f"the Dockerfile should hold exactly one {word}, found {len(lines)}"
+    return lines[0]
+
+
+def test_the_container_lets_the_page_finish_the_setup():
+    """Everything that sets a household up — the map, the postal-code box, the
+    speaker scan, the upload — is on the page, and the image is what a person
+    pulls before they own a profile. Defaulting that page to read-only shipped a
+    container that could only ever display somebody else's timetable, with the fix
+    hidden in a flag nobody read; the comment beside it even named the flag that
+    does the opposite. So writing is the default, and what has to stay in this file
+    is the reason: the page has no login, and `--read-only` is the variant for a
+    network you would not hand your schedule to."""
+    docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    cmd = _instruction(docker, "CMD")
+    assert "daemon" in cmd and "--web" in cmd, "the default has to run the daemon and the page"
+    assert "muezzin.yaml" in cmd, "and read the profile from the folder compose mounts"
+    assert "--read-only" not in cmd, "the page must be able to save the profile being set up"
+    assert "--read-only" in docker, "the locked variant belongs in the comment next to it"
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "--read-only" in compose, "a hardened box needs the shape ready to uncomment"
+    assert "login" in docker + compose, "the cost of a writable page is stated, not implied"
+
+
+def test_the_first_run_of_a_container_has_a_profile_to_read():
+    """A daemon pointed at an empty volume answers with a usage error and exits 2,
+    which on `docker compose up` reads as a broken image rather than as a step
+    nobody told you about. So the image writes the starter itself, once."""
+    docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    script = (ROOT / "docker-entrypoint.sh").read_text(encoding="utf-8")
+    assert _instruction(docker, "ENTRYPOINT") == 'ENTRYPOINT ["/app/docker-entrypoint.sh"]'
+    assert "docker-entrypoint.sh /app/" in docker, "the script has to be in the image"
+    assert "chmod 755" in docker, "a script nobody may execute is a container that never starts"
+    assert "-c \"$CONFIG\"" in script and "--media-dir /app/media" in script, \
+        "the starter must name the mounted audio folder, not a path inside the config volume"
+    assert "[ ! -f" in script, "a profile that already exists is never written over"
+    # exec is not style: without it this script is PID 1, `docker stop` waits out
+    # its timeout instead of stopping, and an adhan that was mid-play gets killed.
+    assert "exec muezzin" in script, "the daemon must be the process Docker sends signals to"
+
+
 def test_the_published_tag_is_the_one_the_readme_promises():
     """The registry tag must be the version, not the git tag.
 

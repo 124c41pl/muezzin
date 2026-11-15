@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from muezzin.cli import STARTER, _fmt, main, starter_warnings
+from muezzin.cli import STARTER, _fmt, main, panel_address, starter_warnings
 from muezzin.config import load_profile
 
 
@@ -55,6 +55,24 @@ def test_the_starter_names_no_speaker_the_reader_does_not_own(tmp_path, capsys):
     assert not [ln for ln in live if "target:" in ln], "a live target is a stranger's speaker"
     assert (path.parent / "media").is_dir()
     assert "no speakers are configured" in capsys.readouterr().out
+
+
+def test_the_starter_can_name_a_media_folder_that_is_not_next_to_it(tmp_path, capsys):
+    """The starter's `media_dir: media` is relative to the profile, which is right
+    for a folder you move around and wrong for a container, where the audio is
+    mounted at a fixed path outside the config volume. Without a way to name the
+    mount, every pulled image ships a profile whose library is an empty directory,
+    and the person who copied four recordings into ./media is shown a list with
+    nothing in it and no error anywhere to explain it."""
+    path = tmp_path / "config" / "muezzin.yaml"
+    media = tmp_path / "sounds"
+    assert main(["init", "-c", str(path), "--media-dir", str(media)]) == 0
+    assert media.is_dir(), "init makes the folder it just promised"
+    assert load_profile(path).media_dir == media.resolve(), "and the profile means the same folder"
+    text = path.read_text(encoding="utf-8")
+    assert "media_dir: media\n" not in text, "the relative default is gone, not shadowed"
+    assert "# drop your adhan recordings in here" in text, "the comment that says what it is for stays"
+    assert str(media) in capsys.readouterr().out, "the message names the folder it made"
 
 
 def test_the_starter_says_out_loud_what_is_still_missing(tmp_path):
@@ -170,3 +188,18 @@ def test_next_says_the_sound_starts_a_few_seconds_early(tmp_path, capsys):
     assert main(["next", "-c", str(path)]) == 0
     line = [ln for ln in capsys.readouterr().out.splitlines() if "fajr-adhan" in ln][0]
     assert "early" not in line, line
+
+
+def test_the_log_line_names_an_address_a_phone_can_reach():
+    """The interface this process can see is the container's own, so the address the
+    media server found inside a container is usually 127.0.0.1 - and the one line in
+    the log whose whole job is "open this" then points a phone at a page that is not
+    there. A real address gets the line on its own; a loopback one carries the
+    correction and the port to use instead."""
+    on_a_lan = panel_address("192.168.0.9", 8020, False)
+    assert on_a_lan == "http://192.168.0.9:8020", "nothing to explain about a usable address"
+    inside = panel_address("127.0.0.1", 8020, True)
+    assert inside.startswith("http://127.0.0.1:8020 (read-only)"), inside
+    second = inside.split("\n", 1)[1]
+    assert "8020" in second and "your network" in second, "the port to dial from elsewhere"
+    assert "container" in second, second

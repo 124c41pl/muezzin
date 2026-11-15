@@ -2,9 +2,11 @@ Put your `muezzin.yaml` in this folder and the container will read it as
 `/app/config/muezzin.yaml`. Nothing in here is part of the image: your times,
 your speakers and your schedule stay on your machine.
 
-To start one off:
+Start the container with this folder empty and it writes one here itself, pointed
+at the `./media` folder that `docker-compose.yml` mounts. By hand, the same thing
+is:
 
-    docker run --rm -v "%cd%\config:/app/config" muezzin:0.1.3 init -c /app/config/muezzin.yaml
+    docker run --rm -v "%cd%\config:/app/config" muezzin:0.1.3 init -c /app/config/muezzin.yaml --media-dir /app/media
 
 On Linux or macOS, replace `%cd%` with `$PWD`. Then point it at your house. The page
 does all three of those jobs: a **Where** section where numbers can be checked against
@@ -14,9 +16,10 @@ to be typed into a file. A starter lists no speakers on purpose: an output point
 speaker nobody owns is an error at every prayer time, so the list only ever contains
 what you added, from the page or by hand.
 
-The starter's `media_dir: media` is relative to the profile, so your recordings
-live in this folder's `media` subfolder. Set it to `/app/media` instead if you
-want to use the `./media` folder that `docker-compose.yml` mounts.
+Run muezzin straight on a machine and the starter's `media_dir: media` is relative to
+the profile, so your recordings live in a `media` folder next to the YAML. The container
+starter names `/app/media` instead, because that is where the mount is; `--media-dir` is
+how you name a folder that is not next to the profile.
 
 The quickest way to set those three location lines is the **Where** section on the
 page: numbers typed there can be checked against the town centres this program carries,

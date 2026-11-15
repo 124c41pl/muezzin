@@ -61,8 +61,12 @@ play audio, so the boring attacks are worth closing:
 * **A speaker that is lying about being a group.** Group membership is measured by
   asking each physical speaker over its Dial endpoint, not by trusting the group
   record; "no answer" is kept distinct from "no members".
-* **Docker defaults.** The image starts `muezzin daemon --web 8020 --read-only`.
-  Writing from the page inside a container takes an explicit `command:` override.
+* **Docker defaults.** The image writes a starter profile into an empty
+  `/app/config` on first run and starts with the page able to edit it, because a
+  container nobody can finish setting up is not one anybody can use. That is a
+  deliberate choice for a home network and it is the default worth looking at
+  twice: on a network you do not control, end the command with `--read-only`.
+  Either way the config folder is a volume, so the file on your host stays yours.
 
 ## What is *not* defended against
 
@@ -70,6 +74,11 @@ Saying this out loud is part of the design:
 
 * an attacker who is already on your LAN and can spoof mDNS — a rogue
   `_googlecast._tcp` announcement can send your adhan to a speaker they chose;
+* **the speakers themselves, which were never ours to lock.** Cast and Dial have no
+  password of their own: anyone on that segment can find a speaker and cast to it
+  without asking this app, and `muezzin box` answering a port is that same kind of
+  open door. A login on the page would change nothing about that surface, which is
+  why the boundary here is the network rather than the app;
 * a profile file someone else wrote (see above: the file is the credential);
 * content you choose to play, from URLs you choose to put in the profile;
 * anyone on the LAN who can hear the speakers, or who can put their own Chromecast

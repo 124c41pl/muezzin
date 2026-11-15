@@ -751,26 +751,38 @@ nothing personal is baked into the image, and the container runs as an ordinary
 user rather than root.
 
 ```bash
-docker run --rm -v "$PWD/config:/app/config" muezzin:0.1.3 init -c /app/config/muezzin.yaml
-# edit location and method. The starter's `media_dir: media` is relative to the
-# profile, so in the container it means ./config/media; set it to /app/media to
-# use the ./media volume compose mounts. Starters have no outputs — see "speakers
-# on your network" for what casting from a container needs.
-docker compose up
+docker run --rm -v "$PWD/config:/app/config" -v "$PWD/media:/app/media" \
+    ghcr.io/124c41pl/muezzin:0.1.3
+docker logs muezzin       # it prints where the page answers, and says so in words
 ```
 
-The image starts as `muezzin daemon --web 8020 --read-only`: the page shows the
-timetable, the Hijri date and the YAML, and refuses to change anything. A
-container that is easy to start should not also be a port that can rewrite your
-schedule, and the config folder is a volume, so editing `./config/muezzin.yaml`
-on the host and pressing reload works without touching the flags. To drive the
-profile from the page instead, override the command in `docker-compose.yml`:
+An empty `./config` is handled by the image's entrypoint, which runs
+
+    muezzin init -c /app/config/muezzin.yaml --media-dir /app/media
+
+once, says that it did, and then execs whatever you asked the container for. A
+profile that already exists is never overwritten — `muezzin init` refuses to, and
+the script only asks when the file is not there — so the folder is either empty or
+yours, never half-written over. `--media-dir` exists because the starter's
+`media_dir: media` is relative to the profile, which inside a container means
+inside the config volume, while compose mounts the audio at `/app/media`; naming
+the mount is what makes the recordings you copied show up in the page's library.
+
+The page can edit that profile, which is the entire reason the map, the speaker
+scan and the upload box are on it: a container you cannot finish setting up is not
+one you can pull and use. What that costs is written down in `SECURITY.md` — the
+page has no login, so anyone who can reach port 8020 can change the household's
+schedule. For a box that should only ever tell people the times, end the arguments
+with `--read-only`:
 
 ```yaml
 services:
   muezzin:
-    command: ["daemon", "-c", "/app/config/muezzin.yaml", "--web", "8020"]
+    command: ["daemon", "-c", "/app/config/muezzin.yaml", "--web", "8020", "--read-only"]
 ```
+
+The checked-in compose file carries that variant, plus the bridge-network reason
+for wanting it, commented out at the bottom.
 
 The compose file mounts `./config`, `./media` and a named volume at `/app/out`;
 that last one is `out_dir`, the only folder a `kind: file` output may write into,
@@ -880,7 +892,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 409 tests
+pytest -q                        # 413 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and

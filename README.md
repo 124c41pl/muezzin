@@ -285,18 +285,35 @@ use. A Pi is a real Linux machine, so the container path works there too, host
 networking and all. The systemd unit, the player packages and what mDNS does and
 does not see on a Pi are in `docs/HOW-IT-WORKS.md`.
 
-**Container.** `docker compose up` builds it; or pull what CI publishes:
+**Container.** Pull what CI publishes, or `docker compose up` to build the same
+thing from this repo:
 
 ```bash
 docker pull ghcr.io/124c41pl/muezzin:0.1.3
+mkdir -p config media
+docker run -d --name muezzin --network host \
+  -v "$PWD/config:/app/config" -v "$PWD/media:/app/media" \
+  ghcr.io/124c41pl/muezzin:0.1.3
+docker logs muezzin        # it prints where the page answers
 ```
 
-Your profile goes in `./config` and your audio in `./media`; nothing personal is
-baked into the image, and the container runs as an ordinary user. Speaker
-discovery needs `network_mode: host`, which Docker Desktop on Windows or macOS
-cannot really provide — the measured numbers, and the two things a container is
-bad at here, are in `docs/HOW-IT-WORKS.md`. On a real Linux machine, host
-networking is one line and works.
+On a Linux machine with `--network host` that address is the machine's own: from a
+phone, `http://<the machine's address on your network>:8020`. The log says the same
+thing, and says it in those words when the address it found is a loopback one —
+which is what a bridge-network container sees, and the first thing everybody trips
+over.
+
+That is the install. An empty `./config` gets a starter profile on the first
+start, that profile's media folder is the `./media` you just mounted, and the page
+can edit the profile — so where you are, which calculation, which speakers and
+which recording are all set from the browser, with no YAML opened at all. Your
+profile and your audio stay in those two folders; nothing personal is baked into
+the image, and the container runs as an ordinary user. Speaker discovery needs
+`network_mode: host`, which Docker Desktop on Windows or macOS cannot really
+provide — the measured numbers, and the two things a container is bad at here, are
+in `docs/HOW-IT-WORKS.md`. On a real Linux machine, host networking is one line
+and works. If you would rather the page only show things, add `--read-only` to the
+arguments; the bottom of `docker-compose.yml` has that shape ready to uncomment.
 
 **Any other machine** can be a speaker too: a second PC, an old laptop, a Mac in
 the hall cupboard. Run `muezzin box --name attic-box` on it and it shows up in

@@ -23,19 +23,30 @@ RUN pip install .
 
 # Config and media are mounted, never baked in: whose times, whose voices, and
 # whose speakers are your business, not the image's.
+#
+# The entrypoint script joins that step: with an empty /app/config it writes a
+# starter profile, so a first `docker run` lands on a page you can finish setting
+# up instead of a usage error, and then execs the daemon you asked for. It is made
+# executable in this RUN rather than by `COPY --chmod`, which older builders do not
+# understand; the chmod has to happen before the USER line below, because after it
+# this build is an ordinary user and cannot change a root-owned file.
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN useradd --create-home --uid 10001 azan \
  && mkdir -p /app/config /app/media /app/out \
+ && chmod 755 /app/docker-entrypoint.sh \
  && chown -R azan:azan /app
 USER azan
 
 # 8020 is the panel, 8010 the media server the speakers pull audio from.
 EXPOSE 8020 8010
 
-ENTRYPOINT ["muezzin"]
-# Read-only by default: a container on a home network usually runs unattended,
-# and the panel has no password, so what arrives by default is a page that shows
-# the times and the schedule. Put "--read-only" in front of the other arguments
-# in a compose `command:` when you want the page to edit the profile; the config
-# folder has to be writable for that to work.
-CMD ["daemon", "-c", "/app/config/muezzin.yaml", "--web", "8020", "--read-only"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+# The page can edit the profile, because the map, the speaker scan and the upload
+# box are how anyone finishes setting this up: a container nobody can configure
+# from the page is not something you can pull and use. The honest cost is that the
+# page has no login, so whoever can reach port 8020 on that machine can change the
+# schedule. On a network you do not trust, put "--read-only" at the end of the
+# arguments in a compose `command:`; the config folder has to be writable for the
+# page to save at all, read-only or not.
+CMD ["daemon", "-c", "/app/config/muezzin.yaml", "--web", "8020"]
 

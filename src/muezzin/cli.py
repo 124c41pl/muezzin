@@ -161,6 +161,20 @@ events:
 """
 
 
+def starter_text(media_dir: str = "") -> str:
+    """The starter profile, with its `media_dir` line pointed at a folder you name.
+
+    The default stays relative on purpose: a profile that moves with its folder
+    keeps finding its recordings. A container is the case where that default lands
+    in the wrong place, because the audio is mounted at a fixed path outside the
+    config volume, so the image says where the mount is instead of handing over a
+    starter pointed at an empty directory.
+    """
+    if not media_dir:
+        return STARTER
+    return STARTER.replace("media_dir: media", f"media_dir: {media_dir}", 1)
+
+
 def starter_warnings(profile: Profile) -> list[str]:
     """Say once, in plain words, the two things a starter profile makes easy to
     miss: a city nobody chose, and a schedule with nowhere to play."""
@@ -679,6 +693,23 @@ def cmd_next(profile: Profile, days: int) -> int:
     return 0
 
 
+def panel_address(host: str, port: int, read_only: bool) -> str:
+    """The address to type into a browser, and the one thing a container adds.
+
+    The media server names the interface this process can see, which inside a
+    container is the container's own - often 127.0.0.1 - and a phone in the next
+    room has no route to it. A log line whose whole job is to tell somebody where
+    to point their browser cannot be allowed to be a mystery in the first minute of
+    an install, which is when it gets read.
+    """
+    where = f"http://{host}:{port}{' (read-only)' if read_only else ''}"
+    if host in ("127.0.0.1", "::1", "localhost"):
+        return (f"{where}\n  that is this machine's own address; from another device use this "
+                f"machine's address on your network at port {port} (a container run with "
+                f"--network host answers there)")
+    return where
+
+
 def cmd_daemon(config_path: Path, web_port=None, read_only: bool = False,
                allow_hosts: tuple[str, ...] = ()) -> int:
     from .scheduler import Runner
@@ -698,8 +729,7 @@ def cmd_daemon(config_path: Path, web_port=None, read_only: bool = False,
         log.warning("%s", note)
     if panel:
         host = runner.media.host_ip if runner.media else "127.0.0.1"
-        print(f"control panel: http://{host}:{panel.port}"
-              f"{' (read-only)' if read_only else ''}")
+        print(f"control panel: {panel_address(host, panel.port, read_only)}")
     try:
         runner.run_forever()
     except KeyboardInterrupt:
@@ -834,6 +864,9 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("init", help="write a starter profile")
     p.add_argument("-c", "--config", type=Path, default=Path("muezzin.yaml"))
+    p.add_argument("--media-dir", default="", metavar="PATH",
+                   help="where the adhan recordings live, written into the profile as "
+                        "media_dir; default is a folder called media next to the profile")
 
     # A latitude that starts with a dash is a place, not a switch: see _pair_coords.
     argv = _pair_coords(sys.argv[1:] if argv is None else list(argv))
@@ -845,9 +878,13 @@ def main(argv=None) -> int:
         if args.config.exists():
             print(f"{args.config} already exists; not overwriting", file=sys.stderr)
             return 1
-        (args.config.parent / "media").mkdir(parents=True, exist_ok=True)
-        args.config.write_text(STARTER, encoding="utf-8")
-        print(f"wrote {args.config} (and a media/ directory - drop your adhan files in it)")
+        folder = Path(args.media_dir) if args.media_dir else args.config.parent / "media"
+        # A profile asked for in a folder that does not exist yet is a plan or a
+        # typo, and either way the answer is the folder, not a traceback about it.
+        args.config.parent.mkdir(parents=True, exist_ok=True)
+        folder.mkdir(parents=True, exist_ok=True)
+        args.config.write_text(starter_text(args.media_dir), encoding="utf-8")
+        print(f"wrote {args.config} (and a {folder} directory - drop your adhan files in it)")
         print("no speakers are configured: run `muezzin where <city> --write` to say where "
               "you are, then `muezzin devices` to see what is on the network and add a "
               "speaker from the panel")

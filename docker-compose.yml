@@ -1,5 +1,12 @@
 # One service: the daemon, the panel and the media server are the same process.
 #
+# First run: ./config is empty, so the container writes a starter profile into it
+# and points its media_dir at ./media. Then open http://<this machine>:8020 and
+# the page does the rest - where you are, which calculation, which speakers, which
+# recording. The page has no login and it can edit this profile, which is the
+# point; if you want a container that only shows the timetable, the commented
+# service at the bottom is that.
+#
 # network_mode: host is not decoration. Speakers are *found* with mDNS
 # (_cast._tcp and, for muezzin boxes, _muezzin._tcp), and mDNS announcements do
 # not travel through a Docker bridge network. On Linux, host mode is what makes
@@ -31,6 +38,8 @@ services:
   # The bridge variant, for when you only want the timetable and the page.
   # Speakers are deliberately left out: the container gets an address like
   # 172.17.0.2, which your speaker has no route to, and discovery never runs.
+  # It also carries --read-only, which is the other reason to want this shape: a
+  # page on a network you do not trust, showing the times and changing nothing.
   #
   # muezzin-lookup-only:
   #   image: muezzin:0.1.3
