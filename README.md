@@ -289,11 +289,11 @@ does not see on a Pi are in `docs/HOW-IT-WORKS.md`.
 thing from this repo:
 
 ```bash
-docker pull ghcr.io/124c41pl/muezzin:0.1.3
+docker pull ghcr.io/124c41pl/muezzin:0.1.4
 mkdir -p config media
 docker run -d --name muezzin --network host \
   -v "$PWD/config:/app/config" -v "$PWD/media:/app/media" \
-  ghcr.io/124c41pl/muezzin:0.1.3
+  ghcr.io/124c41pl/muezzin:0.1.4
 docker logs muezzin        # it prints where the page answers
 ```
 

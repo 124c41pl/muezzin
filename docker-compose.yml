@@ -21,7 +21,7 @@
 services:
   muezzin:
     build: .
-    image: muezzin:0.1.3
+    image: muezzin:0.1.4
     network_mode: host            # required for speaker discovery
     volumes:
       - ./config:/app/config      # your muezzin.yaml lives here
@@ -42,7 +42,7 @@ services:
   # page on a network you do not trust, showing the times and changing nothing.
   #
   # muezzin-lookup-only:
-  #   image: muezzin:0.1.3
+  #   image: muezzin:0.1.4
   #   ports:
   #     - "8020:8020"
   #   volumes:

@@ -752,7 +752,7 @@ user rather than root.
 
 ```bash
 docker run --rm -v "$PWD/config:/app/config" -v "$PWD/media:/app/media" \
-    ghcr.io/124c41pl/muezzin:0.1.3
+    ghcr.io/124c41pl/muezzin:0.1.4
 docker logs muezzin       # it prints where the page answers, and says so in words
 ```
 
@@ -794,7 +794,7 @@ and the named volume keeps it out of your source tree.
 services:
   muezzin:
     build: .                        # or the published image, below
-    image: muezzin:0.1.3
+    image: muezzin:0.1.4
     network_mode: host              # required for speaker discovery
     volumes:
       - ./config:/app/config        # your muezzin.yaml lives here
@@ -824,16 +824,16 @@ output, because then there is nothing to discover.
 `.github/workflows/image.yml` builds `linux/amd64` and `linux/arm64` when you push
 a `v*` tag, and signs in to the registry with the workflow's own `GITHUB_TOKEN`, so
 no personal token is involved. The image is published under the **version**, not
-the git tag, so pushing `v0.1.3` produces the image `:0.1.3`:
+the git tag, so pushing `v0.1.4` produces the image `:0.1.4`:
 
 ```bash
-docker pull ghcr.io/124c41pl/muezzin:0.1.3
+docker pull ghcr.io/124c41pl/muezzin:0.1.4
 ```
 
-and in the compose file replace `build: .` / `image: muezzin:0.1.3` with:
+and in the compose file replace `build: .` / `image: muezzin:0.1.4` with:
 
 ```yaml
-    image: ghcr.io/124c41pl/muezzin:0.1.3
+    image: ghcr.io/124c41pl/muezzin:0.1.4
 ```
 
 `latest` is published too, and the workflow refuses to build if the tag and the
