@@ -235,7 +235,7 @@ def cmd_methods() -> int:
 
 
 def cmd_where(city: str | None, config: Path, write: bool, online: bool = False,
-              coords: str | None = None, choose: int = 0) -> int:
+              coords: str | None = None, choose: int = 0, postcode: str = "") -> int:
     """Look up the coordinates and the civil clock behind a place.
 
     This is the first step of a profile, so it is also the first thing worth
@@ -250,11 +250,18 @@ def cmd_where(city: str | None, config: Path, write: bool, online: bool = False,
     OpenStreetMap, which answers for a street rather than only a city, at the cost of
     sending the words someone typed to a machine that is not on this network; so it is
     asked for by name, never reached for on its own.
+
+    With `--online`, `--postcode` goes with the words in place of the name of a town,
+    which measured is the difference between the door asked for and several stretches of
+    a street that are not it.
     """
+    if postcode and not online and not coords:
+        print("# note: --postcode goes with --online only. The offline table knows city "
+              "names, and a code is not a city name.", file=sys.stderr)
     if coords:
         return _where_coords(coords, config, write, online)
     if online:
-        return _where_online(city, config, write, choose)
+        return _where_online(city, config, write, choose, postcode)
     if not city:
         print(f"`muezzin where <city>` prints the coordinates and time zone behind a city "
               f"name, offline, from a table of {len(places.PLACES)} city centres.")
@@ -344,7 +351,8 @@ def _write_location(config: Path, values: dict) -> int:
     return 0
 
 
-def _where_online(text: str | None, config: Path, write: bool, choose: int) -> int:
+def _where_online(text: str | None, config: Path, write: bool, choose: int,
+                  postcode: str = "") -> int:
     """Ask OpenStreetMap's Nominatim, and be exact about what that asked for.
 
     A lookup answers for a street, which the offline table cannot. What it costs is that
@@ -352,45 +360,60 @@ def _where_online(text: str | None, config: Path, write: bool, choose: int) -> i
     their network. That is worth doing knowingly and not by default, so the price is
     printed before the question is sent, and nothing about the question is kept here.
     """
-    if not text:
+    if not text and not postcode:
         print('`muezzin where --online "1200 Peach Street, Erie, PA"` asks OpenStreetMap '
               "for a place, which answers for a street and not only for a city in the "
               "offline table.", file=sys.stderr)
+        print('`muezzin where --online "1200 Peach Street" --postcode 16508` asks with the '
+              "postal code in place of the name of a town. Measured on the public lookup, a "
+              "line naming a town answered with five stretches of the street and none of "
+              "them the door asked for, while the same words with the code answered with "
+              "the door itself.")
         print("No account and no key are needed. The words you type go to them; nothing is "
               "saved here about the question, and the request carries only the name of the "
               "program that is asking.")
         return 2
+    asked = text or postcode
+    code = f' --postcode "{postcode}"' if postcode else ""
+    # A code on its own is a whole ask, so the line printed back to type has to leave the
+    # quotes out rather than ask for the same code twice.
+    quote = f' "{text}"' if text else ""
     print(f"# asking {geocode.provider()}: the words you typed leave this network, and "
           "nothing here keeps a record of them")
     try:
-        hits = geocode.search(text)
+        hits = geocode.search(text, postcode)
     except geocode.GeocodeError as exc:
         # The message says what went wrong without repeating the place asked about,
         # because this line ends up in terminals and bug reports.
         print(f"the lookup did not answer: {exc}", file=sys.stderr)
         return 2
     if not hits:
-        again = geocode.shorter(text)
-        print(f"{geocode.provider()} found nothing called {text!r}. A whole address is one "
+        again = geocode.shorter(text or "")
+        print(f"{geocode.provider()} found nothing called {asked!r}. A whole address is one "
               "hard question for a lookup: the street can be in the map, and the number on "
               "it, and the answer still empty, because a street is filed under the place it "
               "sits in rather than under the town name people put in a posting address.",
               file=sys.stderr)
-        if again:
-            print(f'# ask with the words before the town: muezzin where --online "{again}"',
+        if not postcode:
+            print("# a postal code answers where the name of a town stops the answer, so "
+                  'the street plus "--postcode 16508" is the other way in.',
                   file=sys.stderr)
+        if again:
+            print(f'# ask with the words before the town: muezzin where --online{code} '
+                  f'"{again}"', file=sys.stderr)
             print("# read the label before writing anything down: with fewer words a "
                   "street of the same name in another town answers just as happily.",
                   file=sys.stderr)
         return 2
     if len(hits) > 1 and not choose:
-        print(f"{text!r} could be more than one place, and choosing between two of them "
+        print(f"{asked!r} could be more than one place, and choosing between two of them "
               "is not this program's call to make:", file=sys.stderr)
         for number, hit in enumerate(hits, 1):
             clock = hit.timezone or f"no time zone: {hit.zone_note}"
             print(f"  {number}) {hit.label}   {hit.latitude}, {hit.longitude}   {clock}",
                   file=sys.stderr)
-        print(f'# then: muezzin where --online --choose N --write "{text}"', file=sys.stderr)
+        print(f'# then: muezzin where --online{code} --choose N --write{quote}',
+              file=sys.stderr)
         return 2
     if choose:
         if not 1 <= choose <= len(hits):
@@ -408,7 +431,7 @@ def _where_online(text: str | None, config: Path, write: bool, choose: int) -> i
     if not write:
         picked = f"--choose {choose} " if choose else ""
         print(f"# to put those three lines into {config}: "
-              f"muezzin where --online {picked}--write \"{text}\"")
+              f"muezzin where --online{code} {picked}--write{quote}")
         return 0
     try:
         values = hit.as_config()
@@ -754,6 +777,13 @@ def main(argv=None) -> int:
                    help="ask OpenStreetMap's Nominatim: answers for a street rather than "
                         "only a city, at the cost that the words you typed leave this "
                         "network. Nothing is kept, nothing needs an account or a key")
+    p.add_argument("--postcode", default="", metavar="CODE",
+                   help="with --online, the code travels with the words in place of the "
+                        'name of a town: --online "2456 w 12th st" --postcode 16508 '
+                        "answered with the door itself, where the same words naming a town "
+                        "answered with five stretches of street and none of them the door. "
+                        "A code on its own finds the whole code area, and one code can "
+                        "exist in two countries")
     p.add_argument("--choose", type=int, default=0, metavar="N",
                    help="take answer number N when the lookup answers more than one place")
 
@@ -826,7 +856,7 @@ def main(argv=None) -> int:
         return cmd_methods()
     if args.cmd == "where":
         return cmd_where(args.city, args.config, args.write, args.online,
-                         args.coords, args.choose)
+                         args.coords, args.choose, args.postcode)
     if args.cmd == "devices":
         return cmd_devices(args.timeout)
     if args.cmd == "box":

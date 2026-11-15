@@ -150,6 +150,72 @@ def test_the_offer_costs_no_request_of_its_own(answering):
     assert len(answering.calls) == 1
 
 
+# A postal code does what the name of a town cannot: it puts the question inside the area
+# the street is filed in. Measured on the public instance, "2456 w 12th st erie pa" answered
+# with five stretches of West 12th Street, none of them the door asked for, while "2456 w
+# 12th st, 16508" answered with one row carrying house number 2456, in the township that
+# holds it. Typing both a town and a code is the one combination measured to make things
+# worse again - the town pulls the answer back to its own stretches - so the code goes in a
+# box of its own and the words beside it stay short.
+def test_a_postal_code_travels_with_the_words_in_the_same_one_request(answering):
+    geocode.search("2456 w 12th st", "16508")
+    assert len(answering.calls) == 1, "a code is not a second question"
+    assert "q=2456+w+12th+st%2C+16508" in answering.calls[0]
+
+
+def test_a_postal_code_can_be_the_whole_question(answering):
+    # Coarse, and said to be coarse: a code alone answers for the whole code area, and the
+    # same code exists in more than one country, so the page shows the label.
+    geocode.search("", "16508")
+    assert len(answering.calls) == 1
+    assert "q=16508" in answering.calls[0]
+
+
+def test_a_blank_code_leaves_the_question_as_it_was_written(answering):
+    geocode.search("peach street", "   ")
+    assert answering.calls[0].count("%2C") == 0, "no comma where nothing was added"
+    assert "q=peach+street&" in answering.calls[0]
+
+
+def test_nothing_leaves_the_house_when_neither_box_is_filled(offline):
+    with pytest.raises(geocode.GeocodeError):
+        geocode.search("", "  ")
+    assert offline.calls == []
+
+
+# The lookup server publishes one rule for everyone using the public instance: at most one
+# request a second, counted for the application as a whole however many people are typing
+# into it. Nothing in this package asks twice on purpose, but a search and then a look at
+# one of its own answers are two asks inside the same second, so the door keeps a gap
+# between them. The same page names autocomplete as a use that is not supported, from
+# either side of the wire, which is why there is no box here that asks as you type.
+def test_two_asks_in_a_row_take_turns(answering, monkeypatch):
+    # The wait is watched rather than timed. Timing it was tried first, and the timing was
+    # the flake: a Windows runner asked to hold for 0.35 seconds reported holding for
+    # 0.344, because its clock and its sleep do not agree to the millisecond. What is worth
+    # asserting is who waited and roughly how long, not how the wall clock came out.
+    monkeypatch.setattr(geocode, "ASK_SPACING", 0.35)
+    monkeypatch.setattr(geocode, "_last_ask", 0.0)
+    waited = []
+    monkeypatch.setattr(geocode.time, "sleep", lambda seconds: waited.append(seconds))
+    geocode.search("peach street")
+    geocode.search("peach street")
+    assert len(answering.calls) == 2, "two asks still went out"
+    assert len(waited) == 1, "the first ask waited for nothing"
+    assert 0.3 < waited[0] <= 0.35, "the second ask waited for the first"
+
+
+# The gap is switched off for the rest of this file by conftest.py, because these tests
+# answer at the door rather than reach a server. This line runs when the file is imported,
+# before any of that, so it reads the length the real world is owed.
+POLITENESS = geocode.ASK_SPACING
+
+
+def test_the_gap_between_asks_respects_the_rule_the_server_states():
+    assert POLITENESS >= 1.0, "one request a second, at least"
+    assert "ASK_SPACING" in geocode.__all__
+
+
 def test_a_time_zone_the_machine_does_not_know_is_not_repeated_back(monkeypatch):
     """A map can carry a nonsense zone tag; passing it through would put the profile in
     a state where every prayer time is a different distance from the truth."""
@@ -351,6 +417,56 @@ def test_a_line_that_found_nothing_is_offered_back_shorter(monkeypatch, tmp_path
     assert "same name in another town" in err, "the offer comes with the reason to read it"
     assert len(net.calls) == 1, "offering a shorter ask does not make one"
     assert "40.7128" in path.read_text(encoding="utf-8"), "nothing was written"
+
+
+def test_the_command_asks_with_a_postal_code_and_gets_the_door(monkeypatch, tmp_path,
+                                                              capsys):
+    # The measured case kept in a test, so the claim in the help text stays a claim about
+    # something that happened: with a code in place of the town, one row comes back and it
+    # carries the house number that was asked for.
+    path = tmp_path / "muezzin.yaml"
+    monkeypatch.chdir(tmp_path)
+    main(["init"])
+    door = json.dumps([{"display_name": "2456, West 12th Street, Millcreek Township, "
+                                      "Erie County, Pennsylvania, 16505, United States",
+                        "lat": "42.103688", "lon": "-80.135211",
+                        "address": {"house_number": "2456", "road": "West 12th Street",
+                                    "postcode": "16505"},
+                        "extratags": {}}]).encode()
+    net = FakeNetwork(body=door)
+    monkeypatch.setattr(geocode, "_open", net)
+    assert main(["where", "--online", "2456 w 12th st", "--postcode", "16508",
+                 "--write", "-c", str(path)]) == 0
+    assert len(net.calls) == 1, "the code travels with the words, not after them"
+    assert "q=2456+w+12th+st%2C+16508" in net.calls[0]
+    written = path.read_text(encoding="utf-8")
+    assert "latitude: 42.103688" in written and "America/New_York" in written
+
+
+def test_the_line_the_command_prints_to_type_back_keeps_the_code(monkeypatch, tmp_path,
+                                                                capsys):
+    # A hint that drops the code is a hint to ask a different question, and the different
+    # question is the one that answers with several streets.
+    path = tmp_path / "muezzin.yaml"
+    monkeypatch.chdir(tmp_path)
+    main(["init"])
+    monkeypatch.setattr(geocode, "_open", FakeNetwork(body=json.dumps(
+        [{"display_name": "2456, West 12th Street, Millcreek Township, Pennsylvania",
+          "lat": "42.103688", "lon": "-80.135211",
+          "extratags": {"timezone": "America/New_York"}}]).encode()))
+    assert main(["where", "--online", "2456 w 12th st", "--postcode", "16508",
+                 "-c", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert '--online --postcode "16508" --write "2456 w 12th st"' in out
+
+
+def test_a_postal_code_alongside_the_offline_table_says_what_it_does_not_do(monkeypatch,
+                                                                          tmp_path, capsys):
+    path = tmp_path / "muezzin.yaml"
+    monkeypatch.chdir(tmp_path)
+    main(["init"])
+    assert main(["where", "erie", "--postcode", "16508", "-c", str(path)]) == 0
+    assert "goes with --online only" in capsys.readouterr().err
 
 
 def test_the_command_refuses_a_choice_that_was_not_offered(monkeypatch, tmp_path, capsys):

@@ -20,12 +20,15 @@ want to use the `./media` folder that `docker-compose.yml` mounts.
 
 The quickest way to set those three location lines is the **Where** section on the
 page: numbers typed there can be checked against the town centres this program carries,
-and the map behind them can be clicked to point instead. `muezzin where --online <words>`
-is the same thing from a command line. The forms that use words ask OpenStreetMap's
-Nominatim once, because you pressed the button; the map squares are the one thing that
-goes out unprompted, and `map_tiles: off` in the profile stops even that. None of this
-needs an API key. If you would rather the lookup be a courtesy than anonymous, give it a
-way back to you:
+a street and a postal code can be searched for, and the map behind them can be clicked
+to point at the door itself — which is how a search that answers with a street rather
+than a house number still ends up at the right house. `muezzin where --online <words>
+--postcode <code>` is the same thing from a command line; the code goes in place of the
+name of a town, which is usually the word that stops an answer. The forms that use words
+ask OpenStreetMap's Nominatim once, because you pressed the button; the map squares are
+the one thing that goes out unprompted, and `map_tiles: off` in the profile stops even
+that. None of this needs an API key. If you would rather the lookup be a courtesy than
+anonymous, give it a way back to you:
 
     MUEZZIN_CONTACT="https://example.org/muezzin"    # added to the request's name
     MUEZZIN_GEOCODE="https://nominatim.example.org"  # your own instance instead

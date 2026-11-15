@@ -584,13 +584,15 @@ class WebPanel:
         if the answer is bad.
         """
         text = str(payload.get("q") or "").strip()
-        if text:
-            hits = geocode.search(text)
+        postcode = str(payload.get("postcode") or "").strip()
+        if text or postcode:
+            hits = geocode.search(text, postcode)
         elif payload.get("latitude") is not None:
             latitude, longitude = _numbers(payload)
             hits = geocode.reverse(latitude, longitude)
         else:
-            raise ValueError("type a place, or give latitude and longitude")
+            raise ValueError("type a street or a postal code, or give latitude and "
+                             "longitude")
         # An empty answer is the only case an offer is worth making. Measured on the public
         # lookup: a line that already answers is beaten by the shorter one - "1600
         # pennsylvania ave nw washington dc" answers with the White House, while the same
@@ -1540,7 +1542,8 @@ PAGE = """<!doctype html>
    <label>time zone <input id="zone" type="text" size="18"></label>
    <button id="check">check these numbers</button><button id="writewhere">write these</button></div>
   <div id="where"></div>
-  <div class="row"><input id="place" type="text" size="32" placeholder="a town, a street, anything you would type into a map">
+  <div class="row"><input id="place" type="text" size="26" placeholder="the street, and the number on it">
+   <label>postal code <input id="zip" type="text" size="8"></label>
    <button id="findit">find it</button></div>
   <div id="found"></div>
   <div class="fine">Checking numbers happens on this machine, against the town centres
@@ -1551,10 +1554,15 @@ PAGE = """<!doctype html>
    squares come from tile.openstreetmap.org, fetched by the daemon with this program's name
    on the request and credited where they show, never by your browser. Click the map to move
    the mark and the two boxes above follow it; write-it is what saves them. To keep every
-   request inside this house, put <code>map_tiles: off</code> in the profile. A whole
-   address is one hard question for a lookup, because the map files a street under the place
-   it sits in rather than the town name people put in a posting address: when a search comes
-   back empty, the page offers the same words with the town taken off.</div>
+   request inside this house, put <code>map_tiles: off</code> in the profile. The postal
+   code answers better than the name of a town does, because the map files a street under
+   the place it physically sits in rather than under the town name people put in a posting
+   address: the street in one box and the code in the other is the ask that gets through,
+   and the town is the word to leave out. A code on its own finds the whole code area, and
+   one code can exist in two countries, so read the whole label before using anything. When
+   the answer is a street rather than a door, press look there and then click the door you
+   live at: the click is the house number, and a mark a kilometre off moves a prayer time
+   by under a second.</div>
   <div id="map"></div>
  </section>
  <section><h2>Method</h2>
@@ -1881,7 +1889,8 @@ function showFound(){
    +' the map while the answer is still empty, because a street is filed under the place it'
    +' sits in rather than the town name people put in a posting address. The house and the'
    +' street are the part the map knows best, so fewer words often answer where the whole'
-   +' line did not.'+offer+'</div>')
+   +' line did not. The postal code answers where the name of a town stops the answer, so'
+   +' the code box beside it is the other way in.'+offer+'</div>')
    :'';
   if(TA)$('#tryagain').onclick=()=>{ $('#place').value=TA; $('#findit').click(); };
   return;
@@ -1899,7 +1908,9 @@ function showFound(){
   +'<div class="fine">Looking costs nothing and writes nothing: look there moves the map,'
   +' the two boxes and the dial, and use this is the button that changes the profile. Read'
   +' the whole label before either: a street of the same name in another town answers just'
-  +' as happily, and the words beside each line say where its clock comes from.'
+  +' as happily, and the words beside each line say where its clock comes from. When the'
+  +' answer is a street rather than a door, look there and then click the door you live at:'
+  +' the street writes a point on it, and a kilometre is worth under a second.'
   +'</div>';
  document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
   const f=FH[Number(b.dataset.use)];
@@ -2015,9 +2026,9 @@ $('#writewhere').onclick=()=>act(()=>api('/api/location',{latitude:$('#lat').val
  longitude:$('#lon').value,timezone:$('#zone').value}),
  ()=>say('the location is written; the timetable above is the new one','ok'));
 $('#findit').onclick=()=>act(async()=>{
- const q=$('#place').value.trim();
- if(!q) throw new Error('type a place first');
- const j=await api('/api/geocode',{q:q});
+ const q=$('#place').value.trim(), zp=$('#zip').value.trim();
+ if(!q&&!zp) throw new Error('type a street or a postal code first');
+ const j=await api('/api/geocode',{q:q,postcode:zp});
  TA=j.try_again||'';
  FQ=q; FH=j.hits||[]; showFound();   // FQ only records a look-up that was answered, so a
                                      // failed question never leaves an empty-looking answer

@@ -45,7 +45,7 @@ __all__ = ["Hit", "search", "shorter", "reverse", "nearest_named", "GeocodeError
            "NeedsInternet", "RefusedLookup", "TileMissing", "TileBusy", "user_agent",
            "provider", "zone_known", "ENDPOINT", "TILE_HOST", "MAP_CREDIT", "tile_url",
            "fetch_tile", "TILE_SPACING", "TILE_RETRY_WAIT", "ZONE_NEAR_KM", "FAR_KM",
-           "ROAD_WORDS"]
+           "ASK_SPACING", "ROAD_WORDS"]
 
 # The one host a lookup goes to, unless the person running this points it at a
 # Nominatim they run themselves. Overriding is a real use case - someone in Qatar who
@@ -127,6 +127,14 @@ TILE_SPACING = 1.1
 # is the one thing on this page that makes people doubt the numbers next to it.
 TILE_RETRY_CODES = frozenset({408, 429, 500, 502, 503, 504})
 TILE_RETRY_WAIT = 1.0
+
+# The lookup server says the same thing about itself, but as a rule rather than a custom:
+# at most one request a second, counted for the whole application no matter how many
+# people are typing into it. Tiles have their own queue, and nothing here kept two asks
+# apart, so a search followed quickly by a look at one of its own answers could put two
+# questions inside the same second. One gap covers both, because they are the same server.
+ASK_SPACING = 1.1
+_last_ask = 0.0
 
 # There is deliberately no rule here about how big a square ought to be, because the
 # measurement says not to have one: the square of lake west of Erie at zoom 12 is 103
@@ -219,16 +227,34 @@ def _open(url: str, accept: str = "application/json") -> bytes:
         return response.read(MAX_BODY)
 
 
+def _take_a_turn() -> None:
+    """Wait until a second has gone by since the last question left for the lookup server.
+
+    The public instance counts traffic per application rather than per person, so two asks
+    from one house - a search, then a look at one of its own answers - are simply two asks
+    and they take turns. The pause is measured from the ask before it, and the length is
+    read when called so that a test can ask for a shorter one and still see the turn taken.
+    """
+    global _last_ask
+    wait = ASK_SPACING - (time.monotonic() - _last_ask)
+    if wait > 0:
+        time.sleep(wait)
+    _last_ask = time.monotonic()
+
+
 def _ask(url: str) -> bytes:
-    """The door with its manners: one request, no second try, and a reason that does not
-    repeat the question.
+    """The door with its manners: one request at a time, no second try, and a reason that
+    does not repeat the question.
 
     No retry because the usage policy asks for at most one request a second, and because a
     person who mistyped a name would otherwise fire the same question at a stranger three
-    times. The reasons deliberately leave out the text that was looked up: this line ends
-    up in a terminal, a log, or a bug report, and it is the one place a household's street
-    could ride along in.
+    times. The gap first is the other half of that same rule: the limit is one ask a
+    second for this application as a whole, not one per button, so a search and then a
+    look at one of its own answers take turns. The reasons deliberately leave out the text
+    that was looked up: this line ends up in a terminal, a log, or a bug report, and it is
+    the one place a household's street could ride along in.
     """
+    _take_a_turn()
     try:
         return _open(url)
     except urllib.error.HTTPError as exc:
@@ -392,13 +418,26 @@ def shorter(text: str) -> str | None:
     return piece
 
 
-def search(text: str, limit: int = LIMIT) -> list[Hit]:
+def search(text: str, postcode: str = "", limit: int = LIMIT) -> list[Hit]:
     """Places that could be what was typed, nearest-meaning first.
 
     The text goes over the wire, which is the whole point and the whole cost. It is
     never written to disk, and the errors never quote it back.
+
+    A postal code is worth a town, which is why it gets a box of its own rather than being
+    left to the sentence somebody composes. Measured against the public instance:
+    "2456 w 12th st erie pa" answered with five stretches of West 12th Street, none of them
+    the door asked for, because a street is filed under the place it sits in and not the
+    town name people put in a posting address; the same words with the code in place of the
+    town - "2456 w 12th st, 16508" - answered with one row, house number 2456, in the
+    township that holds it. A street and a code with no number answers with the street,
+    which is enough: the map then lets the person click the door they live at instead of
+    trusting the lookup to have mapped it.
     """
     text = (text or "").strip()
+    postcode = (postcode or "").strip()
+    if postcode:
+        text = f"{text}, {postcode}" if text else postcode
     if not text:
         raise RefusedLookup("nothing was typed to look up.")
     url = (f"{endpoint()}/search?" + urllib.parse.urlencode(

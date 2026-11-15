@@ -1403,7 +1403,33 @@ def test_a_place_with_no_clock_to_borrow_admits_it(tmp_path, monkeypatch):
 def test_a_find_that_was_given_neither_words_nor_numbers_is_refused(panel):
     web, _, _ = panel
     status, st = call(web.port, "/api/geocode", {})
-    assert status == 400 and "type a place" in st["error"], st
+    assert status == 400 and "type a street or a postal code" in st["error"], st
+
+
+def test_the_postal_code_arrives_with_the_words_and_costs_nothing_extra(panel, monkeypatch):
+    """The second box exists because the first one, on its own, is the question that most
+    often answers with several streets and none of them the door asked for. Measured on the
+    public lookup: the words plus a code, with no town named, answered with one row carrying
+    the house number; the same words naming a town answered with five stretches of street.
+    The code joins that one request rather than starting another, and it is still the only
+    thing that leaves the house."""
+    asks: list[str] = []
+
+    def listening(url: str, accept: str = "application/json") -> bytes:
+        asks.append(url)
+        return b"[]"
+
+    monkeypatch.setattr(geocode, "_open", listening)
+    web, _, _ = panel
+    status, st = call(web.port, "/api/geocode", {"q": "2456 w 12th st",
+                                                 "postcode": "16508"})
+    assert status == 200 and st["hits"] == [], st
+    assert len(asks) == 1, "a code is not a second question"
+    assert "q=2456+w+12th+st%2C+16508" in asks[0]
+    status, st = call(web.port, "/api/geocode", {"postcode": "16508"})
+    assert status == 200, st
+    assert "q=16508" in asks[-1], "a code on its own is a coarse but honest question"
+    assert len(asks) == 2, "one ask per press of the button, and no more"
 
 
 def test_a_read_only_panel_can_still_ask_what_its_numbers_mean(tmp_path, monkeypatch):
@@ -1674,8 +1700,30 @@ def test_a_look_up_that_found_nothing_answers_where_the_words_were_typed(panel):
     assert "rather than the town name" in page, "and the note says which word is the trouble"
     assert "FQ=q; FH=j.hits||[]; showFound();" in page, \
         "a look-up that was never answered leaves no answer behind"
-    assert "because the map files a street under the place" in page, \
-        "said before the typing, not only after the failure"
+    assert "The postal code answers where the name of a town stops the answer" in page, \
+        "and the code box is offered as the other way in, not only the shorter words"
+
+
+def test_the_page_gives_the_postal_code_its_own_box_and_says_what_it_is_for(panel):
+    """The second box is the whole usability change, so the page has to say what it measured:
+    a code answers where a town's name is the thing that stops the answer; a code alone finds
+    a whole code area, and one code can exist in two countries; and when the answer is a
+    street rather than a door, the click on the map is the house number. The tolerance is
+    stated because the fallback of using a street without clicking is worth saying out loud:
+    measuring a shift of a kilometre in the saved position moved no prayer time by a whole
+    second, which is why the click matters for finding the right street and not for the
+    arithmetic afterwards."""
+    _, page = call(panel[0].port, "/", raw=True)
+    assert '<label>postal code <input id="zip"' in page
+    assert "const q=$('#place').value.trim(), zp=$('#zip').value.trim();" in page
+    assert "if(!q&&!zp) throw new Error('type a street or a postal code first');" in page
+    assert "const j=await api('/api/geocode',{q:q,postcode:zp});" in page
+    assert "the street in one box and the code in the other" in page
+    assert "the town is the word to leave out" in page
+    assert "one code can" in page and "exist in two countries" in page
+    assert ("the click is the house number, and a mark a kilometre off moves a prayer time"
+            in page)
+    assert "the street writes a point on it, and a kilometre is worth under a second" in page
 
 
 def test_an_answer_that_was_empty_offers_the_same_words_without_the_town(panel,

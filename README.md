@@ -51,6 +51,7 @@ muezzin init                            # starter profile: five prayers, no spea
 muezzin where orlando                   # prints the coordinates behind a city name
 muezzin where --write orlando           # ...and puts them in the profile
 muezzin where --online "SW1A 1AA"       # ask OpenStreetMap for something the table lacks
+muezzin where --online "2456 w 12th st" --postcode 16508  # a code, not a town: finds the door
 muezzin where --coords 42.1292,-80.0851 # what those numbers are near, nobody asked
 muezzin times                           # does this look like your local timetable?
 ```
@@ -82,8 +83,16 @@ borrowed, or says there is no honest guess and leaves that line to you. When a s
 answers with nothing, the terminal prints the same words with the town taken off, as a
 line for you to run rather than one it runs itself: the map files a street under the
 place it sits in, not under the town name people put in a posting address, so the town
-in a whole address is usually the word at fault. The times themselves never depend on
-either service being up.
+in a whole address is usually the word at fault. A postal code does that work in one
+try: `--online "2456 w 12th st" --postcode 16508` answered with the door itself, where
+`--online "2456 w 12th st erie pa"` answered with five stretches of that street and
+none of them the door. The code travels with the words, in place of the town — a
+question containing both is the one that goes back to stretches of road. A code on its
+own answers for a whole code area, and the same code exists in more than one country,
+so read the label that comes back. Every ask goes through one door that waits at least
+a second between questions, because the search asks applications for one request a
+second; that is also why nothing here searches while you are still typing. The times
+themselves never depend on either service being up.
 
 ### 2. Which numbers
 
@@ -224,16 +233,23 @@ every speaker switched off.
 
 None of that needs a config file. Type numbers and press **check these numbers** to
 be told the nearest names and what clock they would keep, with nobody being asked
-anything; type words and press **find it**, which asks OpenStreetMap once. A whole
-address is one hard question for that lookup: it files a street under the place it
-physically sits in, which is often a suburb or a district, rather than under the
-town name people put in a posting address — so the word that most often stops an
-answer is the town in the middle of the line. When nothing comes back, the page
-offers the same words with the town taken off and sends them only if you press it,
-because a shorter ask is a second ask and it is yours to decide. Or click the map,
-or press **look there** beside something the search found, which moves the mark,
-refills the two boxes above it and redraws the dial of nearby towns — and still
-changes nothing on disk until **write it**, because a click is a look. Speakers work
+anything; type words and press **find it**, which asks OpenStreetMap once. The box
+beside it is a postal code, and a code answers better than the name of a town does: the
+lookup files a street under the place it physically sits in, which is often a suburb or
+a district, rather than under the town name people put in a posting address. Measured
+against that public search, a street with its number plus a code and no town came back
+with the door asked for, while the same words naming a town came back with five
+stretches of road, none of them the door — so the code goes in *instead of* the town,
+and a question holding both is the one that goes wrong. A code on its own answers for a
+whole code area, and the same code exists in two countries, which is why every answer
+prints its full label. When nothing comes back, the page offers the same words with the
+town taken off and sends them only if you press it, because a shorter ask is a second
+ask and it is yours to decide. When the answer is a street rather than a door, press
+**look there** and then click the door you live at: that row is a point somewhere along
+the road, and a mark a kilometre off moves a prayer time by under a second, so it is
+the street that has to be right rather than the dot. Clicking the map from scratch does
+the same thing, refills the two boxes above it and redraws the dial of nearby towns —
+and still changes nothing on disk until **write it**, because a click is a look. Speakers work
 the same way: **look again**, **use**, and a name you type into the row. The YAML is
 still the only thing that persists, and every write is validated before it lands,
 but it is a window rather than a prerequisite.

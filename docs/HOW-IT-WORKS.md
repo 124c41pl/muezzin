@@ -270,6 +270,38 @@ came back with nothing, and it is always followed by the caution that a street o
 same name in another town answers just as happily. The note waits for an answered
 look-up, so it can never be read as the answer to a question that never left the house.
 
+The box beside the words is a postal code, and it exists because measuring said a code
+answers where a town name stops an answer. `2456 w 12th st, 16508` returned one row
+carrying house number 2456, in the township that holds the street; `2456 w 12th st erie
+pa` returned five stretches of that street inside the city and none of them the door.
+Naming the town *and* giving the code was worse than the code alone — three rows, still
+no house number — which is why the page gives the code its own box and says out loud that
+the town is the word to leave out. A code on its own is coarse and not unique: `16508`
+answered with Erie, Pennsylvania and with Yeongtong-gu, Suwon-si, South Korea, so every
+answer prints its full label and the clock it came with. `--postcode` on the command line
+and a `postcode` field in `/api/geocode` are the same single request: the code joins the
+words rather than starting a question of its own.
+
+When the answer is a street rather than a door, the click on the map is the house number.
+A street row is a short segment — the two ends of one row measured here were 0.1 km apart
+— so accepting the point it returns costs essentially nothing, and the arithmetic is
+forgiving about the last few kilometres anyway: holding the method fixed, moving the saved
+position by 1 km shifted no prayer time by a whole second, by 5 km about 14 seconds, by
+20 km about 1.2 minutes. Choosing a different method for the same address moves that day
+by 7 to 22 minutes, which is the far larger error, and is why the method is something to
+pick rather than something to leave at a default. What is not forgiving is getting the
+right *street*: a same-named street in the next town over answers just as happily and is
+a different house, which is what the labels and the borrowed-clock notes are for.
+
+Two asks in a row now take turns. That same policy counts its limit per application and
+not per person, so a search followed immediately by a look at one of its own answers
+would put two questions inside one second; the door in `geocode.py` keeps at least 1.1
+seconds between questions and reads that number when a question is about to leave. The
+policy also names autocomplete as a use it does not support from either side of the wire,
+which is why the page has two boxes and a button rather than a list that fills in while
+somebody is still typing. Whoever runs their own lookup instance is not bound by that
+rule, and `MUEZZIN_GEOCODE` already points this program at it.
+
 A place that was found can then be looked at before it is kept. **look there** makes it
 the place being looked at — the mark, the view, the dial and the two boxes, which is
 what a click on the map does, and the nearby towns come from the daemon's own table —
@@ -848,7 +880,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 398 tests
+pytest -q                        # 409 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and
