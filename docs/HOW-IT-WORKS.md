@@ -241,17 +241,34 @@ running their own instance points at it with `MUEZZIN_GEOCODE`, and `MUEZZIN_CON
 adds a URL of theirs to that name, if they would rather the operator of the lookup be
 able to reach them.
 
-A search answers only as well as the map's data does, and that data is uneven in a way
-worth knowing before a search is taken for something broken: OpenStreetMap maps streets
-far more widely than it maps house numbers, so a line that starts with a number can
-come back empty while the same street on its own answers. Measured on this machine, one
-address asked with its number returned an empty list; the same street without the
-number returned two places on that road and a time zone borrowed from the nearest city
-in the table. Nothing in this program changed between the two asks — the first wanted a
-number that nobody has written down anywhere. So the list under the box the words were
-typed into speaks for itself when the answer is empty, and says what is usually the
-reason and what to type instead; it waits for an answered look-up, so it can never be
-read as the answer to a question that never left the house.
+A search answers only as well as the map's data does, and the way that data is uneven is
+worth knowing before a search is taken for something broken. Measured on the public
+instance: a house that is really in the map, asked by street and number, answered with
+that exact door; the same words with the city people use in that address appended
+answered with an empty list, and biasing the ask towards the county changed nothing. The
+town is the word at fault, because the map files a street under the place it physically
+sits in — often a suburb or a district — rather than under the town name used in a
+posting address. The lookup's own structured form shows the same cut from the other
+side: the street asked with that town in the town field answered with nothing, while the
+same street asked with the postcode answered with the house, nothing else about the ask
+having changed. The address being asked here belongs to a household, so it is not printed
+in this file; what is printed is what it took to learn the reason.
+
+What was published with the first fix for this blamed house numbers, and that was wrong:
+the numbers are in the data. The test for the claim asked four ordinary addresses of the
+public lookup whole, and then again with the town cut off. Whole, they answered: "2456
+w 12th st erie pa" with five streets called 12th Street in Erie, "1600 pennsylvania ave
+nw washington dc" with the White House. Cut, they answered with a 12th Street in Little
+Rock and one in Sioux Falls, and with avenues in Miami Beach and Dallas. A line that
+already answers is beaten by its own shorter form, so the shorter form is never sent
+behind anybody's back.
+
+Which is what the page does when an answer comes back empty: it offers the same words
+with the town taken off, prints them so it is obvious what will be sent, and sends them
+only if the button carrying them is pressed. The offer appears only where the whole line
+came back with nothing, and it is always followed by the caution that a street of the
+same name in another town answers just as happily. The note waits for an answered
+look-up, so it can never be read as the answer to a question that never left the house.
 
 A place that was found can then be looked at before it is kept. **look there** makes it
 the place being looked at — the mark, the view, the dial and the two boxes, which is
@@ -831,7 +848,7 @@ Three tiers, and `tests/` is where the interesting ones live:
 
 ```bash
 python tests/crosscheck.py       # needs `pip install -e .[dev]`
-pytest -q                        # 393 tests
+pytest -q                        # 398 tests
 ```
 
 CI runs the suite and the oracle on ubuntu, windows and macOS, on Python 3.10 and

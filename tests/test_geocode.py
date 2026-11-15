@@ -117,6 +117,39 @@ def test_the_answer_is_read_as_places_not_as_json_rows(answering):
     assert "borrowed" in borrowed.zone_note and "Erie, Pennsylvania" in borrowed.zone_note
 
 
+# A whole address is one hard question for a lookup. Measured on the public instance: the
+# house and its street answer on their own, and the same line with the town in it answers
+# with nothing at all, because the street is filed under the place it physically sits in
+# rather than under the town name used in a posting address. So the words worth offering
+# back are the words up to the road name - and they are only ever offered, never sent.
+def test_the_words_worth_asking_again_are_the_words_up_to_the_road():
+    assert geocode.shorter("109 garden cove ct orlando, florida") == "109 garden cove ct"
+    assert geocode.shorter("1200 Peach Street, Erie, PA") == "1200 Peach Street"
+    assert geocode.shorter("2456 w 12th st erie pa") == "2456 w 12th st"
+    assert geocode.shorter("12 high street, bath, uk") == "12 high street"
+    assert (geocode.shorter("1600 pennsylvania ave nw washington dc")
+            == "1600 pennsylvania ave")
+
+
+def test_nothing_is_offered_when_the_offer_would_not_be_an_address():
+    # Already only the road, or a cut that would leave one word or a bare number: quieter
+    # is better than a suggestion that sends somebody to a same-named street abroad.
+    assert geocode.shorter("1200 Peach Street") is None
+    assert geocode.shorter("Erie, Pennsylvania") is None
+    assert geocode.shorter("5 rue de la paix, paris") is None
+    assert geocode.shorter("Rue de la Paix 5, Paris") is None
+    assert geocode.shorter("somewhere near the big lake") is None
+    assert geocode.shorter("") is None
+    assert geocode.shorter("   ") is None
+
+
+def test_the_offer_costs_no_request_of_its_own(answering):
+    # This is the whole shape of it: one ask leaves the house, and the shorter words are
+    # printed beside the answer as something to press. Nothing here retries itself.
+    geocode.search("1200 Peach Street, Erie, PA")
+    assert len(answering.calls) == 1
+
+
 def test_a_time_zone_the_machine_does_not_know_is_not_repeated_back(monkeypatch):
     """A map can carry a nonsense zone tag; passing it through would put the profile in
     a state where every prayer time is a different distance from the truth."""
@@ -299,6 +332,25 @@ def test_the_command_offers_the_choices_instead_of_picking_one(monkeypatch, tmp_
                  "-c", str(path)]) == 0
     written = path.read_text(encoding="utf-8")
     assert "latitude: 42.11" in written and "longitude: -80.07" in written
+
+
+def test_a_line_that_found_nothing_is_offered_back_shorter(monkeypatch, tmp_path, capsys):
+    # A town name in the middle of an address is the part most often to stop an answer,
+    # so the terminal names the shorter ask rather than leaving the person to guess which
+    # of their own words were the problem. One request went out, and the offer is only
+    # words on a screen: pressing it again is what asks a second time.
+    path = tmp_path / "muezzin.yaml"
+    monkeypatch.chdir(tmp_path)
+    main(["init"])
+    net = FakeNetwork(body=b"[]")
+    monkeypatch.setattr(geocode, "_open", net)
+    assert main(["where", "--online", "109 garden cove ct orlando, florida",
+                 "-c", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert 'muezzin where --online "109 garden cove ct"' in err
+    assert "same name in another town" in err, "the offer comes with the reason to read it"
+    assert len(net.calls) == 1, "offering a shorter ask does not make one"
+    assert "40.7128" in path.read_text(encoding="utf-8"), "nothing was written"
 
 
 def test_the_command_refuses_a_choice_that_was_not_offered(monkeypatch, tmp_path, capsys):

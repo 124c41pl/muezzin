@@ -78,8 +78,12 @@ quoted back. No lookup anywhere in here needs an API key, because a search you c
 only run after registering a card with somebody is a search most households will not
 run. What comes back usually carries a time zone; when it does not, muezzin borrows
 the zone of the nearest city it knows within 150 km and prints which city it
-borrowed, or says there is no honest guess and leaves that line to you. The times
-themselves never depend on either service being up.
+borrowed, or says there is no honest guess and leaves that line to you. When a search
+answers with nothing, the terminal prints the same words with the town taken off, as a
+line for you to run rather than one it runs itself: the map files a street under the
+place it sits in, not under the town name people put in a posting address, so the town
+in a whole address is usually the word at fault. The times themselves never depend on
+either service being up.
 
 ### 2. Which numbers
 
@@ -220,16 +224,19 @@ every speaker switched off.
 
 None of that needs a config file. Type numbers and press **check these numbers** to
 be told the nearest names and what clock they would keep, with nobody being asked
-anything; type words and press **find it**, which asks OpenStreetMap once — that map
-holds streets far more often than it holds house numbers, so the search most often to
-come back empty is the one that starts with a number, and the answer says so in the
-list under the box you typed in; or click the map, or press **look there** beside
-something the search found, which moves the mark, refills the two boxes above it and
-redraws the dial of nearby towns — and still changes nothing on disk until **write
-it**, because a click is a look. Speakers work the same way: **look again**, **use**,
-and a name you type into the row. The YAML is still the only thing that persists, and
-every write is validated before it lands, but it is a window rather than a
-prerequisite.
+anything; type words and press **find it**, which asks OpenStreetMap once. A whole
+address is one hard question for that lookup: it files a street under the place it
+physically sits in, which is often a suburb or a district, rather than under the
+town name people put in a posting address — so the word that most often stops an
+answer is the town in the middle of the line. When nothing comes back, the page
+offers the same words with the town taken off and sends them only if you press it,
+because a shorter ask is a second ask and it is yours to decide. Or click the map,
+or press **look there** beside something the search found, which moves the mark,
+refills the two boxes above it and redraws the dial of nearby towns — and still
+changes nothing on disk until **write it**, because a click is a look. Speakers work
+the same way: **look again**, **use**, and a name you type into the row. The YAML is
+still the only thing that persists, and every write is validated before it lands,
+but it is a window rather than a prerequisite.
 
 The map is on from the first run, and that is the one honest exception to "this asks
 nobody anything": its squares come from `tile.openstreetmap.org`, fetched by the

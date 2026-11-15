@@ -591,7 +591,14 @@ class WebPanel:
             hits = geocode.reverse(latitude, longitude)
         else:
             raise ValueError("type a place, or give latitude and longitude")
+        # An empty answer is the only case an offer is worth making. Measured on the public
+        # lookup: a line that already answers is beaten by the shorter one - "1600
+        # pennsylvania ave nw washington dc" answers with the White House, while the same
+        # words without the town answer with two avenues in Florida and Texas. So the offer
+        # appears when the town is the thing that stopped the answer, and not otherwise.
+        again = "" if (hits or not text) else (geocode.shorter(text) or "")
         return {"provider": geocode.provider(), "credit": geocode.MAP_CREDIT,
+                "try_again": again,
                 "hits": [{"label": hit.label, "latitude": hit.latitude,
                           "longitude": hit.longitude, "timezone": hit.timezone,
                           "note": hit.zone_note} for hit in hits]}
@@ -1544,9 +1551,10 @@ PAGE = """<!doctype html>
    squares come from tile.openstreetmap.org, fetched by the daemon with this program's name
    on the request and credited where they show, never by your browser. Click the map to move
    the mark and the two boxes above follow it; write-it is what saves them. To keep every
-   request inside this house, put <code>map_tiles: off</code> in the profile. That map
-   holds streets far more often than it holds house numbers, so a search that starts with
-   a number is the one most often to come back empty: type the street, or the town.</div>
+   request inside this house, put <code>map_tiles: off</code> in the profile. A whole
+   address is one hard question for a lookup, because the map files a street under the place
+   it sits in rather than the town name people put in a posting address: when a search comes
+   back empty, the page offers the same words with the town taken off.</div>
   <div id="map"></div>
  </section>
  <section><h2>Method</h2>
@@ -1797,9 +1805,11 @@ async function act(fn,after){ try{ await fn(); say('',''); if(after)await after(
 // squares of somebody else's map, credited where they appear. The diagram is drawn
 // from bearings and distances and needs no network at all, which is the point of
 // checking numbers before sending anything anywhere.
-let W=null, FH=[], FQ='', MP=null, MQ=null, MZ=12, MAPTAG='', prefilled=false;
+let W=null, FH=[], FQ='', TA='', MP=null, MQ=null, MZ=12, MAPTAG='', prefilled=false;
 // FQ holds the words of the last look-up, so that the answer can be given in the place
-// the person is looking at rather than only in the banner at the top of a long page.
+// the person is looking at rather than only in the banner at the top of a long page. TA
+// holds the shorter form of those words, offered but never sent until the page is pressed
+// again, because an ask leaving this house has to be a thing somebody decided.
 // How many squares a view is, across and down. One number, because the grid, the mark on
 // it and the click that turns a pixel back into degrees all have to agree about it; when
 // only the grid knew, the mark and the click were quietly a whole square off.
@@ -1860,11 +1870,20 @@ function showFound(){
   // The answer belongs under the box the words were typed into. A banner at the top of a
   // long page is easy to miss, and a list that stays empty reads as a page that did
   // nothing at all, which is why the reason and the way forward are said here.
-  box.innerHTML=FQ?'<div class="fine">Nothing came back for those words. The map holds'
-   +' streets far more often than it holds house numbers, so a line that starts with a'
-   +' number is the one most often to fail where the street on its own works. Try the'
-   +' street without the number, or the town, and then zoom and click the map to point.'
-   +'</div>':'';
+  const offer=TA?('<div class="fine">Ask again with just <code>'+esc(TA)+'</code>, the'
+   +' words before the town, when you are ready: <button id="tryagain">ask with those'
+   +'</button> Read the labels when it answers, though - with fewer words a street of the'
+   +' same name in another town answers just as happily, and that is not your street.'
+   +'</div>')
+   :'';
+  box.innerHTML=FQ?('<div class="fine">Nothing came back for those words. A whole address'
+   +' is one hard question for a lookup: the street, and the number on it, can both be in'
+   +' the map while the answer is still empty, because a street is filed under the place it'
+   +' sits in rather than the town name people put in a posting address. The house and the'
+   +' street are the part the map knows best, so fewer words often answer where the whole'
+   +' line did not.'+offer+'</div>')
+   :'';
+  if(TA)$('#tryagain').onclick=()=>{ $('#place').value=TA; $('#findit').click(); };
   return;
  }
  let h='<table><tbody>';
@@ -1878,7 +1897,9 @@ function showFound(){
  });
  box.innerHTML=h+'</tbody></table>'
   +'<div class="fine">Looking costs nothing and writes nothing: look there moves the map,'
-  +' the two boxes and the dial, and use this is the button that changes the profile.'
+  +' the two boxes and the dial, and use this is the button that changes the profile. Read'
+  +' the whole label before either: a street of the same name in another town answers just'
+  +' as happily, and the words beside each line say where its clock comes from.'
   +'</div>';
  document.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{
   const f=FH[Number(b.dataset.use)];
@@ -1997,11 +2018,13 @@ $('#findit').onclick=()=>act(async()=>{
  const q=$('#place').value.trim();
  if(!q) throw new Error('type a place first');
  const j=await api('/api/geocode',{q:q});
+ TA=j.try_again||'';
  FQ=q; FH=j.hits||[]; showFound();   // FQ only records a look-up that was answered, so a
                                      // failed question never leaves an empty-looking answer
 },()=>say(FH.length?('found '+FH.length+', from '+st.geocoder+'; nothing of it is kept,'
                    +' and nothing has been written yet')
-                 :'nothing matched those words, and what to try instead is under the box','ok'));
+                 :'nothing matched those words; asking again with fewer of them is'
+                  +' offered under the box','ok'));
 $('#scan').onclick=()=>act(async()=>{ SC=await api('/api/speakers?refresh=1'); },
  ()=>say(((SC.found.speakers||[]).length)+' speakers, '+((SC.found.groups||[]).length)+' groups, '
    +((SC.found.boxes||[]).length)+' boxes','ok'));

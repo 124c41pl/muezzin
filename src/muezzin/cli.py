@@ -370,8 +370,18 @@ def _where_online(text: str | None, config: Path, write: bool, choose: int) -> i
         print(f"the lookup did not answer: {exc}", file=sys.stderr)
         return 2
     if not hits:
-        print(f"{geocode.provider()} found nothing called {text!r}. A street with its "
-              "number, with the city after it, usually answers.", file=sys.stderr)
+        again = geocode.shorter(text)
+        print(f"{geocode.provider()} found nothing called {text!r}. A whole address is one "
+              "hard question for a lookup: the street can be in the map, and the number on "
+              "it, and the answer still empty, because a street is filed under the place it "
+              "sits in rather than under the town name people put in a posting address.",
+              file=sys.stderr)
+        if again:
+            print(f'# ask with the words before the town: muezzin where --online "{again}"',
+                  file=sys.stderr)
+            print("# read the label before writing anything down: with fewer words a "
+                  "street of the same name in another town answers just as happily.",
+                  file=sys.stderr)
         return 2
     if len(hits) > 1 and not choose:
         print(f"{text!r} could be more than one place, and choosing between two of them "

@@ -41,10 +41,11 @@ from zoneinfo import ZoneInfo
 from . import places
 from .places import Place
 
-__all__ = ["Hit", "search", "reverse", "nearest_named", "GeocodeError", "NeedsInternet",
-           "RefusedLookup", "TileMissing", "TileBusy", "user_agent", "provider",
-           "zone_known", "ENDPOINT", "TILE_HOST", "MAP_CREDIT", "tile_url", "fetch_tile",
-           "TILE_SPACING", "TILE_RETRY_WAIT", "ZONE_NEAR_KM", "FAR_KM"]
+__all__ = ["Hit", "search", "shorter", "reverse", "nearest_named", "GeocodeError",
+           "NeedsInternet", "RefusedLookup", "TileMissing", "TileBusy", "user_agent",
+           "provider", "zone_known", "ENDPOINT", "TILE_HOST", "MAP_CREDIT", "tile_url",
+           "fetch_tile", "TILE_SPACING", "TILE_RETRY_WAIT", "ZONE_NEAR_KM", "FAR_KM",
+           "ROAD_WORDS"]
 
 # The one host a lookup goes to, unless the person running this points it at a
 # Nominatim they run themselves. Overriding is a real use case - someone in Qatar who
@@ -341,6 +342,54 @@ def _hit(item: dict) -> Hit | None:
     zone, note = _zone_for(item, latitude, longitude)
     return Hit(label=label, latitude=round(latitude, 6), longitude=round(longitude, 6),
                timezone=zone, zone_note=note)
+
+
+# The words that name a road rather than a town, so that everything after them - the town,
+# the state, the postcode - can be dropped when a line comes back with nothing in it. A
+# full address is one hard constraint to a lookup: measured on the public instance, a line
+# naming a house and a street answered with that exact door, while the same line with the
+# city people write in that address appended answered with nothing at all. The street is in
+# the data, filed under the name of the place it sits in, which is often not the postal
+# name used in the address - an unincorporated suburb, a neighbourhood, a district. English
+# first, because that is what the wording on the page is written around; the rest are the
+# common forms elsewhere. It is a hint rather than a rule, and a line this cannot read
+# simply gets no offer at all, which is the safe way for a guess to fail.
+ROAD_WORDS = frozenset("""
+    street st str rd road ave avenue av blvd boulevard dr drive ln lane ct court cres
+    crescent way pl place platz ter terrace cir circle hwy highway pkwy parkway close
+    walk row mews sq square quay rise run path footpath alley arcade parade
+    rue calle carrera via callejon jalan lorong gang gali marg strad strada straasse
+    strasse straße chemin weg gadim ghadim
+""".split())
+
+
+def shorter(text: str) -> str | None:
+    """The same question with the tail cut off, for when a town is what stopped it.
+
+    Nothing here is sent anywhere. It is an offer, and the words are shown before anyone
+    decides to ask, so a second request stays a thing a person did rather than something
+    this program did behind their back. Nor is it a promise: it is the part of the line the
+    map is known to be good at, and sometimes that is still not enough.
+    """
+    words = (text or "").strip()
+    if not words:
+        return None
+    head = words.split(",")[0].strip()
+    parts = head.split()
+    keep = -1
+    for position, word in enumerate(parts):
+        if word.strip(".,;:()").casefold() in ROAD_WORDS:
+            keep = position
+    piece = " ".join(parts[:keep + 1]) if keep >= 0 else head
+    piece = piece.strip(" ,.;:()")
+    # Three words, or nothing: "5 rue" and "1200 peach" are not an address, and asking
+    # with a bare word or a bare number is how a person ends up looking at a street of the
+    # same name on another continent. Where the street name comes before the road word -
+    # most addresses that are not written in English - this stays quiet rather than offer
+    # something that would not answer.
+    if len(piece.split()) < 3 or piece.casefold() == words.casefold():
+        return None
+    return piece
 
 
 def search(text: str, limit: int = LIMIT) -> list[Hit]:

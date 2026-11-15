@@ -1660,18 +1660,54 @@ def test_a_place_that_was_found_can_be_looked_at_before_it_is_written(panel):
 def test_a_look_up_that_found_nothing_answers_where_the_words_were_typed(panel):
     """The only sign that the geocoder had nothing to say was a banner at the top of a long
     page, so somebody who pressed find-it on a street address saw a list that stayed empty
-    and took it for a broken panel. The list answers for itself now, and it says the thing
-    that is usually the actual reason: OpenStreetMap's data holds the street more often than
-    it holds the number in front of it. The note waits for an answered look-up, so it can
-    never be read as the answer to a question that was not asked."""
+    and took it for a broken panel. The list answers for itself now, and it names the reason
+    that measuring turned up: a whole address is one hard question, because a street is
+    filed under the place it sits in rather than under the town name people put in a posting
+    address. This corrects what the first version of this note blamed, which was house
+    numbers - the numbers are in the data, and it is the town that stops the answer. The
+    note waits for an answered look-up, so it can never be read as the answer to a question
+    that was never asked."""
     _, page = call(panel[0].port, "/", raw=True)
-    assert "let W=null, FH=[], FQ='', MP=null," in page
+    assert "let W=null, FH=[], FQ='', TA='', MP=null," in page
     assert "box.innerHTML=FQ?" in page, "the answer appears where the words went in"
-    assert "streets far more often than it holds house numbers" in page
+    assert "Nothing came back for those words. A whole address" in page
+    assert "rather than the town name" in page, "and the note says which word is the trouble"
     assert "FQ=q; FH=j.hits||[]; showFound();" in page, \
         "a look-up that was never answered leaves no answer behind"
-    assert "holds streets far more often than it holds house numbers" in page, \
+    assert "because the map files a street under the place" in page, \
         "said before the typing, not only after the failure"
+
+
+def test_an_answer_that_was_empty_offers_the_same_words_without_the_town(panel,
+                                                                        monkeypatch):
+    """Measuring said the offer belongs only to an empty answer: a line that already answers
+    is beaten by a shorter one, so the whole line "1600 pennsylvania ave nw washington dc"
+    answers with the White House while the same words with the town taken off answer with
+    avenues in Florida and Texas. So the panel offers the cut only when nothing came back,
+    shows the exact words it means to send, and sends nothing until the button carrying them
+    is pressed - which is the same button, so a second ask stays a decision somebody made."""
+    web, _, _ = panel
+    monkeypatch.setattr(geocode, "_open",
+                        lambda url, accept="application/json": b"[]")
+    status, res = call(web.port, "/api/geocode",
+                       {"q": "109 garden cove ct orlando, florida"})
+    assert status == 200 and res["hits"] == []
+    assert res["try_again"] == "109 garden cove ct", "the offer names the words it suggests"
+    named = json.dumps([{"display_name": "1200, Peach Street, Erie, Pennsylvania",
+                         "lat": "42.1023456", "lon": "-80.0654321",
+                         "extratags": {"timezone": "America/New_York"}}]).encode()
+    monkeypatch.setattr(geocode, "_open",
+                        lambda url, accept="application/json": named)
+    status, res = call(web.port, "/api/geocode", {"q": "1200 Peach Street, Erie, PA"})
+    assert status == 200 and res["hits"], "the line that works still works"
+    assert res["try_again"] == "", "a line that already answers is never cut down"
+    _, page = call(web.port, "/", raw=True)
+    assert "TA=j.try_again||'';" in page, "an answered look-up clears the offer away"
+    assert '<button id="tryagain">ask with those' in page
+    assert "$('#place').value=TA; $('#findit').click();" in page, \
+        "the offer goes through the same button, so it cannot ask on its own"
+    assert "same name in another town answers just as happily, and that is not your street" \
+        in page, "and the offer says why to read the labels"
 
 
 def test_an_answer_that_is_not_a_picture_is_not_shown_as_one(tmp_path, monkeypatch):
