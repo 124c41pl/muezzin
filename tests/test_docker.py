@@ -107,6 +107,22 @@ def test_the_first_run_of_a_container_has_a_profile_to_read():
     assert "exec muezzin" in script, "the daemon must be the process Docker sends signals to"
 
 
+def test_the_script_the_container_runs_survives_a_windows_clone():
+    """The entrypoint is the one file here that an operating system executes rather
+    than reads, and the kernel takes the shebang as the name of an interpreter. Give
+    that file Windows endings and the name it asks for is `/bin/sh` with a carriage
+    return on the end, which is not a thing that exists: the container answers
+    "no such file or directory" and dies before muezzin starts, in front of somebody
+    who followed our own build-the-image instructions and changed nothing wrong.
+    `core.autocrlf=true`, the usual setting on Windows, is what does it to a clone."""
+    script = (ROOT / "docker-entrypoint.sh").read_bytes()
+    assert b"\r" not in script, "a carriage return in a shell script names an interpreter that is not there"
+    assert script.startswith(b"#!/bin/sh\n"), "the shebang has to end where the line does"
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "*.sh" in attributes and "eol=lf" in attributes, \
+        "nothing else in this suite can notice a clone that cannot boot"
+
+
 def test_the_published_tag_is_the_one_the_readme_promises():
     """The registry tag must be the version, not the git tag.
 

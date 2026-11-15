@@ -1,0 +1,10 @@
+# The one file in this repository that a container executes.
+
+# A shell script with Windows line endings has a shebang that reads `#!/bin/sh\r`,
+# which names an interpreter that does not exist, and the container dies with
+# "no such file or directory" before the program ever runs. That is what
+# `core.autocrlf=true` - the usual setting on Windows - hands to a clone of this
+# repository, and docs/HOW-IT-WORKS.md tells Windows users to build the image
+# themselves, so they would meet that error with nothing wrong in their command.
+# Pinned here rather than left to a setting nobody remembers changing.
+*.sh text eol=lf
