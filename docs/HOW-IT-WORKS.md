@@ -751,7 +751,7 @@ nothing personal is baked into the image, and the container runs as an ordinary
 user rather than root.
 
 ```bash
-docker run --rm -v "$PWD/config:/app/config" muezzin:0.1.2 init -c /app/config/muezzin.yaml
+docker run --rm -v "$PWD/config:/app/config" muezzin:0.1.3 init -c /app/config/muezzin.yaml
 # edit location and method. The starter's `media_dir: media` is relative to the
 # profile, so in the container it means ./config/media; set it to /app/media to
 # use the ./media volume compose mounts. Starters have no outputs — see "speakers
@@ -782,7 +782,7 @@ and the named volume keeps it out of your source tree.
 services:
   muezzin:
     build: .                        # or the published image, below
-    image: muezzin:0.1.2
+    image: muezzin:0.1.3
     network_mode: host              # required for speaker discovery
     volumes:
       - ./config:/app/config        # your muezzin.yaml lives here
@@ -812,16 +812,16 @@ output, because then there is nothing to discover.
 `.github/workflows/image.yml` builds `linux/amd64` and `linux/arm64` when you push
 a `v*` tag, and signs in to the registry with the workflow's own `GITHUB_TOKEN`, so
 no personal token is involved. The image is published under the **version**, not
-the git tag, so pushing `v0.1.2` produces the image `:0.1.2`:
+the git tag, so pushing `v0.1.3` produces the image `:0.1.3`:
 
 ```bash
-docker pull ghcr.io/124c41pl/muezzin:0.1.2
+docker pull ghcr.io/124c41pl/muezzin:0.1.3
 ```
 
-and in the compose file replace `build: .` / `image: muezzin:0.1.2` with:
+and in the compose file replace `build: .` / `image: muezzin:0.1.3` with:
 
 ```yaml
-    image: ghcr.io/124c41pl/muezzin:0.1.2
+    image: ghcr.io/124c41pl/muezzin:0.1.3
 ```
 
 `latest` is published too, and the workflow refuses to build if the tag and the

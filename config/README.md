@@ -4,7 +4,7 @@ your speakers and your schedule stay on your machine.
 
 To start one off:
 
-    docker run --rm -v "%cd%\config:/app/config" muezzin:0.1.2 init -c /app/config/muezzin.yaml
+    docker run --rm -v "%cd%\config:/app/config" muezzin:0.1.3 init -c /app/config/muezzin.yaml
 
 On Linux or macOS, replace `%cd%` with `$PWD`. Then point it at your house. The page
 does all three of those jobs: a **Where** section where numbers can be checked against
