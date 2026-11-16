@@ -50,8 +50,10 @@ imagery anywhere, and no Qur'anic text used as decoration. Prayer names appear i
 Arabic beside the English labels — الفجر، الشروق، الظهر، العصر، المغرب، العشاء،
 نصف الليل، الشفع — and the Hijri date sits in the header and on every day row.
 
-Every font, icon, script and the lattice itself are in the one file the daemon already
-serves: nothing the page needs in order to look like a page is fetched from anywhere.
+Every font, icon, script and the lattice itself are in the one document the daemon
+already serves — its source is `page.py`, one string handed over unchanged, so there
+is no build step and nothing else to install: nothing the page needs in order to look
+like a page is fetched from anywhere.
 That is a requirement rather than a taste. The page has to work the night the WAN link
 is down, and it has to work on a network with no internet at all; and a control panel on
 your LAN should not hand a visitor's browser off to a third-party CDN on its way to

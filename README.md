@@ -468,7 +468,8 @@ Layout: `calc.py` (astronomy and the method table), `places.py` (the city table
 what is found on the LAN), `localplay.py` (the one platform-specific seam: which
 player this machine has, and how it gets asked for sound), `media.py` (the HTTP
 server speakers fetch from), `box.py` (the player agent), `web.py` (the LAN page and
-its JSON API),
+its JSON API), `page.py` (what that page looks like: the HTML, CSS and script the
+daemon hands over, one string, no build step and nothing fetched from outside),
 `yamledit.py` (writing one line of the profile without disturbing the rest of it),
 `cli.py` (the commands you type).
 

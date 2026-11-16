@@ -16,9 +16,9 @@ import pytest
 
 from muezzin import geocode
 from muezzin.cli import STARTER
-from muezzin.config import load_profile
+from muezzin.config import AUDIO_SUFFIXES, load_profile
 from muezzin.scheduler import PRAYER_KEYS, Runner
-from muezzin.web import WebPanel, _fmt, _lead_shown
+from muezzin.web import AUDIO_SUFFIXES as WEB_AUDIO_SUFFIXES, WebPanel, _fmt, _lead_shown
 
 from test_scheduler import BASE, profile_for, write
 
@@ -1401,6 +1401,28 @@ def test_a_read_only_panel_cannot_press_any_of_the_new_buttons(tmp_path):
     finally:
         web.stop()
         runner.shutdown()
+
+
+def test_the_page_offers_exactly_the_recordings_the_daemon_accepts(panel):
+    """One answer to "what counts as a recording", which three places need it.
+
+    That list of suffixes decides which files in the folder are the library, which
+    names an event is allowed to carry and which upload the daemon will take. The
+    page needs it too, as the `accept` list of its file picker, and the web module
+    used to carry its own copy of it - which is how the two could come to disagree,
+    a file you can see in the library turning into one the page refuses to add, or
+    the other way round, with nothing in between to notice. So the copy is gone and
+    this is what keeps it gone; and because the page's copy is HTML text rather than
+    the set itself, it is compared by what it lists rather than by identity.
+    """
+    web, _, _ = panel
+    assert WEB_AUDIO_SUFFIXES is AUDIO_SUFFIXES, "the web module grew its own copy again"
+    _, html = call(web.port, "/", raw=True)
+    accept = re.search(r'<input type="file" id="file" accept="([^"]*)"', html).group(1)
+    offered = {part.strip() for part in accept.split(",") if part.startswith(".")}
+    assert offered == set(AUDIO_SUFFIXES), (
+        f"the file picker and the daemon disagree about "
+        f"{sorted(offered ^ set(AUDIO_SUFFIXES))}")
 
 
 # ---- who the page answers to, and in what order it says no ------------------

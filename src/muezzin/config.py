@@ -180,7 +180,7 @@ class Profile:
         if not self.media_dir.is_dir():
             return []
         return sorted(p.name for p in self.media_dir.iterdir()
-                      if p.suffix.lower() in AUDIO_SUFFIXES)
+                      if p.is_file() and p.suffix.lower() in AUDIO_SUFFIXES)
 
     def random_picks(self, count: int) -> list[str]:
         """`count` recordings from the library, chosen now, never the excluded ones.
