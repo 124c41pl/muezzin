@@ -13,7 +13,9 @@ import base64
 import json
 import logging
 import socket
+import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Optional
@@ -68,6 +70,19 @@ class Backend(abc.ABC):
     def play(self, media: list[Path], volume: Optional[float] = None) -> None:
         ...
 
+    def stop(self) -> bool:
+        """End whatever this output is playing right now, and say whether anything was.
+
+        Playback blocks: the thread inside play() sits in a speaker or a player until
+        the recording ends, so an ask to go quiet has to reach the thing making the
+        sound instead. A backend that drives something it holds - a Cast speaker, a
+        machine's own player, a box on the LAN - answers that; the default here says
+        there is nothing of ours to reach, which is the honest answer for an output that
+        hands a recording over and lets go of it. An output that had already finished
+        gives the same answer rather than an error.
+        """
+        return False
+
     def close(self) -> None:
         pass
 
@@ -107,8 +122,24 @@ class PcSpeakersBackend(Backend):
                 continue
             try:
                 localplay.play_file(path)
+            except localplay.Stopped:
+                # Not a failure: this machine was told to go quiet, and the answer
+                # travels up as the same word the page used to ask for it.
+                raise
             except localplay.LocalPlaybackError as exc:
                 raise BackendError(f"{self.cfg.name}: {exc}") from exc
+
+    def stop(self):
+        """End this machine's player. What makes the sound here is a process, or an
+        MCI device on Windows, and either of them can be ended - see localplay.
+
+        This stops every local playback this process is doing, which is what a
+        household means by "stop the sound in this room": a daemon with two
+        pc_speakers outputs is one machine, and the ask was not made of one of them
+        alone. It does not touch the level of the machine, which stays that
+        machine's own business.
+        """
+        return localplay.stop_all() > 0
 
 
 class FileBackend(Backend):
@@ -150,6 +181,42 @@ class CastBackend(Backend):
     # lands on the time and one that lands after it.
     lead_seconds = 8.0
     poll_seconds = 1.0      # how often to ask; a test may shrink it
+
+    def __init__(self, cfg, media_server=None):
+        super().__init__(cfg, media_server)
+        # The speaker we are playing through right now, if any, and whether an ask to
+        # stop has arrived. A playback is one blocking conversation with the receiver,
+        # so this is the only way to reach a Nest that is half-way through a
+        # recitation: the thread inside play() cannot be interrupted, and it is waiting
+        # for the same file to end.
+        self._live = []
+        self._asked = False
+        self._live_lock = threading.Lock()
+
+    def stop(self):
+        """Tell the speaker to stop, if we are the one playing through it.
+
+        Nothing here waits: the poll loop in play() sees the change of state and comes
+        back on its own, and the ask is one message on a connection already open. An
+        output that was not playing anything answers no, which is the reply to the
+        question rather than a complaint about it.
+        """
+        with self._live_lock:
+            live = list(self._live)
+            if live:
+                self._asked = True
+        if not live:
+            return False
+        for mc in live:
+            try:
+                mc.stop()
+            except Exception as exc:
+                # pychromecast's own family of errors, and the socket under them. A
+                # speaker that walked out of the conversation in the middle of a test is
+                # reported here and again by the poll loop; it is not a traceback for
+                # the page that pressed the button.
+                log.warning("%s: the ask to stop did not go through: %s", self.cfg.name, exc)
+        return True
 
     def _effective_volume(self, volume: Optional[float]) -> float:
         """The level to ask this speaker for: the event's override, else the
@@ -197,6 +264,14 @@ class CastBackend(Backend):
                                    f"within {int(self.READY_SECONDS)} seconds, so nothing was "
                                    "sent to it")
             mc = cast.media_controller
+            # Held for the length of the playback, because that is the only way an ask
+            # to stop can reach this speaker: the thread in front of these lines is
+            # blocked until the recording ends, and a person who pressed Stop is asking
+            # a different thread. Cleared in the finally below, which is also where a
+            # connection that failed part way is let go of.
+            with self._live_lock:
+                self._asked = False
+                self._live = [mc]
             for path in media:
                 if not path.exists():
                     log.warning("missing media %s", path)
@@ -229,18 +304,31 @@ class CastBackend(Backend):
                         state = getattr(mc.status, "player_state", None) if mc.status else None
                         if state == "PLAYING":
                             started = True
-                        elif started or time.time() >= may_give_up:
+                        elif started or time.time() >= may_give_up or self._asked:
+                            # `self._asked` is the one that ends early: somebody
+                            # pressed Stop, and this loop is what was waiting for the
+                            # file to finish on its own. The speaker has already been
+                            # told; here we simply stop watching and come back.
                             break
                 except pychromecast.error.PyChromecastError as exc:
                     raise BackendError(
                         f"{self.cfg.name}: {dev['name']!r} would not play {path.name}: {exc}") from exc
                 self._check_finished(dev["name"], path, mc.status, started)
+                if self._asked:
+                    # The next recording in the list does not get handed over after an
+                    # ask to stop: the house asked for the sound to end, not for this
+                    # one to end and the next one to begin.
+                    break
         finally:
+            with self._live_lock:
+                self._live = []
             if cast is not None:
                 try:
                     cast.quit_app()
                 finally:
                     cast.disconnect()
+        if self._asked:
+            raise localplay.Stopped(f"{self.cfg.name}: {dev['name']!r} was stopped when asked")
 
     def _await_status(self, cast, seconds=None):
         """True as soon as the receiver has told us anything about itself.
@@ -274,7 +362,14 @@ class CastBackend(Backend):
                 f"{self.cfg.name}: {name!r} could not finish {path.name}; the speaker reported an "
                 f"error (check that {self.cfg.name}'s media URL is reachable from the speaker)")
         if reason and reason != "FINISHED":
-            log.warning("%s: %r stopped %s early (%s)", self.cfg.name, name, path.name, reason)
+            if self._asked:
+                # The house asked for this one to stop, so a speaker that came back
+                # interrupted is the answer that was wanted rather than something to
+                # worry about. It is still a line in the log, because a call to prayer
+                # that is missing its end is a thing worth seeing in the morning.
+                log.info("%s: %r stopped %s because you asked it to", self.cfg.name, name, path.name)
+            else:
+                log.warning("%s: %r stopped %s early (%s)", self.cfg.name, name, path.name, reason)
         elif not started:
             # The file was handed over and the speaker never once said PLAYING. It
             # either played something short entirely between two polls or it sat
@@ -323,9 +418,49 @@ class LanBoxBackend(Backend):
             body = json.dumps(payload).encode()
             req = urllib.request.Request(base + "/play", data=body,
                                          headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            # The box plays inline: its answer to /play comes back when the recording
+            # has finished, so this socket stays open for the whole of a recitation.
+            # That is why the timeout is the same safety net every other backend uses
+            # rather than a short one: a three-minute adhan over a wire is not a
+            # failure, and a ten-second ask would report it as one while the box went on
+            # playing. A box that has truly hung is let go of at the same moment a
+            # stalled Cast stream is.
+            with urllib.request.urlopen(req, timeout=self.max_play_seconds) as resp:
                 if resp.status >= 300:
                     raise BackendError(f"{self.cfg.name}: {base}/play returned {resp.status}")
+                said = (resp.read() or b"").strip()
+            if said == b"stopped":
+                # The box ended this one because somebody else asked it to. That is not
+                # a failure, and the page that pressed Stop needs the same word back.
+                raise localplay.Stopped(f"{self.cfg.name}: the box stopped {path.name} when asked")
+
+    def stop(self):
+        """Tell the box to put down whatever it is playing.
+
+        The player is running over there, so the ask has to travel: the daemon's own
+        thread is sitting in the POST that does not come back until a recording ends.
+        A box from before this route existed answers 404, which is that box honestly
+        saying it cannot be interrupted from here.
+        """
+        host = self.cfg.host or self.cfg.target
+        if not host:
+            return False
+        port = self.cfg.port or 8090
+        base = f"http://{host}:{port}"
+        try:
+            req = urllib.request.Request(base + "/stop", data=b"{}", method="POST",
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                said = json.loads(resp.read() or b"{}")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                log.warning("%s: the box at %s has no /stop route, so this version of it "
+                            "cannot be interrupted from the daemon", self.cfg.name, base)
+                return False
+            raise BackendError(f"{self.cfg.name}: {base}/stop returned {exc.code}") from exc
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            raise BackendError(f"{self.cfg.name}: the box at {base} would not answer: {exc}") from exc
+        return int(said.get("stopped") or 0) > 0
 
 
 # ---------------------------------------------------------------------------

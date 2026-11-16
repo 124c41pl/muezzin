@@ -17,6 +17,7 @@ Wire protocol (plain HTTP + JSON, no auth, LAN only):
     GET  /status          -> {"name":..., "player":..., "last":...}
     POST /play            -> {"urls": ["http://.../fajr.mp3"],
                               "files": {"name.mp3": "<base64>"}}
+    POST /stop            -> {"stopped": n}
 
 `urls` is preferred: the box pulls the file from the daemon's media server, so a
 long recording never passes through the daemon. It is also the one part of this
@@ -89,6 +90,7 @@ class Box:
         if len(urls) + len(files) > MAX_ITEMS_PER_PLAY:
             raise ValueError(f"too many files in one request ({MAX_ITEMS_PER_PLAY} at most)")
         paths: list[Path] = []
+        played: list[str] = []
         with tempfile.TemporaryDirectory(prefix="muezzin-") as tmp:
             for url in urls:
                 paths.append(self._download(url, Path(tmp)))
@@ -102,11 +104,29 @@ class Box:
                 p = Path(tmp) / safe
                 p.write_bytes(base64.b64decode(blob))
                 paths.append(p)
-            for p in paths:
-                log.info("playing %s on this box (player: %s)", p.name, self.player_name)
-                with self._lock:
-                    localplay.play_file(p, player=self.player_cmd or None)
-        self.last = {"played": [p.name for p in paths]}
+            try:
+                for p in paths:
+                    log.info("playing %s on this box (player: %s)", p.name, self.player_name)
+                    with self._lock:
+                        localplay.play_file(p, player=self.player_cmd or None)
+                    played.append(p.name)
+            finally:
+                # Whatever this box got through, whether the files ran out or somebody
+                # asked it to go quiet part-way: /status is where a household looks to
+                # see what the speaker in the hall actually did this morning.
+                self.last = {"played": played}
+
+    def stop(self) -> int:
+        """Put down whatever this box is playing right now, and say how many players
+        were told.
+
+        The recording is being played here, by a process or a device handle this box
+        is holding, so this is the only place the ask can be answered: the daemon that
+        started it is sitting in a `/play` request that does not come back until the
+        file ends. Nothing to stop answers 0, which is the reply to the question rather
+        than a complaint about it.
+        """
+        return localplay.stop_all()
 
     def _download(self, url: str, directory: Path) -> Path:
         """Fetch one recording, from an allowed host only, size-capped."""
@@ -178,6 +198,21 @@ class Box:
                     self._send(404, "not found")
 
             def do_POST(self):
+                if self.path == "/stop":
+                    # Read the body away rather than answering over it: this handler
+                    # speaks HTTP/1.0, so the socket closes after the answer, and a
+                    # half-read request is a request the next connection inherits.
+                    try:
+                        length = int(self.headers.get("Content-Length") or 0)
+                    except ValueError:
+                        length = 0
+                    if length > 0:
+                        try:
+                            self.rfile.read(min(length, MAX_BODY_BYTES))
+                        except OSError:
+                            pass
+                    return self._send(200, json.dumps({"stopped": box.stop()}),
+                                      "application/json")
                 if self.path != "/play":
                     return self._send(404, "not found")
                 if self.headers.get("Transfer-Encoding"):
@@ -201,6 +236,13 @@ class Box:
                     # change that.
                     box.play(list(data.get("urls") or []), dict(data.get("files") or {}))
                     self._send(200, "ok")
+                except localplay.Stopped as exc:
+                    # Somebody pressed stop, either here or on the daemon that asked.
+                    # That is the end of a playback, not a box that broke, and the word
+                    # has to travel back: the daemon reads it and reports the same word
+                    # on its page instead of a red line about a failed speaker.
+                    log.info("playback stopped: %s", exc)
+                    self._send(200, "stopped")
                 except Exception:              # never let a bad request kill the box
                     # The detail goes to the log, not the client: an exception's
                     # text names temp paths and this box's own files, and nobody

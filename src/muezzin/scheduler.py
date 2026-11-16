@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Iterable, Optional
 
-from . import calc
+from . import calc, localplay
 from .config import EventConfig, Profile
 
 # How late an event may be and still be worth playing. A speaker that is asleep
@@ -318,6 +318,27 @@ class Runner:
         with self._play_lock:
             backend.play(paths, out.volume if volume is None else volume)
 
+    def stop_playing(self, name: str) -> list[str]:
+        """End whatever one output is playing right now, and say which ones were told.
+
+        The thread doing the playing cannot be interrupted: it is blocking inside a
+        speaker, or inside a player, until the recording ends. So the ask goes to the
+        output itself, because that is the thing making the sound - a speaker on the
+        network is told to stop, a machine's own player is ended, a box across the house
+        is told to go quiet.
+
+        Nothing else moves. An output that had already finished is not an error, it is an
+        empty answer to the question that was asked; a disabled output has no player to
+        ask, which is worth putting into words; and the schedule keeps every event it was
+        going to play, so the next adhan still arrives at its time.
+        """
+        backend = self.backends.get(name)
+        if backend is None:
+            if self.profile.output(name) is None:
+                raise ValueError(f"no output named {name!r} in this profile")
+            raise ValueError(f"{name!r} is disabled, so nothing of ours is playing on it")
+        return [name] if backend.stop() else []
+
     def fire(self, sev: ScheduledEvent) -> None:
         ev = sev.event
         media = [self.profile.media_path(p) for p in ev.media]
@@ -361,6 +382,12 @@ class Runner:
         try:
             log.info("%s -> %s (%s)", ev.name, out.name, out.kind)
             backend.play(media, ev.volume)
+        except localplay.Stopped as exc:
+            # Somebody asked for this one to stop, which is not a speaker that broke.
+            # The line is still worth having in the morning's log, because a call to
+            # prayer that is missing its end is a thing a household should be able to
+            # see happened.
+            log.info("%s on %s stopped: %s", ev.name, out.name, exc)
         except Exception as exc:                    # one dead speaker must not stop the rest
             log.error("%s on %s failed: %s", ev.name, out.name, exc)
 

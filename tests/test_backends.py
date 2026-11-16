@@ -211,6 +211,11 @@ def test_the_box_is_told_what_to_play_and_nothing_about_its_volume(tmp_path, mon
     class Resp:
         status = 200
 
+        def read(self):
+            # What the real box answers when a recording has finished: the daemon reads
+            # the word so a playback someone stopped comes back as "stopped".
+            return b"ok"
+
         def __enter__(self):
             return self
 
@@ -229,6 +234,67 @@ def test_the_box_is_told_what_to_play_and_nothing_about_its_volume(tmp_path, mon
     b.play([clip], 0.9)
     assert len(bodies) == 1, bodies
     assert b"files" in bodies[0] and b"volume" not in bodies[0], bodies[0]
+
+
+def answering(body: bytes):
+    """A stand-in for `urlopen` that hands back one HTTP answer with `body` in it."""
+    class Resp:
+        status = 200
+
+        def read(self):
+            return body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+    return lambda req, timeout=None: Resp()
+
+
+def test_a_box_that_was_stopped_says_so_and_the_daemon_says_it_back(tmp_path, monkeypatch):
+    """The box knows the difference between a recording that ended and a recording
+    somebody put down, and that difference has to travel back: a test called out of
+    the hall speaker is not a speaker that failed, and the line a person reads the
+    next morning should not read like one."""
+    from muezzin import localplay
+
+    monkeypatch.setattr(backends.urllib.request, "urlopen",
+                        answering(b"stopped"))
+    clip = tmp_path / "fajr.mp3"
+    clip.write_bytes(b"ID3")
+    b = LanBoxBackend(OutputConfig(name="attic-pi", kind="lan_box", host="192.0.2.156"))
+    with pytest.raises(localplay.Stopped):
+        b.play([clip], 0.9)
+
+
+def test_the_ask_to_stop_reaches_the_box_over_the_wire(tmp_path, monkeypatch):
+    """The daemon's own thread is the one sitting in the long `/play`, so going quiet
+    means a second request to the box and not a word to itself."""
+    asks = []
+    answer = answering(b'{"stopped": 2}')
+
+    def capture(req, timeout=None):
+        asks.append((req.full_url, req.get_method()))
+        return answer(req, timeout)
+
+    monkeypatch.setattr(backends.urllib.request, "urlopen", capture)
+    b = LanBoxBackend(OutputConfig(name="attic-pi", kind="lan_box", host="192.0.2.156"))
+    assert b.stop() is True
+    assert asks == [("http://192.0.2.156:8090/stop", "POST")]
+
+
+def test_a_box_from_before_the_stop_route_says_it_cannot_be_interrupted(tmp_path, monkeypatch):
+    """A 404 from an older box is that box honestly saying it has no such route. The
+    daemon reports that as "no" and says where to look, rather than raising."""
+    import urllib.error
+
+    def refuse(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 404, "not found", {}, None)
+
+    monkeypatch.setattr(backends.urllib.request, "urlopen", refuse)
+    b = LanBoxBackend(OutputConfig(name="attic-pi", kind="lan_box", host="192.0.2.156"))
+    assert b.stop() is False
 
 
 def device(name, group=False, **extra):

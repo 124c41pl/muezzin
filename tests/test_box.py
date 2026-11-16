@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import json
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -16,6 +18,11 @@ from muezzin.box import Box
 # a stub "player": copy the file it was handed to a marker path so the test can
 # see exactly what reached the speaker
 STUB = "import shutil,sys; shutil.copyfile(sys.argv[2], sys.argv[1])"
+
+# a "player" that says when it started and then keeps the sound going, so a test can
+# ask for it to stop while it is genuinely still playing
+SLEEPER = ("import sys,pathlib,time; pathlib.Path(sys.argv[1]).write_text('started'); "
+           "time.sleep(30)")
 
 
 @pytest.fixture
@@ -29,8 +36,8 @@ def box(tmp_path):
     b.shutdown()
 
 
-def post(box, payload):
-    req = urllib.request.Request(f"http://127.0.0.1:{box.port}/play",
+def post(box, payload, path="/play"):
+    req = urllib.request.Request(f"http://127.0.0.1:{box.port}{path}",
                                  data=json.dumps(payload).encode(),
                                  headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=20) as resp:
@@ -83,6 +90,43 @@ def test_path_in_a_filename_is_not_followed_outside_the_temp_dir(box):
     status, body = post(b, {"files": {evil: base64.b64encode(b"x").decode()}})
     assert status == 200
     assert b.last["played"] == ["TMPCLEANME"]      # basename only, inside the temp dir
+
+
+def test_a_box_that_is_playing_can_be_told_to_go_quiet(box):
+    """A test that came out of the wrong speaker has to be callable back. The daemon
+    cannot interrupt its own `/play` request - it is sitting inside it until the
+    recording ends - so the ask travels over a second connection, and the box ends the
+    player it is holding and answers with the same word the page shows, so a stopped
+    test is never reported to a person as a speaker that broke."""
+    b, marker = box
+    b.player_cmd = [sys.executable, "-c", SLEEPER, str(marker)]
+    answers = []
+    playing = threading.Thread(target=lambda: answers.append(
+        post(b, {"files": {"fajr.mp3": base64.b64encode(b"ID3\x03fake-audio").decode()}})),
+        daemon=True)
+    playing.start()
+    deadline = time.time() + 20
+    while not marker.exists() and time.time() < deadline:
+        time.sleep(0.1)
+    assert marker.read_text() == "started", "the stub player never got as far as playing"
+    status, body = post(b, {}, "/stop")
+    assert status == 200, body
+    assert json.loads(body) == {"stopped": 1}
+    playing.join(30)
+    assert not playing.is_alive(), "the box was still playing after being told to stop"
+    assert answers and answers[0][1] == b"stopped", \
+        "a playback that was stopped is neither an ok nor an error"
+    assert b.last["played"] == [], "a recording nobody heard to the end is not counted as played"
+    assert get(b, "/ping") == (200, b"Pong"), "the box survived being interrupted"
+
+
+def test_a_box_with_nothing_playing_answers_that_it_stopped_nothing(box):
+    """Stop is a question as much as it is an order. A page whose stop button turns
+    red when the sound had already ended on its own teaches people not to press it."""
+    b, _ = box
+    status, body = post(b, {}, "/stop")
+    assert status == 200, body
+    assert json.loads(body) == {"stopped": 0}
 
 
 def test_bad_json_is_a_400_not_a_dead_box(box):

@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, urlparse
 
 import yaml
 
-from . import __version__, calc, geocode, hijri, net, yamledit
+from . import __version__, calc, fileserve, geocode, hijri, localplay, net, yamledit
 from .backends import lead_for, scan_speakers
 from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, load_profile,
                      uses_starter_location, valid_host)
@@ -417,9 +417,39 @@ class WebPanel:
             # toggle or an edit must not queue behind it. Runner serialises the
             # speakers itself, so a test cannot talk over an adhan that is due.
             self.runner.play_now(name, media)
+        except localplay.Stopped:
+            # The page pressed Stop, so this is the answer it wants rather than a red
+            # line about a speaker that broke: the test ended, and it ended because it
+            # was asked to.
+            return {"played": media, "output": name, "stopped": True}
         finally:
             self.testing.release()
         return {"played": media, "output": name}
+
+    def stop_test(self, payload: dict) -> dict:
+        """End what one output is playing right now.
+
+        A test is a recording about to come out of a real speaker in a house, so the
+        page has to be able to call it back: someone pressed test on the wrong
+        recitation, or a speaker is holding a stream that will not end. The ask goes to
+        the output rather than to the thread that started the test, because that thread
+        is sitting inside the speaker until the file finishes - which is exactly why a
+        test could otherwise not be interrupted at all.
+
+        Nothing here touches the schedule or the profile: the next adhan is still coming
+        at its time, and a speaker that was asked to be quiet stays enabled. An output
+        that was not playing anything answers with an empty list, which is the reply to
+        the question that was asked.
+        """
+        name = str(payload.get("output") or "").strip()
+        if not name:
+            raise _Status(400, "which output should stop? one of the names in the Outputs table")
+        try:
+            stopped = self.runner.stop_playing(name)
+        except ValueError as exc:
+            raise _Status(404, str(exc)) from None
+        log.info("stop asked for %s: %s", name, ", ".join(stopped) or "nothing was playing")
+        return {"stopped": stopped, "output": name}
 
     def save_config(self, text: str) -> dict:
         """Validate before writing: load_profile rejects a typo that would
@@ -1093,24 +1123,25 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         whole recitation runs to a hundred megabytes, and a browser previewing one
         should not need this process to hold all of it at once.
 
-        No Range header is honoured, so the preview starts at the beginning and a
-        browser that wants to jump to the middle of a clip does not get to. That is
-        the same limit the media server already has for speakers, and it is written
-        down in the docs rather than left to be discovered.
+        The byte range the client asked for is honoured. That is what lets the
+        page's slider jump to the middle of a clip: a browser only offers to seek in
+        something it can ask part of, and a server that always answers from byte
+        zero leaves the sound where it started with no word about why. An
+        unsatisfiable ask is a 416 with the file's real length in it, because a
+        client with the wrong idea about a file should be told, not quietly given
+        the whole thing.
         """
-        size = path.stat().st_size
+        try:
+            span = fileserve.plan(self.headers.get("Range"), path.stat().st_size)
+        except fileserve.BadRange as exc:
+            # Answered here rather than raised as an error, because the answer needs
+            # the file's length in it and the generic error path has no idea what
+            # length to name.
+            self._sent = True
+            fileserve.refuse(self, path.stat().st_size, str(exc))
+            return
         self._sent = True
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(size))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        with open(path, "rb") as handle:
-            while True:
-                chunk = handle.read(64 * 1024)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
+        fileserve.deliver(self, path, content_type, span, cache="no-store")
 
     def _fail(self, status: int, message: str) -> None:
         """Report an error - but never a second time on one connection, which is
@@ -1357,6 +1388,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             elif self.path == "/api/test":
                 self._json(self.panel.test_play(str(body["output"]),
                                                 [str(m) for m in (body.get("media") or [])]))
+            elif self.path == "/api/test/stop":
+                self._json(self.panel.stop_test(body))
             elif self.path == "/api/config":
                 self._json(self.panel.save_config(str(body.get("text", ""))))
             elif self.path == "/api/reload":
@@ -1481,6 +1514,10 @@ PAGE = """<!doctype html>
   border-radius:6px; padding:5px 8px; font:inherit; max-width:100% }
  select:disabled, input:disabled { opacity:.45 }
  .row select { min-width:190px }
+ /* The only slider on this page is a place inside a recording. It is gold like
+    everything else you can press. Nothing here moves a level: the volume of a
+    computer belongs to the person sitting in front of it. */
+ input[type=range] { accent-color:var(--gold); width:200px; max-width:55vw; padding:0 }
  .members { color:var(--dim); font-size:13px }
  .known { color:var(--turq) }
  .unknown { color:var(--mourn) }
@@ -1509,7 +1546,27 @@ PAGE = """<!doctype html>
     exactly like a square that had failed to arrive. */
  .mapbox { --sq:min(256px,29vw); position:relative; display:inline-grid; cursor:crosshair;
   margin-top:8px; border:1px solid var(--line) }
- .rename { width:16ch; padding:3px 6px }
+ /* The Outputs table is the one with a rename box you can type into and five columns
+    of words in it. Left to itself the table grows to whatever its words need, the
+    card around it does not grow with it, and the last column - the test button - ends
+    up outside the edge of the card. A fixed layout with stated widths keeps every
+    column under the header it belongs to. The widths follow what each column holds,
+    and the last one is the width of a button: that is the column that must never be
+    the one that falls off the edge. A word too long for its column is broken where it
+    has to be, not at the first opportunity. */
+ #outputstbl { table-layout:fixed }
+ #outputstbl th:nth-child(1) { width:26% }
+ #outputstbl th:nth-child(2) { width:22% }
+ #outputstbl th:nth-child(3) { width:25% }
+ #outputstbl th:nth-child(4) { width:9% }
+ #outputstbl th:nth-child(5) { width:18%; text-align:right }
+ #outputstbl td { overflow-wrap:break-word }
+ #outputstbl td:last-child { white-space:nowrap; text-align:right }
+ /* The name is the box you type in, so it is as wide as the column it sits in rather
+    than a fixed number of characters: a speaker called whole-house lost its last
+    letters in a 12ch box, and a name you cannot read in full is a name you cannot
+    rename without guessing. */
+ .rename { width:100%; min-width:0; box-sizing:border-box; padding:3px 6px }
  .mapbox img { width:100%; height:100%; display:block }
  .spot { position:absolute; width:9px; height:9px; margin:-4px 0 0 -4px; border-radius:50%;
   background:var(--gold); box-shadow:0 0 0 3px rgba(11,20,17,.8) }
@@ -1532,7 +1589,7 @@ PAGE = """<!doctype html>
 <main>
  <section><h2>Timetable</h2><div id="days"></div></section>
  <section><h2>Next events</h2><table><thead><tr><th>when</th><th>event</th><th>speakers</th><th>media</th></tr></thead><tbody id="upcoming"></tbody></table></section>
- <section><h2>Outputs</h2><table><thead><tr><th>name</th><th>kind</th><th>target</th><th>on</th><th></th></tr></thead><tbody id="outputs"></tbody></table>
+ <section class="wide"><h2>Outputs</h2><table id="outputstbl"><thead><tr><th>name</th><th>kind</th><th>target</th><th>on</th><th></th></tr></thead><tbody id="outputs"></tbody></table>
   <div class="fine">A speaker muezzin has to find on the network gets the recording a few seconds before the time it belongs to, so the first note is already in the air when that time arrives; the number in brackets is that head start. A profile sets it per speaker with lead_seconds, and 0 means exactly on the minute. Everywhere else on this page the times shown are the computed ones.</div>
   <div class="row"><select id="media"></select><span class="tag" id="mediaurl"></span></div>
  </section>
@@ -1581,11 +1638,13 @@ PAGE = """<!doctype html>
   <table><thead><tr><th>time</th><th></th><th>every day</th><th>Friday</th></tr></thead><tbody id="sound"></tbody></table>
   <div class="row"><button id="applysound">apply these clips</button><span class="tag" id="soundsay">nothing changed</span></div>
   <div class="row"><input type="file" id="file" accept=".mp3,.m4a,.wav,.ogg,.oga,.flac,.aac,.opus,audio/*"><button id="upload">add this recording</button><span class="tag" id="uploadsay"></span></div>
-  <div class="row"><select id="preview"></select><button id="hear">hear it here</button><span class="tag" id="hearsay">nothing playing</span></div>
+  <div class="row"><select id="preview"></select><button id="hear">play it here</button><button id="hush" disabled>pause</button><button id="halt" disabled>stop</button><input id="seek" type="range" min="0" max="0" step="1" value="0" disabled aria-label="how far into it you are"><span class="tag" id="hearsay">nothing playing</span></div>
   <div class="fine">That plays in this browser, out of the computer this page is open on, at the level
    that computer is already set to. There is no volume control here on purpose: the level on a computer
-   belongs to whoever is sitting at it. Nothing on the network hears it - the <b>test</b> button in the
-   Outputs table is the one that sends a recording to a speaker, and the two are easy to tell apart when
+   belongs to whoever is sitting at it. The bar is not a level either - it is a place inside the
+   recording, and dragging it asks the daemon for the bytes from there, which is how you hear the middle
+   of a recitation without sitting through the start of it. Nothing on the network hears it - the
+   <b>test</b> button in the Outputs table is the one that sends a recording to a speaker, and the two are easy to tell apart when
    you are choosing what a prayer should sound like.</div>
   <div class="fine">A clip is picked from what is already in <code>media_dir</code>; the button above
    puts a new recording there. Nothing overwrites a recording that is playing, so two recordings of
@@ -1666,9 +1725,26 @@ function render(){
     `<tr class="${nx&&nx.at===k&&nx.date===d.date?'now':''}"><td class="pl">${esc(NAME[k]||k)}</td>`
     +`<td class="ar">${esc(AR[k]||'')}</td><td class="t">${esc(v)}</td></tr>`).join('')}</table></div>`).join('');
  $('#upcoming').innerHTML=st.upcoming.map(e=>`<tr><td>${esc(e.when)}</td><td>${esc(e.name)}<span class="tag">${esc(e.at)}${e.offset_min?` ${e.offset_min>0?'+':''}${e.offset_min}m`:''}</span></td><td>${esc(e.targets.join(', '))||'(none enabled)'}</td><td>${esc(e.media.join(', '))}</td></tr>`).join('')||'<tr><td colspan=4>nothing scheduled in the next two days</td></tr>';
- $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td><button data-test="${esc(o.name)}">test</button></td></tr>`).join('');
+ // A test is a recording that is about to come out of a real speaker, so the row that
+ // sent one grows a stop button while it is going: 40 seconds into a recitation
+ // nobody wanted should not have to be listened to to the end, and a speaker left
+ // holding a stream that will not end should be let go. The daemon takes one test at a
+ // time, which is why one name is enough to remember.
+ let testing=null;
+ $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td><button data-test="${esc(o.name)}">test</button><button data-stop="${esc(o.name)}"${o.name===testing?'':' hidden'}>stop</button></td></tr>`).join('');
  document.querySelectorAll('.switch').forEach(b=>b.onclick=()=>act(()=>api('/api/output',{name:b.dataset.name,enabled:b.getAttribute('aria-checked')!=='true'})));
- document.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>act(()=>api('/api/test',{output:b.dataset.test,media:$('#media').value?[$('#media').value]:[]})));
+ document.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>{ const out=b.dataset.test;
+  act(async()=>{ testing=out; b.nextElementSibling.hidden=false;
+   // Whatever becomes of the request, this row has nothing to stop afterwards: a test
+   // that failed part way is as finished as one that played all the way through.
+   try{ return await api('/api/test',{output:out,media:$('#media').value?[$('#media').value]:[]}); }
+   finally{ testing=null; } }); });
+ // The ask goes to the output rather than to whatever is busy playing, because the
+ // output is the thing making the sound. Nothing playing is not an error: it is the
+ // honest answer to what was asked, and the schedule is untouched either way.
+ document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>{ const out=b.dataset.stop; let sp=null;
+  act(async()=>{ sp=await api('/api/test/stop',{output:out}); },
+   ()=>say(sp.stopped.length?('asked '+out+' to stop'):out+' was not playing anything of ours','ok')); });
  // The name is the box you type in, not a label: events point at speakers by that word,
  // so a rename rewrites the events too and says which ones moved. Names are flattened to
  // one safe word, and the reply is the word that actually got written.
@@ -1691,7 +1767,7 @@ function render(){
  renderMethod();renderSound();renderFound();renderWhere();
  syncYaml();
  $('#save').disabled=$('#reload').disabled=st.read_only;
- document.querySelectorAll('.switch,[data-test],.rename').forEach(b=>b.disabled=st.read_only);
+ document.querySelectorAll('.switch,[data-test],[data-stop],.rename').forEach(b=>b.disabled=st.read_only);
  // Checking numbers and finding a place stay live on a read-only panel: looking
  // changes nothing. Only the buttons that write a line into the profile go dark.
  ['#preset','#asr','#applymethod','#hijminus','#hijplus','#applysound','#upload','#file','#writewhere'].forEach(s=>{ $(s).disabled=st.read_only; });
@@ -2042,23 +2118,70 @@ $('#scan').onclick=()=>act(async()=>{ SC=await api('/api/speakers?refresh=1'); }
 $('#upload').onclick=()=>act(async()=>{ up=await uploadFile(); },
  ()=>{ $('#uploadsay').textContent=up.uploaded+' in media_dir';
        say('added '+up.uploaded+(up.url?' · a speaker can reach it at '+up.url:''),'ok'); });
-let playing=null;
-// The preview is the browser asking for the bytes and making the sound itself:
-// no speaker on the network is involved, and no level is set anywhere, because
-// the level on this computer belongs to whoever is using it. Pressing the button
-// again stops it, which is cheaper and more honest than a timer.
-async function hearIt(name){
- if(playing){ playing.pause(); playing=null; $('#hearsay').textContent='stopped'; return; }
+let player=null, track='', drag=null;
+// The preview is the browser asking for the bytes and making the sound itself: no
+// speaker on the network is involved, and no level is set anywhere, because the
+// level on this computer belongs to whoever is using it. Play, pause and stop are
+// three buttons because they are three different asks: pause keeps the place you
+// got to, stop goes back to the front and lets go of the file, and the bar between
+// them is a position you can drag. Dragging it asks the daemon for the bytes from
+// there, which is how the middle of a two-minute recitation costs a browser the
+// middle of it rather than the whole of it.
+function mmss(n){ const m=Math.floor(n/60), s=Math.floor(n%60);
+  return m+':'+(s<10?'0':'')+s; }
+// What the controls may do, said in one place, so the page never offers an answer
+// to a question that has no meaning yet: you cannot pause what is not going, and
+// nobody should be offered a bar that has nothing on it.
+function pstate(){ const going=!!player&&!player.paused;
+ $('#hear').disabled=going; $('#hush').disabled=!going;
+ $('#halt').disabled=!player; $('#seek').disabled=!player; }
+function pread(){
+ if(!player) return;
+ if(drag===null) $('#seek').value=Math.floor(player.currentTime||0);
+ const left=Number.isFinite(player.duration)?' of '+mmss(player.duration):'';
+ $('#hearsay').textContent=(player.paused?'paused at ':'playing ')+mmss(player.currentTime||0)
+  +left+' · out of this computer, not a speaker'; }
+function over(name){
+ player=null; track=''; drag=null; $('#seek').value=0; pstate();
+ $('#hearsay').textContent='finished '+name; }
+function unusable(name){
+ player=null; track=''; drag=null; $('#seek').value=0; pstate();
+ $('#hearsay').textContent=name+' is not a sound this browser can play'; }
+function hearIt(name){
+ if(player&&!player.paused) return;        // one thing at a time out of this box
  if(!name){ say('pick a recording to listen to first','err'); return; }
- const a=new Audio('/api/clip?name='+encodeURIComponent(name));
- a.onended=()=>{ if(playing===a){ playing=null; $('#hearsay').textContent='finished'; } };
- a.onerror=()=>{ if(playing===a){ playing=null; $('#hearsay').textContent=name+' is not a sound this browser can play'; } };
- playing=a;
- try{ await a.play(); }
- catch(err){ if(playing===a){ playing=null; $('#hearsay').textContent='this browser would not start it: '+err.message; } return; }
- $('#hearsay').textContent='playing '+name+' out of this computer, not a speaker';
+ if(!player){
+  const a=new Audio('/api/clip?name='+encodeURIComponent(name));
+  a.onended=()=>{ if(player===a) over(name); };
+  a.onerror=()=>{ if(player===a) unusable(name); };
+  a.onloadedmetadata=()=>{ $('#seek').max=Math.floor(a.duration||0); pread(); };
+  a.ontimeupdate=pread;
+  player=a; track=name; $('#seek').max=0; $('#seek').value=0;
+ }
+ try{ player.play().then(pread,e=>{ $('#hearsay').textContent='this browser would not start it: '+e.message; }); }
+ catch(err){ $('#hearsay').textContent='this browser would not start it: '+err.message; return; }
+ pstate(); pread();
 }
+function stopIt(){
+ if(!player) return;
+ const name=track;
+ player.pause();
+ // Going back to the front is the ask. A browser still reading the header of a file
+ // has no front to go back to, and dropping the element a few lines below is the
+ // same answer by other means, so a failure here is not worth a message.
+ try{ player.currentTime=0; }catch(err){ }
+ player=null; track=''; drag=null; $('#seek').value=0; pstate();
+ $('#hearsay').textContent='stopped '+name; }
 $('#hear').onclick=()=>hearIt($('#preview').value);
+$('#hush').onclick=()=>{ if(player&&!player.paused){ player.pause(); pstate(); pread(); } };
+$('#halt').onclick=stopIt;
+// While a finger is still on the bar the sound does not move: a browser asked for a
+// new piece of the recording at every step of a drag would spend the drag fetching.
+$('#seek').oninput=()=>{ drag=Number($('#seek').value)||0;
+ const left=player&&Number.isFinite(player.duration)?' of '+mmss(player.duration):'';
+ $('#hearsay').textContent='to '+mmss(drag)+left+' · '+track; };
+$('#seek').onchange=()=>{ if(player&&drag!==null){ try{ player.currentTime=drag; }catch(err){ } }
+ drag=null; pread(); };
 load().catch(e=>{$('#top').textContent=e.message;});
 setInterval(()=>load().catch(()=>{}),60000);
 </script></body></html>

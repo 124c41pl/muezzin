@@ -455,6 +455,17 @@ def get_bytes(port, path, headers=None):
         return exc.code, exc.read(), exc.headers.get("Content-Type")
 
 
+def get_all(port, path, headers=None):
+    """The same fetch, keeping every response header. An answer to a ranged request is
+    mostly headers: the bytes are only useful once you know which bytes they are."""
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status, resp.read(), resp.headers
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(), exc.headers
+
+
 def test_the_state_names_the_methods_the_page_can_offer(panel):
     web, _, _ = panel
     _, st = call(web.port, "/api/state")
@@ -756,18 +767,159 @@ def test_another_page_cannot_ask_for_someone_elses_recordings(panel):
         assert status == wanted, f"Sec-Fetch-Site: {site} answered {status}"
 
 
-def test_the_page_offers_a_preview_and_no_way_to_move_a_level(panel):
+def test_the_preview_answers_for_a_piece_of_a_recording(panel):
+    """The seek bar on the page works by the browser asking for the bytes from further
+    into the file. That is only possible if the daemon answers for that piece, and a
+    browser decides whether to offer a bar at all by looking at the headers of an
+    ordinary request, so both halves are checked here rather than trusted to a
+    browser two rooms away."""
+    web, _, tmp_path = panel
+    whole = (tmp_path / "media" / "fajr.mp3").read_bytes()
+    # The fake recording in the fixture is eight bytes, so the piece asked for is a
+    # piece of eight bytes: what is being checked is the arithmetic of the answer, not
+    # the size of a real recitation.
+    status, _, headers = get_all(web.port, "/api/clip?name=fajr.mp3")
+    assert status == 200 and headers.get("Accept-Ranges") == "bytes"
+    status, body, headers = get_all(web.port, "/api/clip?name=fajr.mp3", {"Range": "bytes=3-5"})
+    assert status == 206, body
+    assert body == whole[3:6]
+    assert headers.get("Content-Range") == f"bytes 3-5/{len(whole)}"
+    assert headers.get("Content-Length") == "3"
+    # A seek to somewhere past the end of the file is what a player does when it has a
+    # wrong idea about how long a clip is: answered with the file's real length, not with
+    # the whole file, because a client holding a wrong idea has to be corrected.
+    status, body, headers = get_all(web.port, "/api/clip?name=fajr.mp3",
+                                    {"Range": f"bytes={len(whole) + 7}-"})
+    assert status == 416 and headers.get("Content-Range", "").endswith(f"/{len(whole)}")
+    assert b"ID3" not in body
+
+
+def test_an_ask_a_browser_invented_cannot_reach_outside_media_dir(panel):
+    """A header is a header, so it obeys the same containment as the name in the
+    query. Nothing about the byte range changes which file this is allowed to be."""
+    web, _, tmp_path = panel
+    (tmp_path / "private.txt").write_text("the household address\n", encoding="utf-8")
+    status, body, _ = get_all(web.port, "/api/clip?name=../private.txt", {"Range": "bytes=0-9"})
+    assert status in (400, 404) and b"household" not in body
+
+
+def test_the_speaker_test_can_be_stopped_from_the_page(panel):
+    """A test is a recording about to come out of a real speaker, so the page has to be
+    able to call it back. The ask goes to the output rather than to the thread doing
+    the playing, because that thread is blocked inside the speaker until the file
+    ends - which is the whole reason a test that chose the wrong recitation would
+    otherwise have to be listened to to the end."""
+    from muezzin import scheduler as sched
+
+    web, _, _ = panel
+    started = threading.Event()
+    released = threading.Event()
+    stopped = []
+
+    def fake(paths, volume=None):
+        started.set()
+        released.wait(10)
+
+    def fake_stop():
+        stopped.append(True)
+        released.set()
+        return True
+
+    out = next(o for o in web.runner.profile.outputs if o.kind == "file")
+    web.runner.backends[out.name].play = fake
+    web.runner.backends[out.name].stop = fake_stop
+    thread = threading.Thread(target=lambda: call(web.port, "/api/test",
+                                                  {"output": out.name, "media": ["fajr.mp3"]}))
+    thread.start()
+    assert started.wait(5), "the test never reached the output"
+    status, reply = call(web.port, "/api/test/stop", {"output": out.name})
+    assert status == 200 and reply["stopped"] == [out.name]
+    assert stopped, "the output was never asked to stop"
+    thread.join(10)
+    assert not thread.is_alive(), "the test kept playing after being stopped"
+    # And the ask that named nobody is refused rather than guessed at: a page with two
+    # speakers must say which one is to go quiet.
+    status, reply = call(web.port, "/api/test/stop", {})
+    assert status == 400 and "which output" in reply["error"]
+    status, reply = call(web.port, "/api/test/stop", {"output": "not-there"})
+    assert status == 404
+
+
+def test_stopping_nothing_is_an_answer_and_not_an_error(panel):
+    """The page offers a Stop button whenever it has sent a test, and the test may have
+    finished by the time the button is pressed. That is the reply to the question that
+    was asked, so it comes back as an empty list rather than a complaint."""
+    from muezzin import scheduler as sched
+
+    web, _, _ = panel
+    out = next(o for o in web.runner.profile.outputs if o.kind == "file")
+    assert web.stop_test({"output": out.name})["stopped"] == []
+
+
+def test_the_scheduled_call_is_not_cut_short_by_stopping_a_test(panel):
+    """Stopping is about what is going on right now. It does not pause the schedule,
+    disable a speaker or drop what is queued: the next adhan is still coming at its
+    time, and a person who stops a test should not have to wonder whether they just
+    silenced the morning."""
+    web, _, _ = panel
+    out = next(o for o in web.runner.profile.outputs if o.kind == "file")
+    status, reply = call(web.port, "/api/test/stop", {"output": out.name})
+    assert status == 200
+    assert web.runner.profile.output(out.name).enabled is True, \
+        "stopping a test quietly disabled the output"
+    _, st = call(web.port, "/api/state")
+    row = next(o for o in st["outputs"] if o["name"] == out.name)
+    assert row["enabled"], "stopping a test left the output disabled"
+    assert st["upcoming"], "stopping a test emptied the rest of the day"
+
+
+def test_the_page_has_a_transport_and_no_way_to_move_a_level(panel):
     """Two things the page has to get right that no Python assertion about audio can
     catch: the preview is labelled as this computer making the sound, and nowhere on
     the page is there a level to move. The level on a computer belongs to the person
-    sitting in front of it."""
+    sitting in front of it. The one slider that does exist is a place inside a
+    recording, which is filled in from the file's length - not a 0 to 1 thing."""
     web, _, _ = panel
     _, html = call(web.port, "/", raw=True)
-    assert "/api/clip" in html and "hear it here" in html
+    assert "/api/clip" in html and "play it here" in html
     script = html.split("<script>", 1)[1]
     assert "new Audio(" in script, "the preview has to be the browser making the sound"
     assert ".volume" not in script, "the page must not set the level of a computer"
-    assert 'type="range"' not in html, "no volume slider anywhere on this page"
+    sliders = re.findall(r'<input[^>]*type="range"[^>]*>', html)
+    assert len(sliders) == 1, "the page has exactly one slider, and it is the seek bar"
+    assert 'id="seek"' in sliders[0] and 'max="0"' in sliders[0], \
+        "a position bar starts with nothing on it and takes its length from the file"
+    assert 'aria-label="how far into it you are"' in sliders[0]
+    assert 'id="hush"' in html and "pause" in html, "the preview needs a pause"
+    assert 'id="halt"' in html and "stop" in html, "and a stop that is not the same button"
+
+
+def test_the_test_button_of_an_output_sits_inside_the_card(panel):
+    """The Outputs card is the one that had a button fall off it. A table left to itself
+    grows to whatever its words need and the card around it does not grow with it, so the
+    column at the end - the button that sends a recording to a real speaker - ended up
+    past the edge of the card, which is the one thing in that card a person goes looking
+    for. Five columns of words also do not fit in a third of the page: the card takes the
+    width of the page instead, and the widths are told rather than guessed from the words,
+    so each column sits under its own header and the button stays inside the border. A
+    name box measured in characters is part of the same complaint - a speaker called
+    whole-house lost its last letters, and a name you cannot read is a name you cannot
+    rename. Nothing here runs a browser, so the page is read as text; the shape it
+    actually makes was checked with a screenshot of this page in a narrow window."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert '<section class="wide"><h2>Outputs</h2>' in html, \
+        "a table this wide belongs to the whole page, not to one column of it"
+    assert "#outputstbl { table-layout:fixed }" in html, \
+        "the columns have to be told their widths, not left to size themselves by their words"
+    assert "#outputstbl td:last-child { white-space:nowrap" in html, \
+        "the button is the column that must never be the one that grows or wraps"
+    widths = re.findall(r"#outputstbl th:nth-child\(\d\) \{ width:(\d+)%", html)
+    assert len(widths) == 5, "every column is given a width"
+    assert sum(int(w) for w in widths) == 100, f"the columns add up to {sum(int(w) for w in widths)}%"
+    assert "word-break:break-word" not in html, \
+        "that breaks a long word at the first chance it gets, mid-word, in every cell"
+    assert "width:12ch" not in html, "a name box measured in characters hides the end of a name"
 
 
 def test_the_speaker_scan_is_cached_and_says_when_it_ran(panel, monkeypatch):

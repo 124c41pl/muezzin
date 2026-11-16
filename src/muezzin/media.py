@@ -15,7 +15,7 @@ import time
 from http import HTTPStatus
 from pathlib import Path
 
-from . import net
+from . import fileserve, net
 from .backends import local_ip
 
 log = logging.getLogger("muezzin.media")
@@ -29,17 +29,45 @@ class _QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         log.debug("media http: " + fmt, *args)
 
-    def send_head(self):
-        """Answer for one file at a time; never hand out a listing.
+    def _one_file(self):
+        """The recording this request is for, or None if it answered for itself.
 
-        A Nest is only ever told the name of one recording, so a directory list
-        would tell a stranger on the wifi which mornings this house keeps - and
-        what else the person who set this up happened to put in the folder.
+        Never a listing. A Nest is only ever told the name of one recording, so a
+        directory list would tell a stranger on the wifi which mornings this house
+        keeps - and what else the person who set this up happened to put in the
+        folder.
         """
-        if os.path.isdir(self.translate_path(self.path)):
+        path = self.translate_path(self.path)
+        if os.path.isdir(path):
             self.send_error(HTTPStatus.NOT_FOUND, "the media folder is not browsable")
             return None
-        return super().send_head()
+        if not os.path.isfile(path):
+            self.send_error(HTTPStatus.NOT_FOUND, "no such recording in the media folder")
+            return None
+        return path
+
+    def do_GET(self):
+        path = self._one_file()
+        if path is None:
+            return
+        try:
+            span = fileserve.plan(self.headers.get("Range"), os.path.getsize(path))
+        except fileserve.BadRange as exc:
+            # The same answer the panel gives: the length the device got wrong, in a
+            # header, so a speaker with a stale idea of a recording stops asking for
+            # bytes that were never in it.
+            fileserve.refuse(self, os.path.getsize(path), str(exc))
+            return
+        try:
+            fileserve.deliver(self, Path(path), self.guess_type(path), span)
+        except (BrokenPipeError, ConnectionResetError):
+            # The speaker stopped listening. A device that was only checking a file
+            # is there often reads the headers and hangs up, which is not an error.
+            self.close_connection = True
+
+    # The same answer without the bytes: a device asking how long a recording is, or
+    # whether it is still there, gets the headers and nothing else.
+    do_HEAD = do_GET
 
 
 class MediaServer:
