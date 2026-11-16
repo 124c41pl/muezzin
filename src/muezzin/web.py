@@ -296,7 +296,11 @@ class WebPanel:
                                 "at": ev.at,
                                 "offset_min": ev.offset_min,
                                 "targets": [o.name for o in p.targets_for(ev)],
-                                "media": ev.media})
+                                "media": ev.media,
+                                # How many it will draw from the media folder when it
+                                # fires. The drawing has no answer yet, so the page says
+                                # that instead of leaving the cell blank.
+                                "random": ev.random})
         text, mtime = "", None
         if p.path and Path(p.path).exists():
             # a config saved as cp1252 by a notepad must not take the whole page
@@ -364,7 +368,8 @@ class WebPanel:
             "days": days,
             "upcoming": next_events,
             "events": [{"name": e.name, "at": e.at, "offset_min": e.offset_min,
-                        "media": e.media, "targets": e.targets, "volume": e.volume,
+                        "media": e.media, "random": e.random,
+                        "targets": e.targets, "volume": e.volume,
                         "days": e.days} for e in p.events],
             # the picker's choices, from the same table `muezzin methods` prints. The
             # flag is the engine's own: which midnight a method solves for. The page
@@ -1724,7 +1729,7 @@ function render(){
   +`</div><table>${ORDER.filter(k=>k in d.times).map(k=>[k,d.times[k]]).map(([k,v])=>
     `<tr class="${nx&&nx.at===k&&nx.date===d.date?'now':''}"><td class="pl">${esc(NAME[k]||k)}</td>`
     +`<td class="ar">${esc(AR[k]||'')}</td><td class="t">${esc(v)}</td></tr>`).join('')}</table></div>`).join('');
- $('#upcoming').innerHTML=st.upcoming.map(e=>`<tr><td>${esc(e.when)}</td><td>${esc(e.name)}<span class="tag">${esc(e.at)}${e.offset_min?` ${e.offset_min>0?'+':''}${e.offset_min}m`:''}</span></td><td>${esc(e.targets.join(', '))||'(none enabled)'}</td><td>${esc(e.media.join(', '))}</td></tr>`).join('')||'<tr><td colspan=4>nothing scheduled in the next two days</td></tr>';
+ $('#upcoming').innerHTML=st.upcoming.map(e=>`<tr><td>${esc(e.when)}</td><td>${esc(e.name)}<span class="tag">${esc(e.at)}${e.offset_min?` ${e.offset_min>0?'+':''}${e.offset_min}m`:''}</span></td><td>${esc(e.targets.join(', '))||'(none enabled)'}</td><td>${esc(e.media.concat(e.random?[e.random+' at random']:[]).join(' + '))}</td></tr>`).join('')||'<tr><td colspan=4>nothing scheduled in the next two days</td></tr>';
  // A test is a recording that is about to come out of a real speaker, so the row that
  // sent one grows a stop button while it is going: 40 seconds into a recitation
  // nobody wanted should not have to be listened to to the end, and a speaker left

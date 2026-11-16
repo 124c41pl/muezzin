@@ -111,6 +111,25 @@ def test_state_shows_times_events_and_outputs(panel):
     assert "fajr.mp3" in st["media_files"]
 
 
+def test_an_event_that_draws_from_the_library_says_so_on_the_page(panel):
+    """A row whose recordings are chosen as it fires has nothing to name in advance, and
+    a blank cell would read as a broken event rather than as a plan. The state carries
+    the ask, and the row writes it out in words next to whatever the event does promise."""
+    web, _, _ = panel
+    _, st = call(web.port, "/api/state")
+    edited = st["config_text"].replace("    media: [fajr.mp3]",
+                                       "    media: [fajr.mp3]\n    random: 2")
+    assert edited != st["config_text"], "the fixture stopped looking like the example"
+    status, body = call(web.port, "/api/config", {"text": edited})
+    assert status == 200, body
+    _, st = call(web.port, "/api/state")
+    row = [e for e in st["upcoming"] if e["name"] == "fajr-adhan"][0]
+    assert row["random"] == 2 and row["media"] == ["fajr.mp3"], row
+    assert [e["random"] for e in st["events"] if e["name"] == "fajr-adhan"] == [2]
+    _, html = call(web.port, "/", raw=True)
+    assert "e.random?[e.random+' at random']:[]" in html, "the row says nothing about the draw"
+
+
 def test_state_carries_the_hijri_date_and_the_credit(panel):
     """The Hijri date and the credit line are display, so they ride along with
     the rest of the state instead of needing an endpoint of their own."""

@@ -83,8 +83,86 @@ def test_event_targeting_a_missing_output_is_rejected(tmp_path):
 
 
 def test_event_without_media_is_rejected(tmp_path):
-    with pytest.raises(ValueError, match="no `media:`"):
+    with pytest.raises(ValueError, match="has nothing to play"):
         load_profile(write(tmp_path, BASE.replace("media: [fajr.mp3]", "media: []")))
+
+
+def test_an_event_can_ask_the_library_instead_of_naming_files(tmp_path):
+    """`random: 2` is the other way to say what an event plays: two recordings drawn from
+    the media folder at the moment it fires, so the same event sounds different next week.
+    An event that does that has no `media:` list to check against the folder."""
+    p = load_profile(write(tmp_path, BASE.replace("media: [fajr.mp3]", "random: 2")))
+    assert p.events[0].random == 2
+    assert p.events[0].media == []
+
+
+def test_a_random_ask_outside_the_sane_range_is_rejected(tmp_path):
+    """An event that draws 900 recordings has no ending, and nobody means that; the number
+    is refused where it is typed rather than at the time it would have started."""
+    for ask in ("-1", "900"):
+        with pytest.raises(ValueError, match="between 0 and 50"):
+            load_profile(write(tmp_path, BASE.replace("media: [fajr.mp3]", f"random: {ask}")))
+
+
+def test_a_random_ask_that_is_not_a_number_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="not a number of recordings"):
+        load_profile(write(tmp_path, BASE.replace("media: [fajr.mp3]", "random: some")))
+
+
+def test_the_profile_can_hold_recordings_out_of_the_drawing(tmp_path):
+    """`library: exclude:` is how something stays out of random picks without deleting it:
+    "do not play this by accident" and "I do not have this any more" are different
+    intentions, and only one of them is served by deleting a file."""
+    p = load_profile(write(tmp_path, BASE + "library:\n  exclude: [english-translation.mp3]\n"))
+    assert p.library_exclude == ["english-translation.mp3"]
+
+
+def test_a_library_block_that_says_something_else_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="holds an exclude: list"):
+        load_profile(write(tmp_path, BASE + "library: english-translation.mp3\n"))
+    with pytest.raises(ValueError, match="has no excluede"):
+        load_profile(write(tmp_path, BASE + "library:\n  excluede: [a.mp3]\n"))
+
+
+def test_a_library_exclusion_that_is_a_path_is_rejected(tmp_path):
+    """The media folder is one level deep, so a name with a slash or a `..` in it is a
+    mistake about which file is meant. A rule that quietly never matches anything is worse
+    than an error, because the recording keeps playing."""
+    for held in ("old/sub.mp3", "../outside.mp3"):
+        with pytest.raises(ValueError, match="name of a file in media_dir"):
+            load_profile(write(tmp_path, BASE + f"library:\n  exclude: [{held}]\n"))
+
+
+def test_the_library_is_the_folder_the_profile_points_at(tmp_path):
+    """There is no database of recordings and no copy of anything: the folder is the list,
+    so what you put in it is what there is to hear, and a file that is not audio is not
+    offered anywhere."""
+    (tmp_path / "media").mkdir()
+    for name in ("dua.mp3", "adhan.wav", "notes.txt", "notes.pdf"):
+        (tmp_path / "media" / name).write_bytes(b"x")
+    p = load_profile(write(tmp_path, BASE))
+    assert p.library() == ["adhan.wav", "dua.mp3"]
+
+
+def test_the_drawing_reaches_every_recording_but_the_ones_held_back(tmp_path):
+    """Two properties, both of which the page will be judged on: a drawing hands back the
+    number it was asked for without repeats, and it never hands back a name the profile
+    excluded. It is a drawing, so it is also checked for actually varying."""
+    (tmp_path / "media").mkdir()
+    for name in ("a.mp3", "b.mp3", "c.mp3", "d.mp3", "khutbah.mp3"):
+        (tmp_path / "media" / name).write_bytes(b"x")
+    p = load_profile(write(tmp_path, BASE + "library:\n  exclude: [khutbah.mp3]\n"))
+    seen = set()
+    for _ in range(20):
+        picked = p.random_picks(2)
+        assert len(picked) == 2, "asked for two, got two"
+        assert len(set(picked)) == 2, "one drawing does not hand back the same file twice"
+        assert "khutbah.mp3" not in picked
+        seen.add(frozenset(picked))
+    assert len(seen) > 1, "the same two recordings every single time is not a drawing"
+    assert set(p.random_picks(99)) == {"a.mp3", "b.mp3", "c.mp3", "d.mp3"}, \
+        "asking for more than the folder has plays what the folder has"
+    assert p.random_picks(0) == []
 
 
 def test_hijri_offset_and_attribution_default_to_nothing(tmp_path):

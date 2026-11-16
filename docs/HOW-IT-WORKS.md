@@ -169,8 +169,12 @@ details are load-bearing:
   file from the list it was given, not name one further up the tree, and a
   household's recordings are not a public share. `curl`, which says nothing, stays
   allowed; this is a browser guard, not access control.
-* no `Range` header is honoured, so a preview always starts at the beginning. That
-  is the media server's existing limit written down twice, not a new one.
+* a `Range` request is answered inside one recording and nowhere else: the bytes asked
+  for come back with the file's length in the header, and a request for bytes that were
+  never in the file is refused with that length rather than left open. Seeking is what
+  lets the page show a bar you can drag, and a speaker that asks for a piece of a
+  recording gets the same answer as the browser does. What is still not on offer is a
+  listing, or a file further up the tree.
 
 ## Looking at the speakers, including inside a group
 
@@ -462,6 +466,9 @@ outputs:
 
 out_dir: out                       # the one folder kind: file may write into
 
+library:
+  exclude: [english-translation.mp3]   # never drawn by an event's random: N
+
 events:
   - name: fajr-adhan
     at: fajr                       # fajr|sunrise|dhuhr|asr|maghrib|isha|midnight|true_night|shurf|sunset
@@ -474,11 +481,43 @@ events:
     media: [dua.mp3]
     targets: [study]
     days: [sat, sun]               # weekday filter
+  - name: maghrib-dua
+    at: maghrib
+    random: 2                      # two recordings drawn from media_dir as it fires
+  - name: friday-quran
+    at: asr
+    media: [surah-al-kahf.mp3]     # named files first, then drawn ones: both at once is fine
+    random: 1
+    days: [fri]
 ```
 
 No `targets:` means every enabled output. A config typo (`at: fagr`, a target
-that does not exist, an event with no media) is rejected when the file is loaded,
+that does not exist, an event with nothing to play) is rejected when the file is loaded,
 because the worst time to discover it is 5 am.
+
+### The media folder is the library, and an event can draw from it
+
+There is no database of recordings and no copy of anything: what is in `media_dir` is
+what there is to hear. `random: N` is the event asking that folder for N recordings,
+drawn at the moment it fires rather than decided when the profile is read, so the same
+Friday asr sounds different next week and adding a file to the folder is the only way
+to tell the draw what it contains. Named `media:` files still play first when an event
+has both, which is how you keep the same opening and change what follows it.
+
+The drawing is made once per event and every speaker of that event is sent the same
+files. Made per speaker, a house with two of them would hear two different sequences
+starting at the same minute, which is not one call to prayer. What went out is written
+in the log by name, because a household that cannot say what it heard has no way to
+like it or change it.
+
+`library: exclude:` keeps a recording out of the drawing without deleting it, which is
+the answer to "do not play this by accident" - a different intention from "I do not
+have this any more", and only one of those is served by deleting a file. The name is a
+file in `media_dir`, not a path: the folder is one level deep, so a name with a slash
+in it is a mistake about which file was meant, and a rule that quietly never matched
+anything would leave the recording playing. An event that names nothing and draws
+nothing is refused at load time, and an event that asks for more than the folder can
+offer plays what the folder has and says how short it was, rather than going quiet.
 
 `kind: file` is the output you point at no speaker. It copies the recording that
 would have played into a folder, which is how you watch what the schedule actually

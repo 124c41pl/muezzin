@@ -688,8 +688,15 @@ def cmd_next(profile: Profile, days: int) -> int:
         # seconds early should read as a decision and not as a surprise.
         early = lead_of(targets)
         note = f" (played {early:g} s early)" if early > 0 else ""
+        # An event that draws from the library cannot name the recordings it will play,
+        # because the drawing does not happen until the event fires. Say what it does
+        # instead of printing an empty bracket, which reads as a mistake rather than as
+        # a plan - and name the ones it does promise, since those are fixed.
+        picks = " ".join(sev.event.media)
+        if sev.event.random:
+            picks = (picks + " + " if picks else "") + f"{sev.event.random} at random"
         print(f"{sev.when:%a %d %b %H:%M}  {sev.event.name:<16} -> {names}{note}"
-              f"   [{' '.join(sev.event.media)}]")
+              f"   [{picks}]")
     return 0
 
 

@@ -7,6 +7,7 @@ without waiting for an upstream release.
 """
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,6 +59,16 @@ def uses_starter_location(loc: Location) -> bool:
 
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
+# What counts as a recording. The media server, the upload box, the picker on the page and
+# the random picks all ask the same question - is this file something a speaker can be sent?
+# - so they ask it once, here, and a suffix that is not in this set is not offered anywhere.
+AUDIO_SUFFIXES = {".mp3", ".m4a", ".wav", ".ogg", ".oga", ".flac", ".aac", ".opus"}
+
+# How many recordings one event may ask the library for. An event that "randomly" plays
+# two hundred files has no ending, and nobody means that; the number is a typo until it is
+# about this big, so it is refused where it is typed rather than at 5 am.
+MAX_RANDOM_PICKS = 50
+
 # How far an event may be shifted from the prayer time it hangs off. Bigger than
 # a day and it is no longer "the adhan, twenty minutes later", it is a typo that
 # lands on some other weekday.
@@ -101,6 +112,7 @@ class EventConfig:
     at: str                                  # fajr|sunrise|dhuhr|asr|maghrib|isha|midnight|true_night|shurf
     offset_min: int = 0                      # play this many minutes after `at`
     media: list[str] = field(default_factory=list)
+    random: int = 0                          # ask the library for this many, picked as it fires
     targets: list[str] = field(default_factory=list)   # output names; empty = all enabled
     volume: Optional[float] = None           # overrides the output's own volume
     days: Optional[list[str]] = None         # e.g. ["fri"] to restrict
@@ -135,6 +147,7 @@ class Profile:
     media_dir: Path
     outputs: list[OutputConfig]
     events: list[EventConfig]
+    library_exclude: list[str] = field(default_factory=list)
     http_port: int = 8010            # serves media to Cast devices
     hijri_offset: int = 0            # shift the displayed Hijri date to match your moon
     attribution: Optional[str] = None  # whose name the page shows in its credit line
@@ -153,6 +166,40 @@ class Profile:
         read out of nowhere at 5 am.
         """
         return _inside(self.media_dir, rel)
+
+    def library(self) -> list[str]:
+        """Every recording in media_dir, named the way an event would name it.
+
+        The folder is the library: there is no database and no copy of anything, so what
+        is in it is what you have, and a page that lists it, an upload box that adds to
+        it and an event that picks from it are all looking at the same folder. Only the
+        top level of it, which is the folder the media server serves and the upload box
+        writes into: a recording in a subfolder is one the page cannot offer and a
+        speaker cannot be sent to hear.
+        """
+        if not self.media_dir.is_dir():
+            return []
+        return sorted(p.name for p in self.media_dir.iterdir()
+                      if p.suffix.lower() in AUDIO_SUFFIXES)
+
+    def random_picks(self, count: int) -> list[str]:
+        """`count` recordings from the library, chosen now, never the excluded ones.
+
+        Chosen when the event fires rather than when the profile is read, which is the
+        point: the same Friday dhuhr sounds different next week, and putting a recording
+        in the folder is all it takes to offer it. `library: exclude:` is how something
+        stays out of the drawing without being deleted, because "do not play this by
+        accident" and "I do not have this any more" are different intentions, and only
+        one of them is served by deleting a file.
+
+        Nothing remembers what was picked. A pool that kept its own history would stop
+        surprising you, and surprising you is the only thing it is for.
+        """
+        if count <= 0:
+            return []
+        held_out = set(self.library_exclude)
+        pool = [n for n in self.library() if n not in held_out]
+        return random.sample(pool, min(count, len(pool)))
 
     def enabled_outputs(self) -> list[OutputConfig]:
         return [o for o in self.outputs if o.enabled]
@@ -233,6 +280,30 @@ def load_profile(path) -> Profile:
     # profile names one root and the outputs live inside it.
     out_dir = (path.parent / str(raw.get("out_dir", "out"))).resolve()
 
+    # The library is the media folder itself, so the only thing the profile gets to say
+    # about it is what to keep out of random picks. A name with a path in it is a mistake
+    # about which file is meant, so it is an error rather than a rule that quietly never
+    # matches anything.
+    libraw = raw.get("library") or {}
+    if not isinstance(libraw, dict):
+        raise ValueError(f"{path}: library: holds an exclude: list of names, not {libraw!r}")
+    stray = sorted(k for k in libraw if k != "exclude")
+    if stray:
+        raise ValueError(f"{path}: library: has no {', '.join(stray)}; the one thing it holds is "
+                         "exclude:, the names that random picks never reach")
+    exclude = []
+    for held in libraw.get("exclude") or []:
+        name = str(held)
+        if not name or Path(name).name != name:
+            raise ValueError(f"{path}: library exclude: takes the name of a file in media_dir, "
+                             f"not {name!r}; the folder is one level deep and there is nothing to "
+                             "look inside")
+        try:
+            _inside(media_dir, name)
+        except ValueError as exc:
+            raise ValueError(f"{path}: library exclude: {exc}") from None
+        exclude.append(name)
+
     outputs = []
     from .backends import KINDS          # lazy: keeps config importable without the players
     for item in raw.get("outputs") or []:
@@ -286,6 +357,20 @@ def load_profile(path) -> Profile:
             raise ValueError(f"{path}: event {name!r} has offset_min {offset}; a shift has to stay "
                              f"within one day ({MAX_OFFSET_MIN} minutes), otherwise the event "
                              "lands on a different weekday and never fires")
+        # `random: 2` is the event asking the library for two recordings, drawn as it
+        # fires. A number outside this range is a typo, and a typo here is a morning that
+        # does not stop playing, so the ceiling is said out loud with the number that
+        # broke it.
+        try:
+            picks = int(item.get("random", 0))
+        except (TypeError, ValueError):
+            raise ValueError(f"{path}: event {name!r} has random {item.get('random')!r}, which is "
+                             "not a number of recordings to draw from the library") from None
+        if not 0 <= picks <= MAX_RANDOM_PICKS:
+            raise ValueError(f"{path}: event {name!r} has random: {picks}, which is not a number "
+                             f"between 0 and {MAX_RANDOM_PICKS}. This is how many to pick out, not "
+                             "how much to play; the library is what it is, so a big number here is "
+                             "a typo rather than a long afternoon.")
         days = None
         if item.get("days"):
             raw_days = item["days"]
@@ -303,6 +388,7 @@ def load_profile(path) -> Profile:
             at=str(item["at"]),
             offset_min=offset,
             media=[str(m) for m in (item.get("media") or [])],
+            random=picks,
             targets=[str(t) for t in (item.get("targets") or [])],
             volume=(float(item["volume"]) if item.get("volume") is not None else None),
             days=days,
@@ -321,8 +407,9 @@ def load_profile(path) -> Profile:
             raise ValueError(f"{path}: event {ev.name!r} targets output(s) that do not exist: "
                              f"{', '.join(unknown)}. Outputs you defined: "
                              f"{', '.join(sorted(known_outputs)) or 'none'}")
-        if not ev.media:
-            raise ValueError(f"{path}: event {ev.name!r} has no `media:` files to play")
+        if not ev.media and not ev.random:
+            raise ValueError(f"{path}: event {ev.name!r} has nothing to play: name files under "
+                             "media:, or ask the library for some with random: N")
         for m in ev.media:
             try:
                 _inside(media_dir, m)
@@ -362,6 +449,7 @@ def load_profile(path) -> Profile:
 
     return Profile(location=loc, params=params, asr_shadow=shadow, adjustments=adj,
                    media_dir=media_dir, outputs=outputs, events=events,
+                   library_exclude=exclude,
                    http_port=http_port, hijri_offset=offset,
                    attribution=(str(raw["attribution"]) if raw.get("attribution") else None),
                    map_tiles=tiles,

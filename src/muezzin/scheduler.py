@@ -339,9 +339,44 @@ class Runner:
             raise ValueError(f"{name!r} is disabled, so nothing of ours is playing on it")
         return [name] if backend.stop() else []
 
+    def _to_play(self, ev: EventConfig) -> list[Path]:
+        """What this event plays, in order: the files it names, then whatever the library draws.
+
+        The drawing happens here, once, and belongs to the event rather than to an output.
+        A house with three speakers should hear one sequence of recordings, not three
+        sequences that happen to start at the same minute.
+
+        A library that cannot cover the ask plays what it can and says so in the log. The
+        alternative is a morning that goes quiet because a number was too big, and the
+        one line in the log is where that would have to be looked for anyway.
+        """
+        names = list(ev.media)
+        if ev.random:
+            picked = self.profile.random_picks(ev.random)
+            if picked:
+                log.info("%s drew %d from the library: %s", ev.name, len(picked), ", ".join(picked))
+            if len(picked) < ev.random:
+                # Say what the folder actually was, in the two numbers that explain a
+                # short draw: how many recordings are in it, and how many names the
+                # profile keeps out of the drawing.
+                log.warning("%s wanted %d recordings at random and got %d: the media folder has "
+                            "%d recording(s) and the profile holds back %d of them by name",
+                            ev.name, ev.random, len(picked), len(self.profile.library()),
+                            len(self.profile.library_exclude))
+            names += picked
+        return [self.profile.media_path(p) for p in names]
+
     def fire(self, sev: ScheduledEvent) -> None:
         ev = sev.event
-        media = [self.profile.media_path(p) for p in ev.media]
+        media = self._to_play(ev)
+        if not media:
+            # Nothing to send: the event named no files and the library drew none.
+            # Say which of those it was, because "the schedule works and nothing
+            # happened" is the hardest kind of silence to read.
+            log.warning("%s has nothing to play: it names no files and the drawing found none "
+                        "in %s, where %d name(s) are held back by library exclude",
+                        ev.name, self.profile.media_dir, len(self.profile.library_exclude))
+            return
         targets = self.profile.targets_for(ev)
         if not targets:
             log.warning("%s: no enabled output matched %s", ev.name, ev.targets or "(all)")

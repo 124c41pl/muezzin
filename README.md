@@ -182,6 +182,15 @@ profile means a speaker muezzin casts to. The two files in `media/` are short te
 tones generated for this repo: `muezzin play-now media/test-chime.wav` makes a
 noise, so you find out now rather than at 5 am whether the wiring is right.
 
+That folder is the library: what is in it is what there is to hear, and there is no
+second list of anything to keep in step with it. An event can name its recordings, or
+ask that folder for some of them at the moment it fires — `random: 2` in the YAML, and
+the two that go out are two of whatever is in there that day. The draw is made once for
+the event, so a house with three speakers hears one sequence rather than three, and the
+log says which ones went out. `library: exclude:` keeps a recording out of the drawing
+without deleting it, which is the answer to the recitation you own but would not want
+heard by accident.
+
 ### Then run it
 
 ```bash
@@ -356,10 +365,12 @@ the device list, along with the player it picked for itself.
 * An upload is one request: 64 MB, no resume, no transcoding. The recording has to
   be something the speaker can decode by itself.
 * The media server that hands files to a Cast speaker is deliberately boring: it
-  serves what the profile names, lists no folders, and does not answer `Range`
-  requests, so a client that insists on seeking before it plays will be annoyed
-  rather than served. The browser preview in the page has the same limit: a clip
-  starts at the beginning.
+  serves the one recording a speaker was told the name of, lists no folders, and
+  answers a `Range` request only inside that one file. A device asking for bytes that
+  were never in the file is told its length rather than left asking, which is what a
+  speaker with a stale idea of a recording needs in order to stop. The preview in the
+  page is served the same way, which is why the bar beside it can be dragged: the
+  piece that was asked for is the piece that comes back.
 * One adhan at a time per box; overlapping events queue.
 * Network speakers are handed the recording a few seconds before the time, because
   finding a speaker and getting it to start takes seconds and can only be measured

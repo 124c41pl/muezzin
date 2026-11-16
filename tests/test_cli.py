@@ -190,6 +190,24 @@ def test_next_says_the_sound_starts_a_few_seconds_early(tmp_path, capsys):
     assert "early" not in line, line
 
 
+def test_next_says_which_rows_draw_from_the_library(tmp_path, capsys):
+    """A row that draws from the media folder cannot name its recordings, because the
+    drawing does not happen until the event fires. An empty bracket would read as a
+    broken event, so `next` says how many it will draw - and names the recordings an
+    event promises outright when it does both at once."""
+    path = tmp_path / "muezzin.yaml"
+    both = SPEAKERS.replace("    media: [fajr.mp3]", "    media: [fajr.mp3]\n    random: 3")
+    path.write_text(both, encoding="utf-8")
+    assert main(["next", "-c", str(path)]) == 0
+    line = [ln for ln in capsys.readouterr().out.splitlines() if "fajr-adhan" in ln][0]
+    assert "[fajr.mp3 + 3 at random]" in line, line
+    path.write_text(SPEAKERS.replace("    media: [fajr.mp3]", "    random: 2"),
+                    encoding="utf-8")
+    assert main(["next", "-c", str(path)]) == 0
+    line = [ln for ln in capsys.readouterr().out.splitlines() if "fajr-adhan" in ln][0]
+    assert "[2 at random]" in line, line
+
+
 def test_the_log_line_names_an_address_a_phone_can_reach():
     """The interface this process can see is the container's own, so the address the
     media server found inside a container is usually 127.0.0.1 - and the one line in

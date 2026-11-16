@@ -3,6 +3,7 @@ that fire at the right wall-clock instant, on the right day, in the right zone."
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import threading
 import time
 from pathlib import Path
@@ -125,6 +126,110 @@ def test_a_failing_speaker_does_not_stop_the_others(tmp_path):
     try:
         runner.fire(events_for_date(profile, TUESDAY)[0])
         assert (out / "fajr.mp3").exists(), "the working speaker still played"
+    finally:
+        runner.shutdown()
+
+
+def random_profile(tmp_path, ask: str = "2"):
+    """BASE plus an event that draws from the folder, with the two named recordings held
+    back by `library: exclude:`. That leaves three recordings the drawing can reach, so
+    whatever turns up in the out folder came out of the drawing and nowhere else."""
+    text = BASE.replace(
+        "media_dir: media",
+        "media_dir: media\nlibrary:\n  exclude: [fajr.mp3, dua.mp3]",
+    ) + f"  - name: maghrib-dua\n    at: maghrib\n    random: {ask}\n"
+    profile, out = profile_for(tmp_path, text)
+    for name in ("one.mp3", "two.mp3", "three.mp3"):
+        (tmp_path / "media" / name).write_bytes(b"ID3\x03fake")
+    return profile, out, next(e for e in events_for_date(profile, TUESDAY)
+                              if e.event.name == "maghrib-dua")
+
+
+def test_an_event_can_draw_what_it_plays_from_the_folder(tmp_path, caplog):
+    """`random: 2` is answered when the event fires, not when the profile is read, so the
+    recording that goes out is one of whatever is in the folder that day - and the log says
+    which, because a household that cannot say what it heard has no way to like it or
+    change it."""
+    from muezzin.scheduler import Runner
+
+    profile, out, sev = random_profile(tmp_path)
+    runner = Runner(profile)
+    try:
+        with caplog.at_level(logging.INFO):
+            runner.fire(sev)
+        played = sorted(p.name for p in out.glob("*.mp3"))
+        assert len(played) == 2, played
+        assert set(played) <= {"one.mp3", "two.mp3", "three.mp3"}, \
+            "fajr.mp3 and dua.mp3 are held back by library exclude:, so neither belongs here"
+        assert "drew 2 from the library" in caplog.text
+        assert all(name in caplog.text for name in played), "the log names what went out"
+    finally:
+        runner.shutdown()
+
+
+def test_the_drawing_belongs_to_the_event_rather_than_to_each_speaker(tmp_path):
+    """The pick is made once, for the event. Asked per speaker, a house with two of them
+    would hear two different sequences starting at the same minute, which is not one call
+    to prayer but two people arguing over the same loudspeaker."""
+    from muezzin.scheduler import Runner
+
+    text = BASE.replace(
+        '  - name: outbox\n    kind: file\n    host: "{out}"',
+        '  - name: outbox\n    kind: file\n    host: "{out}"\n'
+        '  - name: outbox-again\n    kind: file\n    host: "{out}/second"',
+    ).replace(
+        "media_dir: media",
+        "media_dir: media\nlibrary:\n  exclude: [fajr.mp3, dua.mp3]",
+    ) + "  - name: maghrib-dua\n    at: maghrib\n    random: 2\n"
+    profile, out = profile_for(tmp_path, text)
+    for name in ("one.mp3", "two.mp3", "three.mp3"):
+        (tmp_path / "media" / name).write_bytes(b"ID3\x03fake")
+    runner = Runner(profile)
+    try:
+        sev = next(e for e in events_for_date(profile, TUESDAY) if e.event.name == "maghrib-dua")
+        runner.fire(sev)
+        first = sorted(p.name for p in out.glob("*.mp3"))
+        second = sorted(p.name for p in (out / "second").glob("*.mp3"))
+        assert len(first) == 2, first
+        assert first == second, "both speakers were sent the same drawing, made once"
+    finally:
+        runner.shutdown()
+
+
+def test_a_library_that_cannot_cover_the_ask_says_so(tmp_path, caplog):
+    """`random: 9` over a folder that can offer three plays those three and writes the
+    shortfall down. A number that quietly decides how long a morning lasts would otherwise
+    look exactly like the plan working."""
+    from muezzin.scheduler import Runner
+
+    profile, out, sev = random_profile(tmp_path, ask="9")
+    runner = Runner(profile)
+    try:
+        with caplog.at_level(logging.WARNING):
+            runner.fire(sev)
+        assert [p.name for p in sorted(out.glob("*.mp3"))] == ["one.mp3", "three.mp3", "two.mp3"]
+        assert "wanted 9 recordings at random and got 3" in caplog.text, caplog.text
+        assert "holds back 2 of them by name" in caplog.text, caplog.text
+    finally:
+        runner.shutdown()
+
+
+def test_an_event_that_fires_over_an_empty_folder_says_so(tmp_path, caplog):
+    """The loader refuses an event that names nothing and asks for nothing, so the only way
+    to reach a fire with nothing to send is a media folder that has since been emptied or
+    renamed. A schedule that ran and left the house quiet looks exactly like a schedule that
+    worked, so the log has to name the empty folder."""
+    from muezzin.scheduler import Runner
+
+    profile, out, sev = random_profile(tmp_path, ask="2")
+    for f in (tmp_path / "media").glob("*"):
+        f.unlink()
+    runner = Runner(profile)
+    try:
+        with caplog.at_level(logging.WARNING):
+            runner.fire(sev)
+        assert not list(out.glob("*.mp3")), "something was played, and there was nothing to play"
+        assert "has nothing to play" in caplog.text, caplog.text
     finally:
         runner.shutdown()
 

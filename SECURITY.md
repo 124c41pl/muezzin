@@ -84,8 +84,9 @@ Saying this out loud is part of the design:
 * anyone on the LAN who can hear the speakers, or who can put their own Chromecast
   into a group you discovered;
 * the media server's limits as a defence — it serves whatever is in `media_dir` to
-  anything that can reach the port, and it does not support `Range`, TLS or
-  authentication.
+  anything that can reach the port, and it offers TLS or authentication to nobody. It
+  will answer a `Range` request, because that is how a speaker seeks, and being able to
+  ask for the middle of a file changes nothing about who can reach the folder.
 
 ## Hardening, if your network is not one you trust
 
