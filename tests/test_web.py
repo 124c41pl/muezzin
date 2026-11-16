@@ -268,6 +268,7 @@ def test_a_read_only_panel_can_look_but_not_touch(tmp_path):
         assert status == 200
         for path, body in (("/api/config", {"text": "location: {}"}),
                            ("/api/output", {"name": "outbox", "enabled": False}),
+                           ("/api/output/volume", {"name": "outbox", "volume": 0.4}),
                            ("/api/test", {"output": "outbox", "media": ["fajr.mp3"]})):
             status, res = call(web.port, path, body)
             assert status == 403 and "read-only" in res["error"]
@@ -892,23 +893,33 @@ def test_the_scheduled_call_is_not_cut_short_by_stopping_a_test(panel):
     assert st["upcoming"], "stopping a test emptied the rest of the day"
 
 
-def test_the_page_has_a_transport_and_no_way_to_move_a_level(panel):
+def test_the_page_has_a_transport_and_no_way_to_move_a_computers_level(panel):
     """Two things the page has to get right that no Python assertion about audio can
-    catch: the preview is labelled as this computer making the sound, and nowhere on
-    the page is there a level to move. The level on a computer belongs to the person
-    sitting in front of it. The one slider that does exist is a place inside a
-    recording, which is filled in from the file's length - not a 0 to 1 thing."""
+    catch: the preview is labelled as this computer making the sound, and the only level
+    anything on the page can move is the level of a speaker muezzin casts to. The level of
+    a computer - the one running this program, or a box on the LAN - belongs to the person
+    sitting in front of it, so that kind of output gets words instead of a control and the
+    script never sets the level of the player making the sound. The other slider is a place
+    inside a recording, which is filled in from the file's length - not a 0 to 1 thing."""
     web, _, _ = panel
     _, html = call(web.port, "/", raw=True)
     assert "/api/clip" in html and "play it here" in html
     script = html.split("<script>", 1)[1]
     assert "new Audio(" in script, "the preview has to be the browser making the sound"
-    assert ".volume" not in script, "the page must not set the level of a computer"
+    assert not re.search(r"\b\w+\.volume\s*=(?!=)", script), \
+        "the page must not set the level of the browser showing it, or of any computer"
     sliders = re.findall(r'<input[^>]*type="range"[^>]*>', html)
-    assert len(sliders) == 1, "the page has exactly one slider, and it is the seek bar"
-    assert 'id="seek"' in sliders[0] and 'max="0"' in sliders[0], \
+    assert len(sliders) == 2, \
+        "one slider for a place inside a recording, one for a speaker we are casting to"
+    seek = next(s for s in sliders if 'id="seek"' in s)
+    level = next(s for s in sliders if "data-level" in s)
+    assert 'max="0"' in seek, \
         "a position bar starts with nothing on it and takes its length from the file"
-    assert 'aria-label="how far into it you are"' in sliders[0]
+    assert 'aria-label="how far into it you are"' in seek
+    assert 'min="0"' in level and 'max="1"' in level and 'step="0.05"' in level, \
+        "a speaker level is a fraction of that speaker's own scale, the same number `volume:` holds"
+    assert "takes_volume" in script and "not ours to ask" in script, \
+        "the control only appears for a kind the daemon itself says can be asked for a level"
     assert 'id="hush"' in html and "pause" in html, "the preview needs a pause"
     assert 'id="halt"' in html and "stop" in html, "and a stop that is not the same button"
 
@@ -934,8 +945,11 @@ def test_the_test_button_of_an_output_sits_inside_the_card(panel):
     assert "#outputstbl td:last-child { white-space:nowrap" in html, \
         "the button is the column that must never be the one that grows or wraps"
     widths = re.findall(r"#outputstbl th:nth-child\(\d\) \{ width:(\d+)%", html)
-    assert len(widths) == 5, "every column is given a width"
+    assert len(widths) == 6, "every column is given a width"
     assert sum(int(w) for w in widths) == 100, f"the columns add up to {sum(int(w) for w in widths)}%"
+    assert "#outputstbl input[type=range] { width:80px" in html, \
+        "a slider left to its own devices is wider than the column it lives in, which is " \
+        "exactly how the test button ended up outside the card once already"
     assert "word-break:break-word" not in html, \
         "that breaks a long word at the first chance it gets, mid-word, in every cell"
     assert "width:12ch" not in html, "a name box measured in characters hides the end of a name"
@@ -1039,6 +1053,106 @@ def test_a_rename_that_would_collide_or_lead_nowhere_is_refused(two_outputs):
                          ({"from": "nobody", "to": "kitchen"}, "no output called nobody"),
                          ({"from": "second", "to": "   "}, "called")):
         status, reply = call(web.port, "/api/output/rename", payload)
+        assert status == 400 and why in reply["error"], (payload, status, reply)
+    assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before
+
+
+# ---- what a speaker is asked to come out at ---------------------------------
+#
+# The loudness of a test used to be whatever the room happened to be left at, which
+# meant two households pressing the same button heard two different things and neither
+# could say why. `volume:` was already the profile's word for it and the cast backend
+# already applied it to everything it plays through that output - a test included - so
+# all the page has to do is write that number for the kinds it is allowed to write it
+# for. A computer's own level, whether it is the machine running this program or a box
+# on the LAN, stays the property of whoever is sitting at it.
+
+CAST_AND_PC = (BASE.replace('  - name: outbox\n    kind: file\n    host: "{out}"\n',
+                            '  - name: nest\n    kind: google_cast\n'
+                            '    target: "Whole-house group"\n'
+                            '  - name: outbox\n    kind: file\n    host: "{out}"\n'
+                            '  - name: this-pc\n    kind: pc_speakers\n'))
+
+
+@pytest.fixture
+def one_speaker_one_computer(tmp_path):
+    """One speaker muezzin casts to, one folder, and the computer's own speakers: the
+    three answers to "may I ask this thing for a level?"."""
+    web, out, runner = _serve(tmp_path, CAST_AND_PC)
+    try:
+        yield web, out, tmp_path
+    finally:
+        web.stop()
+        runner.shutdown()
+
+
+def test_a_speaker_level_lands_in_the_profile_where_the_backend_reads_it(one_speaker_one_computer):
+    """The page writes the profile's own word, so the number has to be the one the
+    backend will see the next time it plays - and 0 has to mean 0, not "nothing was
+    written", which the cast backend would read as its default and shout."""
+    web, _, tmp_path = one_speaker_one_computer
+    status, reply = call(web.port, "/api/output/volume", {"name": "nest", "volume": 0.35})
+    assert status == 200, reply
+    assert reply["volume"] == 0.35
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "volume: 0.35" in on_disk, "written as a number, the way a person would have typed it"
+    assert web.runner.profile.output("nest").volume == 0.35
+    _, st = call(web.port, "/api/state")
+    row = next(o for o in st["outputs"] if o["name"] == "nest")
+    assert row["volume"] == 0.35, "the slider comes back where the profile put it"
+    status, reply = call(web.port, "/api/output/volume", {"name": "nest", "volume": 0})
+    assert status == 200 and web.runner.profile.output("nest").volume == 0.0, \
+        "a speaker asked to be silent has to be asked to be silent"
+
+
+def test_a_level_can_be_put_back_to_not_saying_anything(one_speaker_one_computer):
+    """`volume: 0.5` and no `volume:` at all do the same thing today, but they are not
+    the same sentence: one is this household's decision and the other is whatever the
+    speaker's default is tomorrow. Going back to not saying anything is a thing a person
+    should be able to do from the page."""
+    web, _, tmp_path = one_speaker_one_computer
+    call(web.port, "/api/output/volume", {"name": "nest", "volume": 0.8})
+    status, reply = call(web.port, "/api/output/volume", {"name": "nest", "volume": ""})
+    assert status == 200, reply
+    assert reply["volume"] is None
+    assert "volume: null" in (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert web.runner.profile.output("nest").volume is None
+    _, st = call(web.port, "/api/state")
+    row = next(o for o in st["outputs"] if o["name"] == "nest")
+    assert row["volume"] is None, "the page says the default, which is what the file now means"
+
+
+def test_a_computer_has_no_level_for_the_page_to_move(one_speaker_one_computer):
+    """The refusal is the point of this feature as much as the slider is. A box on the
+    LAN and the machine running muezzin are computers, and a level set on one of them is
+    a level the person using that machine loses without being asked; the backend warns
+    and ignores a `volume:` on those kinds, and the page refuses to write one in the
+    first place. The same goes for a folder, which makes no sound at all."""
+    web, _, tmp_path = one_speaker_one_computer
+    before = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    for name in ("this-pc", "outbox"):
+        status, reply = call(web.port, "/api/output/volume", {"name": name, "volume": 0.2})
+        assert status == 400 and "belongs to whoever" in reply["error"], (name, reply)
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert on_disk == before, "a refusal that still wrote a level is not a refusal"
+    assert "volume" not in on_disk
+    _, st = call(web.port, "/api/state")
+    assert {o["name"]: o["takes_volume"] for o in st["outputs"]} == {
+        "nest": True, "outbox": False, "this-pc": False}, \
+        "the page is told which kinds it may offer a slider for, rather than guessing"
+
+
+def test_a_level_that_makes_no_sense_is_refused_before_the_speaker_is_shouted_at(one_speaker_one_computer):
+    """A `volume:` of 40 loads - and a Cast device clamps it to full scale, so the house
+    gets a shout at Fajr instead of the background level somebody meant. The number is
+    checked here, in the same request, so the mistake never reaches the file."""
+    web, _, tmp_path = one_speaker_one_computer
+    before = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    for payload, why in (({"name": "nest", "volume": 40}, "between 0 and 1"),
+                         ({"name": "nest", "volume": "loud"}, "not a level"),
+                         ({"name": "nobody", "volume": 0.5}, "no output called nobody"),
+                         ({"name": "", "volume": 0.5}, "which output")):
+        status, reply = call(web.port, "/api/output/volume", payload)
         assert status == 400 and why in reply["error"], (payload, status, reply)
     assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before
 

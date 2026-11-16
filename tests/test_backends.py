@@ -202,6 +202,26 @@ def test_a_computer_output_is_never_handed_a_level(tmp_path, monkeypatch, caplog
     assert seen == ["fajr.mp3"], "playback still happens, at the machine's own level"
 
 
+def test_the_level_a_speaker_is_asked_for_is_the_one_the_profile_wrote():
+    """The web page now writes `volume:` for a speaker, on the promise that the test you
+    can hear comes out at the level you set rather than at whatever the room happened to
+    be left at. That promise is this one arithmetic, so it is pinned here: the level the
+    output carries is the level the speaker is asked for when the play call carries none
+    of its own, which is exactly what a test from the page sends. An event that asked for
+    its own level still wins, because that is the more recent ask; and a written `0` has
+    to mean silence rather than the default, because a person who wrote 0 meant it."""
+    def asked(volume, per_call):
+        return CastBackend(OutputConfig(name="nest", kind="google_cast",
+                                        target="Nest Mini", volume=volume))._effective_volume(per_call)
+
+    assert asked(0.35, None) == 0.35
+    assert asked(0.35, 0.8) == 0.8, "an event's own `volume:` out-ranks the speaker's"
+    assert asked(0.0, None) == 0.0, "the default must not talk a written silence out of it"
+    assert asked(None, None) == backends.DEFAULT_CAST_VOLUME, \
+        "nothing written is the default, and saying so is what the page shows"
+    assert asked(40, None) == 1.0, "a level that left the page is clamped on the way to the speaker"
+
+
 def test_the_box_is_told_what_to_play_and_nothing_about_its_volume(tmp_path, monkeypatch):
     """What the daemon puts on the wire for a box is media and nothing else. A box
     is somebody's computer, and a request that also moved its volume would be

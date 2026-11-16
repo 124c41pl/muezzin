@@ -157,8 +157,9 @@ library of recitations hear one before assigning it. The browser asks for the by
 speaker on the network is involved, and the row stays live on a read-only panel,
 because listening changes nothing. There is no volume control beside it, for the
 reason given throughout this document — the level on a computer belongs to whoever
-is sitting at it. Because the file is handed over rather than played here, three
-details are load-bearing:
+is sitting at it. (The slider in the Outputs card is a different thing: it asks a
+speaker muezzin casts to for *its* level, and is covered below.) Because the file is
+handed over rather than played here, three details are load-bearing:
 
 * the `Content-Type` comes from the file's **first bytes**, not its extension, so a
   WAV somebody copied in by hand and called `adhan.mp3` still plays instead of the
@@ -676,7 +677,14 @@ Three honest limits of this seam:
   recognize the specified command" - and on macOS and Linux there is no
   comparable call. So it is not attempted anywhere. If a profile names a volume
   for an output that is a computer, one line in the log at start-up says so,
-  rather than leaving you looking for the knob.
+  rather than leaving you looking for the knob. The page keeps that rule visible
+  rather than merely true: the Outputs card has a level slider only on a row whose
+  kind the backend itself says can be asked for a level — the state reports
+  `takes_volume` from the backend class instead of the page guessing from a name —
+  and asking for one on a row that is a computer is refused before the file is
+  opened. Since the level is applied by the same code that plays an adhan, the
+  number you set is the number a **test** comes out at, which is the part that used
+  to be decided by whoever last touched the speaker.
 * a command-line player is a separate process, so what comes back from a recording
   it cannot decode is an exit code rather than a diagnosis. `mpg123` and `ffplay`
   cover what a Cast speaker accepts; `paplay` and `aplay` are wav only, which is why

@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, urlparse
 import yaml
 
 from . import __version__, calc, fileserve, geocode, hijri, localplay, net, yamledit
-from .backends import lead_for, scan_speakers
+from .backends import KINDS, lead_for, scan_speakers
 from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, load_profile,
                      uses_starter_location, valid_host)
 from .scheduler import PRAYER_KEYS, Runner, clock_hours, upcoming
@@ -409,6 +409,10 @@ class WebPanel:
             "max_upload": MAX_UPLOAD,
             "outputs": [{"name": o.name, "kind": o.kind, "target": o.target, "host": o.host,
                          "port": o.port, "volume": o.volume, "enabled": o.enabled,
+                         # which kinds may be asked for a level at all: the answer comes
+                         # from the backend class, so the page cannot offer a slider for a
+                         # computer whose level belongs to the person using it
+                         "takes_volume": bool(getattr(KINDS.get(o.kind), "takes_volume", False)),
                          # how early this speaker gets handed the recording, so the
                          # first note is in the air when the printed time arrives
                          "lead": _lead_shown(lead_for(o))}
@@ -1118,6 +1122,60 @@ class WebPanel:
         saved["events_rewritten"] = moved
         return saved
 
+    def set_output_volume(self, payload: dict) -> dict:
+        """Ask one of our speakers for a level, and write that ask into the profile.
+
+        The level a test comes out at was, until now, whatever the speaker or the
+        computer sitting in front of it happened to be set to - so two households
+        pressing **test** heard two different loudnesses and neither could say why.
+        `volume:` is the profile's word for it and the backend already applies it to
+        everything it plays through that output, a test included, so the page only has
+        to write the number honestly:
+
+        * only a kind of output whose `takes_volume` is true gets one. A computer's own
+          level - the machine running muezzin, or the Pi in the attic - belongs to
+          whoever is sitting at it, which is the same rule the preview on this page
+          follows.
+        * `null` puts it back to not saying anything, which on a Cast device means
+          "whatever it is at right now".
+        * the number is checked here, not at 5 am: a `volume:` of 40 loads, and a Cast
+          device clamps it to full scale, so the house gets a shout instead of the
+          background level somebody meant.
+        """
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise ValueError("which output?")
+        asked = payload.get("volume")
+        if asked in (None, ""):
+            level = None
+        else:
+            try:
+                level = float(asked)
+            except (TypeError, ValueError):
+                raise ValueError(f"{asked!r} is not a level; it is a number between 0 and 1")
+            if not 0.0 <= level <= 1.0:
+                raise ValueError(f"{level} is not a level: a speaker level is a number "
+                                 "between 0 and 1, like 0.6")
+        with self._editing() as text:
+            rows = yamledit.entries(text, "outputs")
+            row = next((r for r in rows if yamledit.entry_scalar(r, "name") == name), None)
+            if row is None:
+                raise ValueError(f"no output called {name} in this profile")
+            kind = (yamledit.entry_scalar(row, "kind") or "").strip().lower()
+            cls = KINDS.get(kind)
+            if cls is None:
+                raise ValueError(f"{name} says it is {kind}, which is not one of "
+                                 f"{', '.join(sorted(KINDS))}")
+            if not getattr(cls, "takes_volume", False):
+                raise ValueError(f"{name} is {kind}: muezzin only asks a speaker it casts to "
+                                 "for a level, and the level of a computer belongs to whoever "
+                                 "is sitting at it")
+            saved = self.save_config(yamledit.edit_entry(text, "outputs", row["index"],
+                                                         {"volume": level}))
+        saved["output"] = name
+        saved["volume"] = level
+        return saved
+
     def save_upload(self, filename: str, data: bytes) -> dict:
         """Put a recording in media_dir, if it really is a recording.
 
@@ -1560,6 +1618,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self._json(self.panel.remove_output(str(body["name"])))
             elif self.path == "/api/output/rename":
                 self._json(self.panel.rename_output(body))
+            elif self.path == "/api/output/volume":
+                self._json(self.panel.set_output_volume(body))
             elif self.path == "/api/library/hold":
                 self._json(self.panel.hold_recording(body))
             elif self.path == "/api/library/delete":
@@ -1707,13 +1767,15 @@ PAGE = """<!doctype html>
     the one that falls off the edge. A word too long for its column is broken where it
     has to be, not at the first opportunity. */
  #outputstbl { table-layout:fixed }
- #outputstbl th:nth-child(1) { width:26% }
- #outputstbl th:nth-child(2) { width:22% }
- #outputstbl th:nth-child(3) { width:25% }
- #outputstbl th:nth-child(4) { width:9% }
- #outputstbl th:nth-child(5) { width:18%; text-align:right }
+ #outputstbl th:nth-child(1) { width:21% }
+ #outputstbl th:nth-child(2) { width:15% }
+ #outputstbl th:nth-child(3) { width:17% }
+ #outputstbl th:nth-child(4) { width:7% }
+ #outputstbl th:nth-child(5) { width:21% }
+ #outputstbl th:nth-child(6) { width:19%; text-align:right }
  #outputstbl td { overflow-wrap:break-word }
  #outputstbl td:last-child { white-space:nowrap; text-align:right }
+ #outputstbl input[type=range] { width:80px; vertical-align:middle }
  /* The same shape as the Outputs table, for the same reason: a recording is called
     whatever the person who put it in the folder called it, and a table that sizes
     itself lets a long name push the buttons clean out of the card. */
@@ -1752,8 +1814,9 @@ PAGE = """<!doctype html>
 <main>
  <section><h2>Timetable</h2><div id="days"></div></section>
  <section><h2>Next events</h2><table><thead><tr><th>when</th><th>event</th><th>speakers</th><th>media</th></tr></thead><tbody id="upcoming"></tbody></table></section>
- <section class="wide"><h2>Outputs</h2><table id="outputstbl"><thead><tr><th>name</th><th>kind</th><th>target</th><th>on</th><th></th></tr></thead><tbody id="outputs"></tbody></table>
+ <section class="wide"><h2>Outputs</h2><table id="outputstbl"><thead><tr><th>name</th><th>kind</th><th>target</th><th>on</th><th>level</th><th></th></tr></thead><tbody id="outputs"></tbody></table>
   <div class="fine">A speaker muezzin has to find on the network gets the recording a few seconds before the time it belongs to, so the first note is already in the air when that time arrives; the number in brackets is that head start. A profile sets it per speaker with lead_seconds, and 0 means exactly on the minute. Everywhere else on this page the times shown are the computed ones.</div>
+  <div class="fine">The level is what muezzin asks a speaker for the moment it starts playing, so a test comes out at the same loudness as an adhan instead of at whatever the room happened to be left at. It is muezzin's to ask only of a speaker it casts to: the level of the computer running this program, or of a box on the LAN, belongs to whoever is sitting at that machine, and this page never touches it. A speaker with nothing written in the profile is asked for 50%.</div>
   <div class="row"><select id="media"></select><span class="tag" id="mediaurl"></span></div>
  </section>
  <section class="wide"><h2>Where</h2>
@@ -1911,7 +1974,15 @@ function render(){
  // holding a stream that will not end should be let go. The daemon takes one test at a
  // time, which is why one name is enough to remember.
  let testing=null;
- $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td><button data-test="${esc(o.name)}">test</button><button data-stop="${esc(o.name)}"${o.name===testing?'':' hidden'}>stop</button></td></tr>`).join('');
+ $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td>${o.takes_volume?`<input type="range" min="0" max="1" step="0.05" data-level="${esc(o.name)}" value="${o.volume==null?0.5:o.volume}" aria-label="how loud to ask ${esc(o.name)} for"> <span class="tag">${o.volume==null?'not set':Math.round(o.volume*100)+'%'}</span>`:'<span class="unknown">not ours to ask</span>'}</td><td><button data-test="${esc(o.name)}">test</button><button data-stop="${esc(o.name)}"${o.name===testing?'':' hidden'}>stop</button></td></tr>`).join('');
+ // A slider for a level exists only where the daemon said it may: the state's takes_volume
+ // comes from the backend class, so a computer - the one running this page, or a box on the
+ // LAN - has no level to move, only words saying whose it is.
+ document.querySelectorAll('[data-level]').forEach(s=>s.onchange=()=>{ const out=s.dataset.level,
+  level=Number(s.value), pct=Math.round(level*100); let vol=null;
+  s.closest('td').querySelector('.tag').textContent=pct+'%';
+  act(async()=>{ vol=await api('/api/output/volume',{name:out,volume:level}); },
+   ()=>say(out+' will come out at '+pct+'% of its own scale, a test included','ok')); });
  // Only an output's switch carries data-name. A recording row uses data-hold for the
  // same look, because "let the random drawing pick this" is a different ask and needs
  // its own handler - one selector, one meaning.
@@ -1950,7 +2021,7 @@ function render(){
  renderMethod();renderSound();renderLibrary();renderFound();renderWhere();
  syncYaml();
  $('#save').disabled=$('#reload').disabled=st.read_only;
- document.querySelectorAll('.switch,[data-test],[data-stop],.rename,[data-hold],[data-put],[data-put-go],[data-rm]').forEach(b=>b.disabled=st.read_only);
+ document.querySelectorAll('.switch,[data-test],[data-stop],.rename,[data-level],[data-hold],[data-put],[data-put-go],[data-rm]').forEach(b=>b.disabled=st.read_only);
  // Checking numbers and finding a place stay live on a read-only panel: looking
  // changes nothing. Only the buttons that write a line into the profile go dark.
  ['#preset','#asr','#applymethod','#hijminus','#hijplus','#applysound','#upload','#file','#writewhere'].forEach(s=>{ $(s).disabled=st.read_only; });

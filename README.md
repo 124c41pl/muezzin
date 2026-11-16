@@ -240,7 +240,8 @@ just added is actually reachable.
 
 On it: three days of times for the method in the profile; the next events and
 which output each resolves to; every output with a name you can type in, an on/off
-switch and a **test** button; the method dropdown; a clip per prayer and a Friday
+switch, a level slider for the speakers muezzin is allowed to ask a level of, and a
+**test** button; the method dropdown; a clip per prayer and a Friday
 column; the recordings in your folder, each with the prayers that play it, a switch for
 the random drawing and an **add to**; what is on the LAN right now, with **use** /
 **stop using**; a **Where**
