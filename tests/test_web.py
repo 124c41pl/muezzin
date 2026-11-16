@@ -1043,6 +1043,220 @@ def test_a_rename_that_would_collide_or_lead_nowhere_is_refused(two_outputs):
     assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before
 
 
+# ---- the folder of recordings, which is the library -------------------------
+#
+# There is no list of recordings anywhere but on disk: media_dir is the library, and a
+# recording exists in a profile only as a name in an event's playlist or in the hold
+# list. So the page works on those names, and the tests below are about what a name is
+# allowed to do: be held out of the random drawing, be added to the end of a playlist,
+# and - the one with no undo - be deleted, which only happens once nothing plays it.
+
+def test_the_folder_listing_says_who_plays_each_recording(panel):
+    """The listing is the page's only view of the folder, and three questions get asked
+    of it: how big is it, is anything playing it, and is it held back from the drawing.
+    A recording two events share is one row with both names on it, because the file is
+    one file - deleting it would take two prayers down, and the row says so."""
+    web, _, _ = panel
+    _, st = call(web.port, "/api/state")
+    rows = {r["name"]: r for r in st["media_library"]}
+    assert sorted(rows) == ["dua.mp3", "fajr.mp3"]
+    assert rows["fajr.mp3"]["named_by"] == ["fajr-adhan"]
+    assert rows["dua.mp3"]["named_by"] == ["dhuhr-nudge", "friday-tune"]
+    assert all(r["bytes"] == 8 for r in rows.values()), "the size is read from the file"
+    assert all(not r["excluded"] and not r["missing"] for r in rows.values())
+    assert st["media_files"] == ["dua.mp3", "fajr.mp3"], \
+        "the clip pickers still get a plain list of names"
+
+
+def test_a_hold_whose_file_is_gone_is_listed_and_can_be_let_go(tmp_path):
+    """A name under `library: exclude:` with no file behind it is a line in the profile
+    that means nothing, and it stays there for years unless the page can see it. Leaving
+    such a name off the listing would strand it where only a text editor can reach it."""
+    profile, _ = profile_for(tmp_path, BASE + "\nlibrary:\n  exclude: [gone.mp3, dua.mp3]\n")
+    runner = Runner(profile)
+    web = WebPanel(runner, port=0)
+    web.start()
+    try:
+        _, st = call(web.port, "/api/state")
+        rows = {r["name"]: r for r in st["media_library"]}
+        assert rows["gone.mp3"]["missing"] and rows["gone.mp3"]["excluded"]
+        assert rows["gone.mp3"]["bytes"] is None, "there are no bytes to report"
+        assert rows["dua.mp3"]["excluded"] and not rows["dua.mp3"]["missing"]
+        status, reply = call(web.port, "/api/library/hold",
+                             {"name": "gone.mp3", "excluded": False})
+        assert status == 200, reply
+        text = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+        assert "gone.mp3" not in text and "dua.mp3" in text
+    finally:
+        web.stop()
+        runner.shutdown()
+
+
+def test_holding_a_recording_out_of_the_drawing_lands_in_the_profile(panel):
+    """The hold has to be a line in the file, because the drawing reads the file: a
+    checkbox that lived only in the page would be forgotten the next time an event drew
+    at random, which is the next morning. Letting go leaves an empty list rather than a
+    key with nothing under it, which is what a person would have written by hand."""
+    web, _, tmp_path = panel
+    status, reply = call(web.port, "/api/library/hold", {"name": "dua.mp3", "excluded": True})
+    assert status == 200, reply
+    text = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "exclude: [dua.mp3]" in text, "a hold is a line in the profile, not page state"
+    assert reply["held_back"] == ["dua.mp3"]
+    status, reply = call(web.port, "/api/library/hold", {"name": "fajr.mp3", "excluded": True})
+    assert status == 200 and reply["held_back"] == ["dua.mp3", "fajr.mp3"], \
+        "the second name joins the list instead of replacing the first"
+    _, st = call(web.port, "/api/state")
+    assert {n: r["excluded"] for n, r in
+            ((r["name"], r) for r in st["media_library"])} == {"dua.mp3": True, "fajr.mp3": True}
+    assert st["media_files"] == ["dua.mp3", "fajr.mp3"], "nothing was deleted or moved"
+    status, reply = call(web.port, "/api/library/hold", {"name": "dua.mp3", "excluded": False})
+    assert status == 200 and reply["held_back"] == ["fajr.mp3"]
+    status, reply = call(web.port, "/api/library/hold", {"name": "dua.mp3", "excluded": False})
+    assert status == 200 and reply.get("unchanged") is True, \
+        "pressing a switch that is already where you want it writes nothing"
+    assert "exclude: [fajr.mp3]" in (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+
+
+def test_a_hold_from_the_page_reaches_the_daemon_that_is_running(panel):
+    """The whole point of writing the hold into the profile is that the daemon drawing
+    at random reads the same profile, so the switch counts from the next fire, not from
+    the next restart. Nothing here asks for a reload."""
+    web, _, _ = panel
+    for name in ("fajr.mp3", "dua.mp3"):
+        assert call(web.port, "/api/library/hold", {"name": name, "excluded": True})[0] == 200
+    assert web.runner.profile.random_picks(2) == [], \
+        "the daemon already running knows the hold list"
+    assert web.runner.profile.library() == ["dua.mp3", "fajr.mp3"], \
+        "held back is not the same as gone: the folder still has both"
+
+
+def test_a_hold_cannot_invent_a_recording_or_a_path(panel):
+    """A hold is a name in the folder, and the pool it comes out of is the folder: a name
+    that is not there is a line explaining nothing, and a path is a way of asking about
+    files the media server will not serve anyway. Both are refused, and nothing is written."""
+    web, _, tmp_path = panel
+    before = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    for payload, why in (({"name": "nope.mp3", "excluded": True}, "there is no nope.mp3"),
+                         ({"name": "../outside.mp3", "excluded": True}, "no path in it"),
+                         ({"name": "sub/dir.mp3", "excluded": True}, "no path in it"),
+                         ({"name": "", "excluded": True}, "plain file name")):
+        status, reply = call(web.port, "/api/library/hold", payload)
+        assert status == 400 and why in reply["error"], (payload, status, reply)
+    assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before
+
+
+def test_a_recording_an_event_still_plays_refuses_to_be_deleted(panel):
+    """Deleting a recording is the one thing on this page with no undo, so the guard sits
+    in front of it: an event that still holds the name would fire at its minute into a
+    file that is not there. The refusal says which events, in the words the row next to
+    them shows, because the fix is a different clip and the page has to say for what."""
+    web, _, tmp_path = panel
+    status, reply = call(web.port, "/api/library/delete", {"name": "dua.mp3"})
+    assert status == 400, reply
+    assert "dhuhr-nudge" in reply["error"] and "friday-tune" in reply["error"], \
+        "every event holding the name is named, not just the first"
+    assert (tmp_path / "media" / "dua.mp3").is_file(), "refused means nothing was deleted"
+    _, st = call(web.port, "/api/state")
+    assert "dua.mp3" in st["media_files"]
+
+
+def test_a_recording_nothing_plays_can_be_deleted_and_the_listing_follows(panel):
+    """Once no event holds the name, the folder is the only place the recording lives, and
+    one delete takes it out of the folder, out of the state and off the page. The daemon
+    is not restarted to notice: the listing is the folder."""
+    web, _, tmp_path = panel
+    status, reply = post_raw(web.port, "/api/media/upload?name=spare.mp3", b"ID3\x03fake")
+    assert status == 200, reply
+    status, reply = call(web.port, "/api/library/delete", {"name": "spare.mp3"})
+    assert status == 200 and reply["deleted"] == "spare.mp3", reply
+    assert not (tmp_path / "media" / "spare.mp3").exists()
+    _, st = call(web.port, "/api/state")
+    assert st["media_files"] == ["dua.mp3", "fajr.mp3"]
+    assert [r["name"] for r in st["media_library"]] == ["dua.mp3", "fajr.mp3"]
+
+
+def test_deleting_a_recording_lets_its_hold_go_with_it(panel):
+    """A hold is a name, and a name with no file behind it can never mean anything again.
+    Leaving it in the profile would be a line about a recording that does not exist, with
+    nothing left to explain why it was ever written."""
+    web, _, tmp_path = panel
+    status, _ = post_raw(web.port, "/api/media/upload?name=spare.mp3", b"ID3\x03fake")
+    assert status == 200
+    assert call(web.port, "/api/library/hold",
+                {"name": "spare.mp3", "excluded": True})[0] == 200
+    text = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "exclude: [spare.mp3]" in text, text
+    status, reply = call(web.port, "/api/library/delete", {"name": "spare.mp3"})
+    assert status == 200 and reply["was_held_back"] is True, reply
+    assert "exclude: []" in (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+
+
+def test_putting_a_recording_on_an_event_adds_it_after_what_it_already_plays(panel):
+    """The clip boxes in the Sound card choose what a prayer starts with; this adds to the
+    end of the playlist, which is the difference between changing the adhan and asking for
+    a dua after it. Named files play in the order they are written, so the reply says the
+    order out loud rather than leaving the file to be read."""
+    web, _, tmp_path = panel
+    status, reply = call(web.port, "/api/library/insert",
+                         {"name": "dua.mp3", "event": "fajr-adhan"})
+    assert status == 200, reply
+    assert reply["playlist"] == ["fajr.mp3", "dua.mp3"], "the order is the order it plays in"
+    assert "media: [fajr.mp3, dua.mp3]" in (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    _, st = call(web.port, "/api/state")
+    assert next(e for e in st["events"] if e["name"] == "fajr-adhan")["media"] == \
+        ["fajr.mp3", "dua.mp3"]
+    row = next(r for r in st["media_library"] if r["name"] == "dua.mp3")
+    assert row["named_by"] == ["fajr-adhan", "dhuhr-nudge", "friday-tune"], \
+        "who plays it is read off the events, in the order the file writes them"
+    status, reply = call(web.port, "/api/library/insert",
+                         {"name": "dua.mp3", "event": "fajr-adhan"})
+    assert status == 400 and "already plays" in reply["error"], reply
+
+
+def test_an_insert_that_leads_nowhere_is_refused_before_anything_is_written(panel):
+    """An event name typed into the box, a recording that is not in the folder and a
+    recording that is not audio are all the same mistake: the request cannot be carried
+    out, so the file stays as it was. A `volume:`-style audio check matters because the
+    loader lets a playlist name anything, and a text file reaches a speaker at 5 am."""
+    web, _, tmp_path = panel
+    before = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    (tmp_path / "media" / "notes.txt").write_text("not audio at all", encoding="utf-8")
+    for payload, why in (({"name": "dua.mp3", "event": "nope"}, "no event called nope"),
+                         ({"name": "dua.mp3", "event": "   "}, "which event"),
+                         ({"name": "gone.mp3", "event": "fajr-adhan"}, "there is no gone.mp3"),
+                         ({"name": "../outside.mp3", "event": "fajr-adhan"}, "no path in it"),
+                         ({"name": "notes.txt", "event": "fajr-adhan"}, "not audio")):
+        status, reply = call(web.port, "/api/library/insert", payload)
+        assert status == 400 and why in reply["error"], (payload, status, reply)
+    assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before
+    (tmp_path / "media" / "notes.txt").unlink()
+
+
+def test_the_recordings_card_is_a_table_that_fits_its_card(panel):
+    """The Outputs card is the one that had a button fall outside it, and this card has the
+    same shape - names nobody controls, then the buttons - so it is built the same way on
+    purpose. A recording is called whatever whoever put it in the folder called it, and a
+    table left to size itself lets that name push the delete button past the border."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert '<section class="wide"><h2>Recordings in the folder</h2>' in html, \
+        "five columns of names take the width of the page, not one column of it"
+    assert "#libtbl { table-layout:fixed }" in html, \
+        "the columns are told their widths instead of growing to their words"
+    widths = re.findall(r"#libtbl th:nth-child\(\d\) \{ width:(\d+)%", html)
+    assert len(widths) == 5, "every column is given a width"
+    assert sum(int(w) for w in widths) == 100, f"the columns add up to {sum(int(w) for w in widths)}%"
+    assert "#libtbl td { overflow-wrap:break-word }" in html, \
+        "a long name breaks at the edge of its own cell rather than leaving the card"
+    assert 'id="library"' in html and 'data-hold="' in html and 'data-rm="' in html, \
+        "a row is worked on by its name, which is what the profile holds"
+    assert "sure? gone for good" in html, "the button with no undo asks once before it acts"
+    assert "'.switch[data-name]'" in html, \
+        "the on/off switch of an output and the switch of a recording look alike and " \
+        "must not share a handler"
+
+
 def test_the_hijri_knob_moves_the_date_the_page_shows(panel):
     web, _, tmp_path = panel
     status, reply = call(web.port, "/api/hijri", {"days": -1})

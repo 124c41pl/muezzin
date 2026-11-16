@@ -191,6 +191,12 @@ log says which ones went out. `library: exclude:` keeps a recording out of the d
 without deleting it, which is the answer to the recitation you own but would not want
 heard by accident.
 
+The **Recordings in the folder** card is that folder on the page: every file, how big it
+is, and which prayers play it. Beside each one, a switch keeps it out of the drawing and
+writes the name under `library: exclude:`; **add to** puts it at the *end* of a prayer's
+list, which is where a dua after the adhan goes; and **delete** refuses while a prayer
+still plays it, because that is the one thing on the page you cannot undo.
+
 ### Then run it
 
 ```bash
@@ -235,7 +241,9 @@ just added is actually reachable.
 On it: three days of times for the method in the profile; the next events and
 which output each resolves to; every output with a name you can type in, an on/off
 switch and a **test** button; the method dropdown; a clip per prayer and a Friday
-column; what is on the LAN right now, with **use** / **stop using**; a **Where**
+column; the recordings in your folder, each with the prayers that play it, a switch for
+the random drawing and an **add to**; what is on the LAN right now, with **use** /
+**stop using**; a **Where**
 section with a map on it; and the profile YAML itself with a save button. A band above
 it says out loud whatever is still missing — a location nobody chose, no speakers, or
 every speaker switched off.

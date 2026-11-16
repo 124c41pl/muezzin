@@ -312,6 +312,29 @@ class WebPanel:
         if media_dir.exists():
             files = sorted(f.name for f in media_dir.iterdir()
                            if f.is_file() and f.suffix.lower() in AUDIO_SUFFIXES)
+        # The folder is the library, so the page needs to know what is in it beyond
+        # the names. Which events point at a recording decides whether it can be
+        # deleted at all - a name still in an event's playlist would fire into a
+        # missing file at 5 am - and the hold list decides whether an event drawing
+        # at random may pick it. The sizes are here because a 400 kB chime and a
+        # 4 MB recitation are not the same thing to lose.
+        named_by: dict[str, list[str]] = {}
+        for ev in p.events:
+            for item in ev.media:
+                named_by.setdefault(item, []).append(ev.name)
+        held = set(p.library_exclude)
+        library = []
+        for name in sorted(set(files) | held):
+            try:
+                size = (media_dir / name).stat().st_size
+            except OSError:               # someone removed it from under us
+                size = None
+            library.append({"name": name, "bytes": size,
+                            "excluded": name in held,
+                            "named_by": named_by.get(name, []),
+                            # held back by a name whose file is gone: it can be let
+                            # go from here, but there is nothing to delete or play.
+                            "missing": size is None})
         # Which preset the file names, read back from the file rather than
         # inferred from the numbers: a profile may set the angles by hand and
         # then the honest answer is that there is no preset in it.
@@ -363,6 +386,7 @@ class WebPanel:
             "read_only": not self.allow_edit,
             "media_dir": str(media_dir),
             "media_files": files,
+            "media_library": library,
             "media_url": (f"http://{self.runner.media.host_ip}:{self.runner.media.port}/"
                           if self.runner.media else None),
             "days": days,
@@ -802,6 +826,123 @@ class WebPanel:
                 saved["updated_event"] = row["name"]
         saved["at"] = at
         saved["friday"] = friday
+        return saved
+
+    # ---- working on the folder of recordings --------------------------------
+    #
+    # `media_dir` is the whole library: there is no second list of recordings kept in
+    # step with it, which is why everything below writes the profile instead of a
+    # database. Holding a recording out of the random drawing and putting one at the
+    # end of a playlist are profile edits, so they go through the same door the clip
+    # picker uses and a refusal from the loader stops the write. Deleting one is the
+    # only call here that touches the disk, and the only edit in this app with no undo.
+
+    def _recording_name(self, payload: dict) -> str:
+        """One plain file name, as the folder lists it, with nothing else in it."""
+        plain = str(payload.get("name") or "").replace("\\", "/")
+        if not plain or "/" in plain or plain.startswith("."):
+            raise ValueError("needs a plain file name from the list, with no path in it")
+        return plain
+
+    def _recording_path(self, name: str) -> Path:
+        """The file behind that name, if the folder really has it."""
+        root = Path(self.runner.profile.media_dir).resolve()
+        full = (root / name).resolve()
+        if not full.is_relative_to(root) or not full.is_file():
+            raise ValueError(f"there is no {name} in {root} to work on")
+        return full
+
+    def hold_recording(self, payload: dict) -> dict:
+        """Keep a recording out of the random drawings, or put it back in.
+
+        A hold is not a deletion and not a mute: the file stays in the folder, and an
+        event that names it in its playlist plays it whenever it is due. What changes
+        is the drawing - the pick from the folder that happens when an event says
+        `random: N` - which will not choose it. That is the whole reason the list
+        exists: a household that has recordings it does not want heard unasked still
+        wants them on hand for the prayer they choose themselves.
+        """
+        name = self._recording_name(payload)
+        excluded = bool(payload.get("excluded"))
+        with self._editing() as text:
+            if excluded:
+                # Nothing to hold back: the pool is the folder, so a name that is not
+                # in it can never be drawn anyway. Letting it in would be a row in the
+                # profile that means nothing and explains nothing.
+                self._recording_path(name)
+            held = [str(h) for h in (yamledit.block_list(text, "library", "exclude") or [])]
+            wanted = sorted(set(held) | {name}) if excluded else [h for h in held if h != name]
+            if wanted == held:
+                return {"name": name, "excluded": excluded, "unchanged": True}
+            if yamledit.find_block(text, "library") is None:
+                text = yamledit.set_block(text, "library", [])
+            saved = self.save_config(yamledit.set_in_block(text, "library", {"exclude": wanted}))
+        saved["name"] = name
+        saved["excluded"] = excluded
+        saved["held_back"] = wanted
+        return saved
+
+    def delete_recording(self, payload: dict) -> dict:
+        """Take a recording out of the folder for good.
+
+        Because nothing undoes this, the guard sits in front of it: a recording an
+        event still names would leave that event firing into a missing file, and being
+        there at the right minute is the one thing this program is for. So the page is
+        told to give those events something else first, in the words of the event that
+        is in the way. If the file was held out of the drawings, its name leaves the
+        hold list in the same breath - a name with no file behind it is a row that can
+        never mean anything again, and it would outlive the recording it explained.
+        """
+        name = self._recording_name(payload)
+        full = self._recording_path(name)
+        keepers = [ev.name for ev in self.runner.profile.events if name in ev.media]
+        if keepers:
+            raise ValueError(f"{name} is what {', '.join(keepers)} still plays; give "
+                             f"{'them' if len(keepers) > 1 else 'it'} something else "
+                             f"first, or delete the event")
+        with self._editing() as text:
+            held = [str(h) for h in (yamledit.block_list(text, "library", "exclude") or [])]
+            if name in held:
+                self.save_config(yamledit.set_in_block(text, "library",
+                                                       {"exclude": [h for h in held if h != name]}))
+        try:
+            full.unlink()
+        except FileNotFoundError:
+            raise ValueError(f"{name} is already gone from {full.parent}") from None
+        log.info("deleted the recording %s from %s", name, full.parent)
+        return {"deleted": name, "was_held_back": name in held}
+
+    def insert_recording(self, payload: dict) -> dict:
+        """Put a recording at the end of one event's playlist.
+
+        The clip picker in the Sound card decides which recording a prayer starts
+        with; this adds one after it, which is what "and then the dua as well" means.
+        Named files play in the order they are written, so the end of the list is the
+        end of what plays. An event that also draws at random keeps both: what it is
+        given by name plays first, then the drawing.
+        """
+        name = self._recording_name(payload)
+        event = str(payload.get("event") or "").strip()
+        if not event:
+            raise ValueError("which event should play it? pick one of the names in the list")
+        self._recording_path(name)
+        if Path(name).suffix.lower() not in AUDIO_SUFFIXES:
+            raise ValueError(f"{name} is not audio this daemon can play "
+                             f"({', '.join(sorted(AUDIO_SUFFIXES))})")
+        with self._editing() as text:
+            rows = yamledit.entries(text, "events")
+            row = next((r for r in rows if r["name"] == event), None)
+            if row is None:
+                raise ValueError(f"no event called {event} in this profile")
+            have = yamledit.entry_list(row, "media") or []
+            if name in have:
+                raise ValueError(f"{event} already plays {name}"
+                                 + (f", after {have[0]}" if len(have) > 1 else ""))
+            saved = self.save_config(yamledit.edit_entry(text, "events", row["index"],
+                                                         {"media": have + [name]}))
+        saved["event"] = event
+        saved["name"] = name
+        saved["playlist"] = have + [name]
         return saved
 
     def speakers(self, refresh: bool = False) -> dict:
@@ -1419,6 +1560,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self._json(self.panel.remove_output(str(body["name"])))
             elif self.path == "/api/output/rename":
                 self._json(self.panel.rename_output(body))
+            elif self.path == "/api/library/hold":
+                self._json(self.panel.hold_recording(body))
+            elif self.path == "/api/library/delete":
+                self._json(self.panel.delete_recording(body))
+            elif self.path == "/api/library/insert":
+                self._json(self.panel.insert_recording(body))
             else:
                 self._json({"error": f"no such path: {self.path}"}, 404)
         except _Status as exc:
@@ -1567,6 +1714,17 @@ PAGE = """<!doctype html>
  #outputstbl th:nth-child(5) { width:18%; text-align:right }
  #outputstbl td { overflow-wrap:break-word }
  #outputstbl td:last-child { white-space:nowrap; text-align:right }
+ /* The same shape as the Outputs table, for the same reason: a recording is called
+    whatever the person who put it in the folder called it, and a table that sizes
+    itself lets a long name push the buttons clean out of the card. */
+ #libtbl { table-layout:fixed }
+ #libtbl th:nth-child(1) { width:24% }
+ #libtbl th:nth-child(2) { width:9% }
+ #libtbl th:nth-child(3) { width:21% }
+ #libtbl th:nth-child(4) { width:11% }
+ #libtbl th:nth-child(5) { width:35% }
+ #libtbl td { overflow-wrap:break-word }
+ #libtbl select { max-width:100% }
  /* The name is the box you type in, so it is as wide as the column it sits in rather
     than a fixed number of characters: a speaker called whole-house lost its last
     letters in a 12ch box, and a name you cannot read in full is a name you cannot
@@ -1653,7 +1811,24 @@ PAGE = """<!doctype html>
    you are choosing what a prayer should sound like.</div>
   <div class="fine">A clip is picked from what is already in <code>media_dir</code>; the button above
    puts a new recording there. Nothing overwrites a recording that is playing, so two recordings of
-   the same adhans need two names.</div>
+   the same adhans need two names. These boxes choose what a prayer starts with; the Recordings card
+   below adds a recording to the end of a prayer's list, which is where a dua after the adhan goes.</div>
+ </section>
+ <section class="wide"><h2>Recordings in the folder</h2>
+  <div class="row"><span class="tag" id="libdir"></span></div>
+  <table id="libtbl"><thead><tr><th>name</th><th>size</th><th>played by</th><th>in the drawing</th><th>put it on an event</th></tr></thead><tbody id="library"></tbody></table>
+  <div class="fine">Every row is a file in <code>media_dir</code>, and that folder is the whole library:
+   there is no second list of recordings to keep in step with it, so a recording that is not in this table
+   is not in the profile either. The clip boxes in the Sound card choose which recording a prayer
+   <i>starts</i> with; <b>add to</b> here puts one at the <i>end</i> of that event's playlist, which is how
+   a prayer plays the adhan and then a dua. The <b>played by</b> column is also the reason a recording
+   refuses to be deleted: an event still naming it would fire at its time into a file that is no longer
+   there, which is the one failure this program exists to avoid.</div>
+  <div class="fine">The switch in the <b>in the drawing</b> column is only about events that say
+   <code>random: N</code>: off keeps the recording out of that pick and writes its name under
+   <code>library: exclude:</code>, while every playlist that names it by hand goes on playing it. A name in
+   the hold list whose file has gone still shows up here, with the absence said, so that it can be let go.
+   Deleting is the one thing on this page with no undo, so that button asks twice before it does anything.</div>
  </section>
  <section class="wide"><h2>Speakers on the network</h2>
   <div class="row"><button id="scan">look again</button><span class="tag" id="scansay">not looked yet</span></div>
@@ -1737,7 +1912,10 @@ function render(){
  // time, which is why one name is enough to remember.
  let testing=null;
  $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td><button data-test="${esc(o.name)}">test</button><button data-stop="${esc(o.name)}"${o.name===testing?'':' hidden'}>stop</button></td></tr>`).join('');
- document.querySelectorAll('.switch').forEach(b=>b.onclick=()=>act(()=>api('/api/output',{name:b.dataset.name,enabled:b.getAttribute('aria-checked')!=='true'})));
+ // Only an output's switch carries data-name. A recording row uses data-hold for the
+ // same look, because "let the random drawing pick this" is a different ask and needs
+ // its own handler - one selector, one meaning.
+ document.querySelectorAll('.switch[data-name]').forEach(b=>b.onclick=()=>act(()=>api('/api/output',{name:b.dataset.name,enabled:b.getAttribute('aria-checked')!=='true'})));
  document.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>{ const out=b.dataset.test;
   act(async()=>{ testing=out; b.nextElementSibling.hidden=false;
    // Whatever becomes of the request, this row has nothing to stop afterwards: a test
@@ -1769,10 +1947,10 @@ function render(){
  $('#credit').innerHTML=`muezzin ${esc(st.version||'')} · MIT · `
   +(st.attribution?`written by ${esc(st.attribution)}, with an AI assistant`
                   :'written by whoever set this up, with an AI assistant');
- renderMethod();renderSound();renderFound();renderWhere();
+ renderMethod();renderSound();renderLibrary();renderFound();renderWhere();
  syncYaml();
  $('#save').disabled=$('#reload').disabled=st.read_only;
- document.querySelectorAll('.switch,[data-test],[data-stop],.rename').forEach(b=>b.disabled=st.read_only);
+ document.querySelectorAll('.switch,[data-test],[data-stop],.rename,[data-hold],[data-put],[data-put-go],[data-rm]').forEach(b=>b.disabled=st.read_only);
  // Checking numbers and finding a place stay live on a read-only panel: looking
  // changes nothing. Only the buttons that write a line into the profile go dark.
  ['#preset','#asr','#applymethod','#hijminus','#hijplus','#applysound','#upload','#file','#writewhere'].forEach(s=>{ $(s).disabled=st.read_only; });
@@ -1828,6 +2006,48 @@ function renderSound(){
  });
  $('#soundsay').textContent='nothing changed';
 }
+function renderLibrary(){
+ // The folder is the library, so this is a listing of what is on the disk rather than
+ // a list of choices: each row says how big the recording is, which events hold its
+ // name, and whether the random drawing may pick it. The names are what matters, not
+ // the paths - the daemon only ever reads one level deep in media_dir - so a row is
+ // addressed by its name and the profile is written by that name too. Sizes are
+ // rounded up, because a recording that reads 0 KB is a recording nobody trusts.
+ const box=$('#library');
+ const lib=st.media_library||[];
+ const size=b=>b==null?'?':b>=1048576?(b/1048576).toFixed(1)+' MB':Math.max(1,Math.round(b/1024))+' KB';
+ const rows=lib.map(f=>{
+  const who=f.named_by.length?f.named_by.map(esc).join(', '):'<span class="unknown">nothing plays it</span>';
+  const on=`<button class="switch" data-hold="${esc(f.name)}" aria-checked="${f.excluded?'false':'true'}"`
+   +` aria-label="let the drawing pick ${esc(f.name)}"></button>`;
+  // A held-back name whose file has gone has nothing to play, add or delete: there is
+  // only the hold to let go, and the switch beside it is how.
+  const put=f.missing?'<span class="unknown">the file is gone from the folder</span>'
+   :`<select data-put="${esc(f.name)}">${(st.events||[]).map(e=>`<option>${esc(e.name)}</option>`).join('')||'<option value="">(no events yet)</option>'}</select>`
+   +`<button data-put-go="${esc(f.name)}">add to</button><button data-rm="${esc(f.name)}">delete</button>`;
+  return `<tr><td>${esc(f.name)}</td><td>${size(f.bytes)}</td><td>${who}</td><td>${on}</td><td>${put}</td></tr>`;
+ }).join('');
+ box.innerHTML=rows||`<tr><td colspan=5>nothing in ${esc(st.media_dir)} yet</td></tr>`;
+ $('#libdir').textContent=lib.length+(lib.length===1?' recording in ':' recordings in ')+st.media_dir;
+ // aria-checked is "in the drawing", so a switch that is on and gets pressed is being
+ // switched off: the ask is to hold it back.
+ document.querySelectorAll('[data-hold]').forEach(b=>b.onclick=()=>{ const n=b.dataset.hold,
+  hold=b.getAttribute('aria-checked')==='true'; let j=null;
+  act(async()=>{ j=await api('/api/library/hold',{name:n,excluded:hold}); },
+   ()=>say(j.unchanged?(hold?n+' was already held back':n+' was already in the drawing'):
+    (hold?'the drawing will skip '+n:'the drawing can pick '+n+' again'),'ok')); });
+ document.querySelectorAll('[data-put-go]').forEach(b=>b.onclick=()=>{ const n=b.dataset.putGo,
+  ev=b.closest('td').querySelector('[data-put]').value; let j=null;
+  act(async()=>{ j=await api('/api/library/insert',{name:n,event:ev}); },
+   ()=>say(j.event+' now plays '+j.playlist.join(' then '),'ok')); });
+ // Deletion has no undo, so the first press only changes the question, and the answer
+ // is not stored anywhere: the next poll redraws the row and the button is a plain
+ // delete again. A recording an event names is refused by the daemon, not here, so
+ // the reason that comes back names the event that is in the way.
+ document.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{ const n=b.dataset.rm;
+  if(b.dataset.sure!=='1'){ b.dataset.sure='1'; b.textContent='sure? gone for good'; return; }
+  act(()=>api('/api/library/delete',{name:n}),()=>say(n+' is gone from the folder','ok')); });
+}
 function renderFound(){
  const box=$('#found');
  const silent=(SC&&SC.found&&SC.found.silent)||[];
@@ -1864,9 +2084,14 @@ async function applySound(){
  let sent=0;
  for(const s of picks){
   const at=s.dataset.at, friday=s.dataset.friday==='1';
-  const ev=clipFor(at,friday), have=ev&&ev.media&&ev.media.length?ev.media[0]:'';
+  const ev=clipFor(at,friday), all=(ev&&ev.media)||[], have=all[0]||'';
   if(s.value===have) continue;
-  await api('/api/audio',{at,friday,media:s.value?[s.value]:[]});
+  // The box decides what the prayer starts with. Whatever sits after it in the playlist
+  // was put there underneath - by the Recordings card, or by hand in the profile - so
+  // changing the head must not quietly drop the dua somebody placed after it: the tail
+  // goes back with the new head. Choosing (no clip) takes the head away and leaves the
+  // rest, which is what the box is saying.
+  await api('/api/audio',{at,friday,media:s.value?[s.value].concat(all.slice(1)):all.slice(1)});
   sent++;
  }
  return sent;

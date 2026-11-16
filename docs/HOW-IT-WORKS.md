@@ -519,6 +519,21 @@ anything would leave the recording playing. An event that names nothing and draw
 nothing is refused at load time, and an event that asks for more than the folder can
 offer plays what the folder has and says how short it was, rather than going quiet.
 
+The page has a card for that folder rather than a form for it: **Recordings in the
+folder** lists every file `media_dir` holds, with the events whose `media:` names each
+one, and beside each row a switch, an **add to** and a delete. `POST /api/library/hold`
+writes the switch into `library: exclude:` — into the profile, because the drawing reads
+the profile, so a hold kept as page state would be forgotten by the next Fajr.
+`POST /api/library/insert` appends a recording to the end of one event's playlist, which
+is where a dua after the adhan goes, and the answer says the order out loud.
+`POST /api/library/delete` refuses while any event still holds the name — `dua.mp3 is
+what dhuhr-nudge, friday-tune still plays; give them something else first, or delete the
+event` — because deleting is the one write on this page with no undo, and an event
+firing at its minute into a file that is no longer there is the failure this program
+exists to avoid; the button asks twice as well. A name in `exclude:` whose file has gone
+stays in the listing with the absence said, because it is still a line in the profile and
+the switch beside it is the only way to let it go.
+
 `kind: file` is the output you point at no speaker. It copies the recording that
 would have played into a folder, which is how you watch what the schedule actually
 does before you let it wake the house, and how a machine with no audio device - a

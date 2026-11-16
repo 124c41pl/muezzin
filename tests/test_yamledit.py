@@ -244,6 +244,65 @@ def test_a_field_of_a_block_reads_back_in_either_style():
     assert ye.block_value(nested, "method", "asr_shadow") is None
 
 
+def test_a_list_field_of_a_block_reads_back_whichever_way_it_was_written():
+    """`library: exclude:` holds back the names of recordings, and a list of names goes
+    either between brackets on the field's line or one name to a line under it. Whoever
+    keeps a hold list by hand writes it the second way and then presses the switch on the
+    page, so the page has to see one list rather than two shapes."""
+    flow_form = "library:\n  exclude: [a.mp3, b.mp3]\n"
+    block_form = 'library:\n  exclude:\n    - a.mp3\n    - "b mp3.mp3"\n'
+    assert ye.block_list(flow_form, "library", "exclude") == ["a.mp3", "b.mp3"]
+    assert ye.block_list(block_form, "library", "exclude") == ["a.mp3", "b mp3.mp3"]
+    assert ye.block_list("library: {exclude: [a.mp3]}\n", "library", "exclude") == ["a.mp3"]
+    assert ye.block_list("library:\n  exclude: []\n", "library", "exclude") == [], \
+        "an empty hold list is a decision somebody made, not the absence of one"
+    assert ye.block_list("library:\n", "library", "exclude") is None
+    assert ye.block_list("media_dir: media\n", "library", "exclude") is None
+    assert ye.block_list("library:\n  # exclude: [a.mp3]\n", "library", "exclude") is None, \
+        "a commented-out hint is not a recording being held back"
+    below = ("library:\n  exclude: [a.mp3]\nevents:\n  - name: fajr-adhan\n"
+             "    media: [a.mp3]\n")
+    assert ye.block_list(below, "library", "exclude") == ["a.mp3"], \
+        "the events block below is not part of the list"
+
+
+def test_a_list_field_is_written_the_way_this_file_writes_lists(tmp_path):
+    """`scalar()` would render a Python list with single quotes, which happens to parse
+    and falls over on a name with an apostrophe in it. `flow()` is how every other list
+    this module writes is written, so the line looks like the rest of the file."""
+    new = ye.set_in_block("library:\n  exclude: [a.mp3]\n", "library",
+                          {"exclude": ["a.mp3", "sara's nest.mp3"]})
+    assert "exclude: [a.mp3, \"sara's nest.mp3\"]" in new, new
+    assert "exclude: \"['a.mp3'" not in new, "a printed Python list is not a YAML list"
+    fresh = ye.set_in_block("library:\n", "library", {"exclude": ["a.mp3"]})
+    assert fresh == "library:\n  exclude: [a.mp3]\n", \
+        "a field being written for the first time is the same field"
+    noted = ye.set_in_block("library:\n  # exclude: [a.mp3]\n", "library", {"exclude": ["b.mp3"]})
+    assert "  exclude: [b.mp3]" in noted and "# exclude: [a.mp3]" in noted, \
+        "the example comment stays where it was as an explanation"
+    head = ("location: {latitude: 40.7128, longitude: -74.006, timezone: America/New_York}\n"
+            "media_dir: media\nout_dir: out\n")
+    assert _loads_ok(head + new, tmp_path) is not None
+
+
+def test_the_items_under_a_list_field_go_when_the_field_is_rewritten(tmp_path):
+    """The old value may have been the same list written one name to a line. Replacing
+    the field's line with a bracketed list and leaving those names behind gives a field
+    with two values, which is not a style choice: it is a file the loader refuses, and a
+    refused file is a morning with no adhan in it."""
+    text = ("library:\n  exclude:\n    - a.mp3\n    - b.mp3\n"
+            "events:\n  - name: fajr-adhan\n    at: fajr\n    media: [a.mp3]\n")
+    new = ye.set_in_block(text, "library", {"exclude": ["c.mp3"]})
+    assert "exclude: [c.mp3]" in new, new
+    assert "    - a.mp3" not in new and "    - b.mp3" not in new, "those lines were the value"
+    assert "  - name: fajr-adhan" in new and "    at: fajr" in new, \
+        "the events block below is not the list"
+    profile = _loads_ok("location: {latitude: 40.7128, longitude: -74.006, "
+                        "timezone: America/New_York}\nmedia_dir: media\nout_dir: out\n" + new,
+                        tmp_path)
+    assert profile.library_exclude == ["c.mp3"]
+
+
 def test_a_list_written_on_one_line_is_refused_rather_than_mangled():
     with pytest.raises(ValueError) as exc:
         ye.append_entry("events: []\n", "events",

@@ -185,6 +185,72 @@ def block_value(text: str, key: str, field: str) -> Optional[str]:
     return None
 
 
+def block_list(text: str, key: str, field: str) -> Optional[list[str]]:
+    """Read a list field of a block, however the list itself was written.
+
+    `library:` holds back the names of recordings, and a list of names goes either
+    between brackets on the field's line or one name to a line underneath it. The
+    page has to see the same list either way, because someone who keeps a hold list
+    by hand will write it the second way and then press the button on the page.
+
+    None means the field is not in the file at all; an empty list means it is there
+    and empty, which is a different thing to say.
+    """
+    found = find_block(text, key)
+    if found is None:
+        return None
+    lines = _split(text)
+    start, end = found
+    head = lines[start].split(":", 1)[1].strip()
+    if head.startswith("{"):
+        try:
+            parsed = yaml.safe_load("\n".join(lines[start:end])) or {}
+        except yaml.YAMLError:
+            return None
+        value = (parsed.get(key) or {}).get(field)
+        if value is None:
+            return None
+        return [str(v) for v in value if v not in (None, "")] if isinstance(value, list) else []
+    own = None
+    for i in range(start + 1, end):
+        body = lines[i].lstrip(" \t")
+        if not body or body.startswith("#"):
+            continue                       # a commented field is not a field
+        lead = len(lines[i]) - len(lines[i].lstrip(" \t"))
+        if own is None:
+            own = lead
+        if lead != own or not re.match(_kpat(field) + r":(\s|$)", body):
+            continue
+        rest = body.split(":", 1)[1].strip()
+        if rest.startswith("["):
+            try:
+                parsed = yaml.safe_load(re.split(r"\s+#", rest, maxsplit=1)[0])
+            except yaml.YAMLError:
+                return []
+            return [str(v) for v in parsed if v not in (None, "")] if isinstance(parsed, list) else []
+        out: list[str] = []
+        deeper = None
+        for following in lines[i + 1:end]:
+            body = following.lstrip(" \t")
+            if not body or body.startswith("#"):
+                continue
+            col = len(following) - len(following.lstrip(" \t"))
+            if body.startswith("- "):
+                if deeper is None:
+                    deeper = col
+                elif col != deeper:
+                    break
+                value = _value_of(body[2:])
+                if value:
+                    out.append(value)
+            elif col > own:
+                continue
+            else:
+                break
+        return out
+    return None
+
+
 _TRAILING = re.compile(r"([ \t]+#.*)$")
 
 
@@ -253,6 +319,11 @@ def set_in_block(text, key, edits):
             indent = lead or "  "
             break
     for field, value in edits.items():
+        # A list goes on the field's own line, in brackets, the way this module
+        # writes every other list it is handed. `scalar()` would render a Python
+        # list with single quotes, which happens to parse but is not how a person
+        # would ever write it, and breaks on a name that contains a quote.
+        rendered = flow(value) if isinstance(value, (list, tuple)) else scalar(value)
         hit = hint = None
         for i in range(start + 1, end):
             line = lines[i]
@@ -274,12 +345,23 @@ def set_in_block(text, key, edits):
         if hit is not None:
             tail = _TRAILING.search(lines[hit].rstrip("\r\n"))
             note = tail.group(1).rstrip() if tail else ""
-            lines[hit] = f"{indent}{field}: {scalar(value)}{note}\n"
+            lines[hit] = f"{indent}{field}: {rendered}{note}\n"
+            if isinstance(value, (list, tuple)):
+                # The old value may have been the same list written one item to a
+                # line. Those lines were the value, so they go with it; leaving
+                # them behind would be a field with two values and a file the
+                # loader refuses.
+                j = hit + 1
+                while j < end and lines[j].strip() and not lines[j].lstrip(" \t").startswith("#") \
+                        and lines[j].lstrip(" \t").startswith("- ") \
+                        and len(lines[j]) - len(lines[j].lstrip(" \t")) > len(indent):
+                    del lines[j]
+                    end -= 1
         elif hint is not None:
-            lines.insert(hint, f"{indent}{field}: {scalar(value)}\n")
+            lines.insert(hint, f"{indent}{field}: {rendered}\n")
             end += 1
         else:
-            lines.insert(start + 1, f"{indent}{field}: {scalar(value)}\n")
+            lines.insert(start + 1, f"{indent}{field}: {rendered}\n")
             end += 1
     _align_comments(lines, start, end, indent)
     return "".join(lines)
