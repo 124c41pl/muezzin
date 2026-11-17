@@ -1,11 +1,25 @@
 # Build the container image for amd64 and arm64 and publish it to this
-# repository's ghcr.io package, on a tag push. No personal token: the workflow
-# signs in to the registry with GITHUB_TOKEN, which is scoped to this run.
+# repository's ghcr.io package, on a tag push or by hand. No personal token: the
+# workflow signs in to the registry with GITHUB_TOKEN, which is scoped to this
+# run.
 name: image
 
 on:
   push:
     tags: ["v*"]
+
+  # A hand-started run is for the two times something has to be published without
+  # inventing a version: a base image with a hole in it, and a repository
+  # recreated under the same name whose tag pushes fired nothing. It asks for a
+  # tag instead of building the branch it happens to be started from, because the
+  # version guard below compares the tree with the version being published and a
+  # branch has no version to agree with.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing tag to build and publish, like v0.1.4"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -21,13 +35,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A hand-started run is started from a branch and has to build the
+          # commit the tag names, or it publishes an old version number built
+          # from whatever the branch holds, and the registry cannot show that
+          # anything is wrong. On a tag push inputs.tag is empty and this line is
+          # the default behaviour.
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: the tag and pyproject must agree
+        env:
+          WANT_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${WANT_TAG#v}"
           want="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
           if [ "$tag" != "$want" ]; then
-            echo "tag is v$tag but pyproject.toml says $want; fix the version first" >&2
+            echo "building $WANT_TAG but that commit's pyproject.toml says $want; fix the version first" >&2
             exit 1
           fi
           # The image is tagged with the version, not with the git tag: the
@@ -36,6 +59,24 @@ jobs:
           # Every documented pull command then fails for a stranger, and nothing
           # in the build complains.
           echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: a hand-started run may not move latest onto an older version
+        if: inputs.tag != ''
+        env:
+          WANT_TAG: ${{ inputs.tag }}
+        run: |
+          # This build also republishes `latest`, and the README points everybody
+          # who pulls without naming a version at it. Rebuilding 0.1.2 by hand
+          # would therefore leave the current release alone and quietly swap the
+          # image every untagged pull gets for an older one. Somebody patching an
+          # old release for a base-image hole wants that version built and latest
+          # untouched, which is what refusing here forces them to say out loud.
+          newest="$(git ls-remote --tags --refs origin 'refs/tags/v*' \
+                    | awk -F/ '{print $NF}' | sort -V | tail -1)"
+          if [ "$WANT_TAG" != "$newest" ]; then
+            echo "$WANT_TAG is not the newest tag; $newest is, and this run would move latest onto $WANT_TAG" >&2
+            exit 1
+          fi
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3

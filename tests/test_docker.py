@@ -147,3 +147,36 @@ def test_the_published_tag_is_the_one_the_readme_promises():
     assert f"docker pull ghcr.io/124c41pl/muezzin:{__version__}" in readme, \
         "the README must tell people to pull the version this package actually is"
     assert "ghcr.io/124c41pl/muezzin:v" not in readme, "no v-prefixed tag is ever published"
+
+
+def test_the_image_can_also_be_published_by_hand():
+    """A tag push is not the only day this build matters.
+
+    A base image with a hole in it has to be republished under the version
+    people already pull, and a repository recreated under the same name can take
+    its tags as a push that fires nothing at all: the registry still answers, the
+    releases still read perfectly, and nowhere does anything say the pipeline
+    behind them has never run once. A hand-started run fixes either case without
+    inventing a version number to force one through.
+
+    Both ways this can be wrong are invisible next to a green check mark. A
+    hand-started run that builds the branch it was started from publishes a
+    version number built from other code, and a hand-started run of an older tag
+    also republishes `latest`, which is what everybody who pulls without naming a
+    version ends up with.
+    """
+    doc = yaml.safe_load((ROOT / ".github" / "workflows" / "image.yml").read_text(encoding="utf-8"))
+    triggers = doc.get("on") or doc.get(True)  # `on` is a boolean key under YAML 1.1
+    assert "workflow_dispatch" in triggers, "the image cannot be rebuilt without inventing a release"
+    assert "tag" in triggers["workflow_dispatch"]["inputs"], \
+        "a hand-started run with no tag builds the branch it was started from and publishes a version number"
+
+    steps = doc["jobs"]["build"]["steps"]
+    checkout = next(step for step in steps if str(step.get("uses", "")).startswith("actions/checkout"))
+    assert "inputs.tag" in checkout.get("with", {}).get("ref", ""), \
+        "a hand-started run checks out the branch it was dispatched from, not the tag it names"
+
+    guards = [step for step in steps if "latest" in step.get("run", "")]
+    assert guards, "nothing stops a hand-built older version taking over latest"
+    assert any("inputs.tag" in str(step.get("if", "")) for step in guards), \
+        "the latest guard runs on tag pushes too, where there is no input to compare against"
