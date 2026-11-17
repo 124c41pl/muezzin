@@ -156,9 +156,9 @@ starter leaves the entries commented out under `outputs:`.
 
 ```yaml
 outputs:
-  - name: landing-group
+  - name: landing
     kind: google_cast
-    target: Landing group             # spelled exactly as `muezzin devices` prints it
+    target: Landing speaker           # spelled exactly as `muezzin devices` prints it
     volume: 0.5                  # that speaker's level; the machine's own stays yours
 ```
 
@@ -240,7 +240,9 @@ just added is actually reachable.
 
 On it: three days of times for the method in the profile; the next events and
 which output each resolves to; every output with a name you can type in, an on/off
-switch, a level slider for the speakers muezzin is allowed to ask a level of, and a
+switch, a level slider for the speakers muezzin is allowed to ask a level of (a row
+whose target the network called a speaker group says so instead, because a group's
+level belongs to the Google Home app), and a
 **test** button; the method dropdown; a clip per prayer and a Friday
 column; the recordings in your folder, each with the prayers that play it, a switch for
 the random drawing and an **add to**; what is on the LAN right now, with **use** /
@@ -345,6 +347,13 @@ the device list, along with the player it picked for itself.
   means network speakers. And muezzin never changes a computer's volume: the
   `volume:` knob is for the speakers it casts to, while the machine it runs on —
   and any box on the LAN — plays at whatever level you set on that machine.
+* A **speaker group** has no level of its own to be asked for. It is a name several
+  speakers share, and measuring it here: a level asked of the whole-house group reaches
+  its receiver, which answers by naming the four speakers inside it and the level each
+  of them is at — and not one of those four numbers moves, whatever it is asked at. So
+  the page puts no slider on a group's row and refuses to write a level onto one,
+  because a knob that changes nothing is worse than no knob. The levels to change are
+  the speakers' own, in the Google Home app; or give each speaker its own output.
 * On macOS the firewall asks whether Python may receive incoming connections the
   first time you run a daemon or a box. Say allow, or the page will not answer and
   discovery will not work.

@@ -1065,19 +1065,36 @@ def test_a_rename_that_would_collide_or_lead_nowhere_is_refused(two_outputs):
 # already applied it to everything it plays through that output - a test included - so
 # all the page has to do is write that number for the kinds it is allowed to write it
 # for. A computer's own level, whether it is the machine running this program or a box
-# on the LAN, stays the property of whoever is sitting at it.
+# on the LAN, stays the property of whoever is sitting at it. A speaker group is the
+# third kind of answer: it is a name several speakers share, and no program outside the
+# Google Home app can move them together, so there is no number to write for it.
 
 CAST_AND_PC = (BASE.replace('  - name: outbox\n    kind: file\n    host: "{out}"\n',
                             '  - name: nest\n    kind: google_cast\n'
+                            '    target: "Study speaker"\n'
+                            '  - name: front-room\n    kind: google_cast\n'
                             '    target: "Whole-house group"\n'
                             '  - name: outbox\n    kind: file\n    host: "{out}"\n'
                             '  - name: this-pc\n    kind: pc_speakers\n'))
 
 
+def one_speaker_and_one_group(timeout=5.0, ask_members=True):
+    """What the network says when asked: one speaker of our own, and one group that is
+    several speakers wearing one name. Faked because the honest answer about a group is a
+    fact about the LAN, and a test has no LAN to ask."""
+    return {"speakers": [{"name": "Study speaker", "model": "Nest Mini", "id": "study",
+                          "address": "192.168.0.23", "port": 8009, "group": False}],
+            "groups": [{"name": "Whole-house group", "id": "abc", "group": True,
+                        "members": ["Study speaker"], "membership_known": True, "silent": []}],
+            "boxes": [], "asked": 1, "silent": []}
+
+
 @pytest.fixture
-def one_speaker_one_computer(tmp_path):
-    """One speaker muezzin casts to, one folder, and the computer's own speakers: the
-    three answers to "may I ask this thing for a level?"."""
+def one_speaker_one_computer(tmp_path, monkeypatch):
+    """One speaker muezzin casts to, one group it casts to, one folder, and the computer's
+    own speakers: the four answers to "may I ask this thing for a level?"."""
+    from muezzin import web as web_module
+    monkeypatch.setattr(web_module, "scan_speakers", one_speaker_and_one_group)
     web, out, runner = _serve(tmp_path, CAST_AND_PC)
     try:
         yield web, out, tmp_path
@@ -1138,7 +1155,7 @@ def test_a_computer_has_no_level_for_the_page_to_move(one_speaker_one_computer):
     assert "volume" not in on_disk
     _, st = call(web.port, "/api/state")
     assert {o["name"]: o["takes_volume"] for o in st["outputs"]} == {
-        "nest": True, "outbox": False, "this-pc": False}, \
+        "nest": True, "front-room": True, "outbox": False, "this-pc": False}, \
         "the page is told which kinds it may offer a slider for, rather than guessing"
 
 
@@ -1155,6 +1172,49 @@ def test_a_level_that_makes_no_sense_is_refused_before_the_speaker_is_shouted_at
         status, reply = call(web.port, "/api/output/volume", payload)
         assert status == 400 and why in reply["error"], (payload, status, reply)
     assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before
+
+
+def test_a_speaker_group_is_never_handed_a_level(one_speaker_one_computer):
+    """The measured reason this exists. A level asked of a Google Home group reaches its
+    receiver, which answers with the speakers inside it and the levels they are at, and
+    after the ask every one of those numbers is exactly where the Home app left it - four
+    speakers, four levels, none of them moved. So the number is written, the daemon sends
+    it, and the room is untouched, which is the worst shape a control can have: it looks
+    like it worked. Hence the page is told what the network called the target, and the ask
+    is refused with the reason said out loud."""
+    web, _, tmp_path = one_speaker_one_computer
+    _, st = call(web.port, "/api/state")
+    rows = {o["name"]: o for o in st["outputs"]}
+    assert rows["front-room"]["target_kind"] == rows["nest"]["target_kind"] == "", \
+        "nobody has looked at the network yet, and not knowing is not the same as a group"
+    call(web.port, "/api/speakers")               # the look the page takes for itself
+    _, st = call(web.port, "/api/state")
+    rows = {o["name"]: o for o in st["outputs"]}
+    assert rows["front-room"]["target_kind"] == "group"
+    assert rows["nest"]["target_kind"] == "speaker", "a speaker of its own keeps its slider"
+    assert rows["outbox"]["target_kind"] == "", "a folder is nobody's speaker"
+    before = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    status, reply = call(web.port, "/api/output/volume", {"name": "front-room", "volume": 0.1})
+    assert status == 400 and "speaker group" in reply["error"], reply
+    assert "0.1" not in (tmp_path / "muezzin.yaml").read_text(encoding="utf-8"), \
+        "a refusal that still wrote the number is not a refusal"
+
+
+def test_the_page_says_a_group_has_no_level_of_its_own(panel):
+    """Where the words live, since a refusal is worth little if the page still offers the
+    slider and the reason only turns up once it has been pressed. The row for a group's
+    output says whose level it is, and the card says what becomes of a level already
+    written there, because that is the situation a person arrives at: the number is in
+    their profile from before, and the speakers never heard it."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert "target_kind=='group'" in html, "the row is built from what the network said"
+    assert "a group: not ours" in html
+    assert "each left at whatever level the Google Home app set it to" in html
+    assert "a level written for a group stays unused" in html
+    assert "st.outputs.some(o=>o.takes_volume)" in html, \
+        "a fresh page goes and looks at the network, because the row is only honest once "\
+        "the page knows whether the name behind it is one speaker or a group"
 
 
 # ---- the folder of recordings, which is the library -------------------------

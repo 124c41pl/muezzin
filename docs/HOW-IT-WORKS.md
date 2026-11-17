@@ -454,7 +454,7 @@ outputs:
   - name: house-group
     kind: google_cast
     target: Whole-house group             # Google Home groups work, including one speaker
-    volume: 0.25
+                                          # inside them; a group has no level of its own
   - name: pc
     kind: pc_speakers              # this machine's default output, at its own level
   - name: attic-pi
@@ -478,7 +478,7 @@ events:
     offset_min: -5                 # 5 minutes before Fajr
     media: [fajr.mp3]
     targets: [study, house-group] # per-event: this is the part that is missing elsewhere
-    volume: 0.5                  # one level for the cast speakers in this event
+    volume: 0.5                  # one level for the cast speakers this event reaches
   - name: sunrise-tune
     at: sunrise
     media: [dua.mp3]
@@ -687,6 +687,24 @@ Three honest limits of this seam:
   opened. Since the level is applied by the same code that plays an adhan, the
   number you set is the number a **test** comes out at, which is the part that used
   to be decided by whoever last touched the speaker.
+* **a speaker group has no level of its own.** A group is a name several speakers
+  share, so asking that name for a level is asking several levels at once - and that is
+  what the ask looks like on the wire. Measured on this LAN against a four-speaker Home
+  group: the `SET_VOLUME` reaches the group's receiver, which answers with a multizone
+  message naming Tabby at 0.16, Kitchen at 0.41, Alex at 0.25 and Office at 0.46; the
+  ask is sent again at 1.0, at 0.35 and at 0.1, and after each one those four numbers
+  are exactly where the Google Home app left them. The installed pychromecast has no
+  multizone support to reach for either, and several speakers being made quieter
+  together is something only the Home app does on this LAN. So the page is told what the last scan called each output's target -
+  `target_kind` in the state, a fact kept separate from `takes_volume`, which is about
+  the kind of output rather than about what its name covers - and a row the network
+  called a group says whose level it is instead of offering a slider. Asking a group for
+  a level is refused before the profile is opened, because the alternative is a number
+  in the file that nothing honours. A `volume:` written onto a group by hand still goes
+  out with each play, since a group assembled in a browser tab is a different thing that
+  does answer to it, and one line in the log says that its members will not hear it. The
+  levels that can be heard belong to the individual speakers: set them in the Home app,
+  or give each speaker its own output.
 * a command-line player is a separate process, so what comes back from a recording
   it cannot decode is an exit code rather than a diagnosis. `mpg123` and `ffplay`
   cover what a Cast speaker accepts; `paplay` and `aplay` are wav only, which is why

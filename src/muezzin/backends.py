@@ -192,6 +192,9 @@ class CastBackend(Backend):
         self._live = []
         self._asked = False
         self._live_lock = threading.Lock()
+        # Whether the thing said about a group's level has been said yet: it is not news
+        # five times a day, and a person reading the log wants it once, not a copy per event.
+        self._group_level_said = False
 
     def stop(self):
         """Tell the speaker to stop, if we are the one playing through it.
@@ -241,6 +244,20 @@ class CastBackend(Backend):
             )
         if not dev["id"] or not dev["address"]:
             raise BackendError(f"{self.cfg.name}: {dev['name']!r} advertised no uuid/address")
+        # Measured on a LAN with a Google Home group in it: a level asked of the group goes
+        # into its receiver and nothing happens - the reply names the speakers in the group
+        # and the levels they are at, and after the ask every one of them is still exactly
+        # where the Home app left it, and nothing outside that app moves several speakers
+        # together. The ask still goes out below, because a group assembled in a browser
+        # tab is a different thing that does answer to it; what would be a lie is a log
+        # that lets somebody read `volume: 0.4` and believe four rooms were asked for 40%.
+        if dev["group"] and not self._group_level_said:
+            self._group_level_said = True
+            log.warning("%s: %s is a speaker group, so the level written for it (%s) is not a "
+                        "level anyone will hear: a group hands the ask to its speakers and they "
+                        "keep the levels the Google Home app gave them. Set the level in that app, "
+                        "or give each speaker its own output",
+                        self.cfg.name, self.cfg.target, self.cfg.volume)
         # `id` in the _googlecast mDNS record is the device (or group) uuid.
         # From here the connection belongs to us, so the try starts at the moment
         # we make it: a speaker that is asleep or has a stale mDNS address fails

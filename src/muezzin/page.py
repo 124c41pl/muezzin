@@ -178,7 +178,7 @@ PAGE = """<!doctype html>
  <section><h2>Next events</h2><table><thead><tr><th>when</th><th>event</th><th>speakers</th><th>media</th></tr></thead><tbody id="upcoming"></tbody></table></section>
  <section class="wide"><h2>Outputs</h2><table id="outputstbl"><thead><tr><th>name</th><th>kind</th><th>target</th><th>on</th><th>level</th><th></th></tr></thead><tbody id="outputs"></tbody></table>
   <div class="fine">A speaker muezzin has to find on the network gets the recording a few seconds before the time it belongs to, so the first note is already in the air when that time arrives; the number in brackets is that head start. A profile sets it per speaker with lead_seconds, and 0 means exactly on the minute. Everywhere else on this page the times shown are the computed ones.</div>
-  <div class="fine">The level is what muezzin asks a speaker for the moment it starts playing, so a test comes out at the same loudness as an adhan instead of at whatever the room happened to be left at. It is muezzin's to ask only of a speaker it casts to: the level of the computer running this program, or of a box on the LAN, belongs to whoever is sitting at that machine, and this page never touches it. A speaker with nothing written in the profile is asked for 50%.</div>
+  <div class="fine">The level is what muezzin asks a speaker for the moment it starts playing, so a test comes out at the same loudness as an adhan instead of at whatever the room happened to be left at. It is muezzin's to ask only of a speaker it casts to: the level of the computer running this program, or of a box on the LAN, belongs to whoever is sitting at that machine, and this page never touches it. A speaker with nothing written in the profile is asked for 50%. A row whose target is a speaker group has no slider: a group is several speakers, each left at whatever level the Google Home app set it to, and nothing outside that app moves them together - so a level written for a group stays unused until the output points at one speaker.</div>
   <div class="row"><select id="media"></select><span class="tag" id="mediaurl"></span></div>
  </section>
  <section class="wide"><h2>Where</h2>
@@ -336,10 +336,13 @@ function render(){
  // holding a stream that will not end should be let go. The daemon takes one test at a
  // time, which is why one name is enough to remember.
  let testing=null;
- $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td>${o.takes_volume?`<input type="range" min="0" max="1" step="0.05" data-level="${esc(o.name)}" value="${o.volume==null?0.5:o.volume}" aria-label="how loud to ask ${esc(o.name)} for"> <span class="tag">${o.volume==null?'not set':Math.round(o.volume*100)+'%'}</span>`:'<span class="unknown">not ours to ask</span>'}</td><td><button data-test="${esc(o.name)}">test</button><button data-stop="${esc(o.name)}"${o.name===testing?'':' hidden'}>stop</button></td></tr>`).join('');
+ $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td>${o.takes_volume&&o.target_kind=='group'?'<span class="unknown">a group: not ours</span>':o.takes_volume?`<input type="range" min="0" max="1" step="0.05" data-level="${esc(o.name)}" value="${o.volume==null?0.5:o.volume}" aria-label="how loud to ask ${esc(o.name)} for"> <span class="tag">${o.volume==null?'not set':Math.round(o.volume*100)+'%'}</span>`:'<span class="unknown">not ours to ask</span>'}</td><td><button data-test="${esc(o.name)}">test</button><button data-stop="${esc(o.name)}"${o.name===testing?'':' hidden'}>stop</button></td></tr>`).join('');
  // A slider for a level exists only where the daemon said it may: the state's takes_volume
  // comes from the backend class, so a computer - the one running this page, or a box on the
- // LAN - has no level to move, only words saying whose it is.
+ // LAN - has no level to move, only words saying whose it is. The other half of the rule is
+ // target_kind, which is what the last scan of the network called that name: a speaker group
+ // is several speakers with several levels and no level of its own, and nothing outside the
+ // Google Home app moves them together, so a group's row says so instead of offering a slider.
  document.querySelectorAll('[data-level]').forEach(s=>s.onchange=()=>{ const out=s.dataset.level,
   level=Number(s.value), pct=Math.round(level*100); let vol=null;
   s.closest('td').querySelector('.tag').textContent=pct+'%';
@@ -738,8 +741,16 @@ function drawMap(){
 }
 // the scan is expensive and the daemon caches it, so arriving at the page shows
 // what was last seen if there is a last-seen; the button is for when speakers
-// have been added or moved rooms
-async function load(){ st=await api('/api/state'); if(!SC&&st.scan_at) SC=await api('/api/speakers'); render(); }
+// have been added or moved rooms. One exception: an output that may be asked for a
+// level is only honest once the page knows whether the name behind it is one speaker
+// or a group, and the network is the only thing that says which - so a page with such
+// an output and no scan yet goes and looks. In the background, because a scan is ten
+// seconds of broadcasts and the rest of the page has no business waiting for one, and
+// only while nothing has been seen, since a target the scan did not find is a
+// different answer from a group and is not chased a second time.
+async function load(){ st=await api('/api/state'); if(!SC&&st.scan_at) SC=await api('/api/speakers');
+ else if(!SC&&st.outputs.some(o=>o.takes_volume)) api('/api/speakers').then(r=>{ if(!r.scanning){ SC=r; renderFound(); render(); } });
+ render(); }
 $('#yaml').addEventListener('input',()=>{ $('#yaml').dataset.dirty='1'; });
 $('#refresh').onclick=()=>act(load);
 $('#save').onclick=()=>act(()=>api('/api/config',{text:$('#yaml').value}),()=>{ $('#yaml').dataset.dirty=''; say('saved and reloaded','ok'); });

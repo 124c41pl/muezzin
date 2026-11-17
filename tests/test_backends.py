@@ -222,6 +222,36 @@ def test_the_level_a_speaker_is_asked_for_is_the_one_the_profile_wrote():
     assert asked(40, None) == 1.0, "a level that left the page is clamped on the way to the speaker"
 
 
+def test_a_group_is_said_out_loud_to_have_no_level_of_its_own(tmp_path, monkeypatch, caplog):
+    """Measured on a LAN with a Google Home group in it: the ask goes into the group's
+    receiver, which answers with the speakers inside it and the levels they are at, and
+    after the ask every one of those numbers is where the Home app left it. The ask still
+    goes out below, because a group assembled in a browser tab is a different thing that
+    does answer to it; what would be a lie is a log that lets somebody read `volume: 0.4`
+    and believe four rooms were asked for 40%. Said once per output: this is not news five
+    times a day."""
+    import pychromecast
+
+    clip = tmp_path / "fajr.wav"
+    clip.write_bytes(b"RIFF")
+    monkeypatch.setattr(backends, "find_cast", lambda target, tries=2: (
+        device("Whole-house group", group=True,
+               id="0e5a9d4f-3f2f-4a4b-9e1c-1f3b2c8d9e0a"), []))
+
+    def walked_out(info):
+        raise OSError("the group's receiver closed the door")
+
+    monkeypatch.setattr(pychromecast, "get_chromecast_from_host", walked_out)
+    b = CastBackend(OutputConfig(name="whole-house", kind="google_cast",
+                                 target="Whole-house group", volume=0.4))
+    with caplog.at_level("WARNING"):
+        for _ in range(2):
+            with pytest.raises(OSError):
+                b.play([clip])
+    assert "whole-house" in caplog.text and "0.4" in caplog.text
+    assert caplog.text.count("is a speaker group") == 1, "once, not once per event"
+
+
 def test_the_box_is_told_what_to_play_and_nothing_about_its_volume(tmp_path, monkeypatch):
     """What the daemon puts on the wire for a box is media and nothing else. A box
     is somebody's computer, and a request that also moved its volume would be

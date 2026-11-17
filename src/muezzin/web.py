@@ -413,6 +413,13 @@ class WebPanel:
                          # from the backend class, so the page cannot offer a slider for a
                          # computer whose level belongs to the person using it
                          "takes_volume": bool(getattr(KINDS.get(o.kind), "takes_volume", False)),
+                         # ... and what the LAN said that particular target is, because a
+                         # speaker group is not a speaker: it is several of them, each at
+                         # whatever level the Google Home app left them at, and nobody
+                         # outside that app moves them together. "" means the last scan did
+                         # not see the name, which the page says as itself.
+                         "target_kind": (self.cast_target_kind(str(o.target or ""))
+                                         if o.kind == "google_cast" else ""),
                          # how early this speaker gets handed the recording, so the
                          # first note is in the air when the printed time arrives
                          "lead": _lead_shown(lead_for(o))}
@@ -982,6 +989,45 @@ class WebPanel:
             reply["scanning"] = True
         return reply
 
+    def cast_target_kind(self, target: str) -> str:
+        """What the last speaker scan called a Cast target: "group", "speaker", or "".
+
+        A group is not a speaker with more speakers behind it. Measured on a real
+        LAN: ask a group for a level and its receiver replies with the speakers it
+        leads and each of their levels, and not one of those numbers moves - the ask
+        is accepted by a channel that has nothing to do with the four rooms. Nothing
+        outside the Google Home app moves several speakers together, so a profile
+        pointing at a group has no level for muezzin to write. The page has to know
+        which of the two a `target:` names, or it offers a slider that writes a number
+        nothing honours, which is worse than saying nothing.
+
+        Answered from the cache, never with a scan of its own: this runs while
+        building the state the page polls every few seconds, and one scan is ten
+        seconds of broadcasts. "" means the last scan did not see that name, which is
+        different news from being a group and keeps its own words on the page.
+        """
+        scan = self._scan or {}
+        if any(r.get("name") == target for r in scan.get("groups", [])):
+            return "group"
+        if any(r.get("name") == target for r in scan.get("speakers", [])):
+            return "speaker"
+        return ""
+
+    def warm_cast_scan(self) -> None:
+        """Take the first speaker scan if this daemon has never taken one.
+
+        Only for a question that cannot be answered without it, and only once:
+        whether a target is a group decides whether a level can land at all, and
+        finding that out is worth one scan the first time somebody asks. The answer
+        then sits in the same cache the page's speaker card reads.
+        """
+        if self._scan is not None:
+            return
+        try:
+            self.speakers()
+        except Exception:                            # discovery is never fatal
+            log.info("no speaker scan, so nobody can say whether a target is a group")
+
     def add_speaker(self, payload: dict) -> dict:
         """Point an output at a speaker the scan just saw.
 
@@ -1136,6 +1182,11 @@ class WebPanel:
           level - the machine running muezzin, or the Pi in the attic - belongs to
           whoever is sitting at it, which is the same rule the preview on this page
           follows.
+        * and only onto a target that has a level of its own. A speaker group is a name
+          several speakers share: asked for a level its receiver answers with those
+          speakers and their own levels, and none of them move, because nothing outside
+          the Google Home app moves several speakers together. Writing the number anyway
+          leaves a profile that looks configured and a room that is not.
         * `null` puts it back to not saying anything, which on a Cast device means
           "whatever it is at right now".
         * the number is checked here, not at 5 am: a `volume:` of 40 loads, and a Cast
@@ -1156,6 +1207,12 @@ class WebPanel:
             if not 0.0 <= level <= 1.0:
                 raise ValueError(f"{level} is not a level: a speaker level is a number "
                                  "between 0 and 1, like 0.6")
+        # Whether this output's target is a group is a question about the network, and the
+        # answer can cost a scan, so it is asked before the profile is locked: nobody else's
+        # edit waits on a broadcast. The loaded profile is only read here, never written.
+        prior = next((o for o in self.runner.profile.outputs if o.name == name), None)
+        if prior is not None and prior.kind == "google_cast" and prior.target:
+            self.warm_cast_scan()
         with self._editing() as text:
             rows = yamledit.entries(text, "outputs")
             row = next((r for r in rows if yamledit.entry_scalar(r, "name") == name), None)
@@ -1170,6 +1227,14 @@ class WebPanel:
                 raise ValueError(f"{name} is {kind}: muezzin only asks a speaker it casts to "
                                  "for a level, and the level of a computer belongs to whoever "
                                  "is sitting at it")
+            asked_of = (yamledit.entry_scalar(row, "target") or "").strip()
+            if self.cast_target_kind(asked_of) == "group":
+                raise ValueError(
+                    f"{name} points at {asked_of!r}, which the network says is a speaker group, "
+                    "not a speaker. A group has no level of its own to be asked for: asked, it "
+                    "answers with the speakers in it and the levels the Google Home app left "
+                    "them at, and none of those move. muezzin will not write a number nothing "
+                    "honours - point this output at one speaker, or set the group's level there")
             saved = self.save_config(yamledit.edit_entry(text, "outputs", row["index"],
                                                          {"volume": level}))
         saved["output"] = name
