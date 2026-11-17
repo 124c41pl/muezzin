@@ -55,11 +55,11 @@ def test_the_security_document_points_at_github():
 # at the end of one line and the rest at the start of the next.
 OTHER_PRODUCT = re.compile("(?is)" + "smart" + ".?" + "azan")
 
-# Text files are the ones that get read. Private working notes, unpacked
-# installers and the developer's own configs are not published here, and are not
-# this test's business.
-SKIP_TOP = {"out", "notes", "tools", "extracted", "extracted2", "issdir",
-            "media", "__pycache__"}
+# Text files are the ones that get read. Private working notes, the research
+# folder, unpacked installers and the developer's own configs are not published
+# here, and are not this test's business.
+SKIP_TOP = {"out", "notes", "research", "tools", "extracted", "extracted2",
+            "issdir", "media", "__pycache__"}
 TEXT_SUFFIXES = {".py", ".md", ".yml", ".yaml", ".toml", ".txt", ".cfg", ".ini",
                  ".html", ".in"}
 

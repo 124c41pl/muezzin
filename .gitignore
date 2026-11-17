@@ -30,14 +30,17 @@ _smoke.yaml
 # the old name, in case a config file still carries it
 azankit.yaml
 
-# private working notes, and the material someone gathered while reading another
-# program's installer. That material is someone else's proprietary work: it stays
-# in a working copy, never in this repository, and never in a built image.
+# Private working material, in two places: notes/ is what the developer wrote down,
+# research/ is the throwaway probe scripts and measurements that answered a question
+# during the work, plus anything gathered while reading another program's installer.
+# Probe scripts are the record of how a number was checked, and they are worth keeping
+# on the machine that did the checking - but they are not the program, they are not
+# run by any test, and the installer material is someone else's proprietary work. So
+# both folders stay in a working copy: never in this repository, never in a built image.
 notes/
+research/
 *.exe
 extracted/
 extracted2/
 issdir/
 tools/
-research/logs/
-research/installer_script.txt
