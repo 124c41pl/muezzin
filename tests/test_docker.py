@@ -9,6 +9,7 @@ needs a Docker daemon.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import yaml
 
@@ -173,12 +174,13 @@ def test_the_image_can_also_be_published_by_hand():
 
     steps = doc["jobs"]["build"]["steps"]
     checkout = next(step for step in steps if str(step.get("uses", "")).startswith("actions/checkout"))
-    assert "inputs.tag" in checkout.get("with", {}).get("ref", ""), \
+    ref = checkout.get("with", {}).get("ref", "")
+    assert "inputs.tag" in ref or "outputs." in ref, \
         "a hand-started run checks out the branch it was dispatched from, not the tag it names"
 
     guards = [step for step in steps if "latest" in step.get("run", "")]
     assert guards, "nothing stops a hand-built older version taking over latest"
-    assert any("inputs.tag" in str(step.get("if", "")) for step in guards), \
+    assert any("inputs.tag" in str(step.get("if", "")) or "outputs." in str(step.get("if", "")) for step in guards), \
         "the latest guard runs on tag pushes too, where there is no input to compare against"
 
 
@@ -206,5 +208,32 @@ def test_a_mistyped_tag_is_refused_before_anything_is_fetched():
         "a tag push has no tag box, so this guard would fail every release build"
 
     checkout = steps[checkout_at]
-    assert "trim(" in checkout.get("with", {}).get("ref", ""), \
-        "a tag copied out of a release page carries a space, and git calls that a ref that does not exist"
+    assert "steps." in checkout.get("with", {}).get("ref", ""), \
+        "the tag reaches the ref as typed, spaces and all, and git calls that a ref that does not exist"
+    assert "GITHUB_OUTPUT" in guard["run"], \
+        "the cleaned-up tag has nowhere to go, so the checkout still receives the raw box"
+
+
+def test_the_workflows_only_use_functions_github_understands():
+    """An unknown function in an expression fails the file, not the line.
+
+    The tag guard started life as `trim(inputs.tag)`, which reads like ordinary
+    code and is not: GitHub expressions ship a short list of functions, and one
+    that isn't on it does not fail the step that mentions it. It makes the whole
+    workflow unreadable, and the only sign is a run against the merge named after
+    the file's path instead of its name, with no jobs at all to open. Python's
+    YAML parser, which is what these tests use, is happy with it, so the mistake
+    reached the default branch and sat there red.
+    """
+    known = {
+        "contains", "endswith", "startswith", "format", "join", "tojson", "fromjson",
+        "hashfiles", "success", "failure", "always", "cancelled", "bool", "int", "string",
+    }
+    for workflow in ("ci.yml", "image.yml"):
+        text = (ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+        for expression in re.findall(r"\$\{\{(.+?)\}\}", text, re.S):
+            for call in re.findall(r"([A-Za-z_][\w-]*)\s*\(", expression):
+                assert call.lower() in known, (
+                    f"{workflow}: GitHub has no {call}(), so the whole file stops parsing and "
+                    f"the run that follows carries no jobs to read the error in"
+                )

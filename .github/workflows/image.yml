@@ -36,32 +36,42 @@ jobs:
     steps:
       - name: the tag box has to say what a tag says
         if: github.event_name == 'workflow_dispatch'
+        id: want
         env:
-          WANT_TAG: ${{ trim(inputs.tag) }}
+          BOX: ${{ inputs.tag }}
         run: |
           # Checked here, before anything is fetched, because a mistyped tag otherwise
           # goes straight to git as a ref it cannot resolve, and the checkout action
           # answers with three retries and "The process '/usr/bin/git' failed with exit
           # code 1" - a log full of machinery and not one word about the tag or what it
           # should have said. Naming what was typed is the whole point.
-          if ! printf '%s' "$WANT_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "'$WANT_TAG' is not a tag; type it exactly as git lists it, like v0.1.4 - a v, no dot after it" >&2
+          #
+          # Cleaned up in shell and handed to the next step as an output, not written
+          # in the expression that chooses the ref: GitHub's expressions have no string
+          # functions beyond the few documented ones, and a function they do not know
+          # makes the whole file unreadable - the run appears named after the file path,
+          # with no jobs at all, on the push that merged it.
+          tag="$(printf '%s' "$BOX" | tr -d '[:space:]')"
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "'$BOX' is not a tag; type it exactly as git lists it, like v0.1.4 - a v, no dot after it" >&2
             exit 1
           fi
+          # Only a value this pattern accepted reaches the ref, so whatever is typed in
+          # the box cannot smuggle a second ref spec into the fetch either.
+          echo "ref=$tag" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
         with:
           # A hand-started run is started from a branch and has to build the
           # commit the tag names, or it publishes an old version number built
           # from whatever the branch holds, and the registry cannot show that
-          # anything is wrong. On a tag push inputs.tag is empty and this line is
-          # the default behaviour. Trimmed because a value copied out of a release
-          # page arrives with a space on it as often as not.
-          ref: ${{ trim(inputs.tag) || github.ref }}
+          # anything is wrong. On a tag push the step above is skipped, its output
+          # is empty, and this line is the default behaviour.
+          ref: ${{ steps.want.outputs.ref || github.ref }}
 
       - name: the tag and pyproject must agree
         env:
-          WANT_TAG: ${{ trim(inputs.tag) || github.ref_name }}
+          WANT_TAG: ${{ steps.want.outputs.ref || github.ref_name }}
         run: |
           tag="${WANT_TAG#v}"
           want="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
@@ -77,9 +87,9 @@ jobs:
           echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
 
       - name: a hand-started run may not move latest onto an older version
-        if: trim(inputs.tag) != ''
+        if: steps.want.outputs.ref != ''
         env:
-          WANT_TAG: ${{ trim(inputs.tag) }}
+          WANT_TAG: ${{ steps.want.outputs.ref }}
         run: |
           # This build also republishes `latest`, and the README points everybody
           # who pulls without naming a version at it. Rebuilding 0.1.2 by hand
