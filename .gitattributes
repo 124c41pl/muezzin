@@ -1,3 +1,20 @@
+# Text is stored the way the container reads it, whichever operating system did
+# the editing.
+#
+# A clone whose bytes depend on the platform that made it is a repository where
+# one commit has two different checksums, where somebody's diff is mostly
+# invisible carriage returns, and where the specific case at the bottom of this
+# file has to be remembered for the next script anyone adds. Pinning the whole
+# tree is what stops that rule being a rumour.
+
+* text=auto eol=lf
+
+# The two test chimes are bytes, not text. The heuristic above is allowed to be
+# wrong about a file nobody reads, and normalising one of these quietly changes
+# the fixture several playback tests measure against.
+
+*.wav binary
+
 # The one file in this repository that a container executes.
 
 # A shell script with Windows line endings has a shebang that reads `#!/bin/sh\r`,
