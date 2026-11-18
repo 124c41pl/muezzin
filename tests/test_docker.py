@@ -180,3 +180,31 @@ def test_the_image_can_also_be_published_by_hand():
     assert guards, "nothing stops a hand-built older version taking over latest"
     assert any("inputs.tag" in str(step.get("if", "")) for step in guards), \
         "the latest guard runs on tag pushes too, where there is no input to compare against"
+
+
+def test_a_mistyped_tag_is_refused_before_anything_is_fetched():
+    """A typo in the tag box should read like a typo, not like a git crash.
+
+    The first hand-started run of this workflow was asked for `v.0.1.4`, one dot
+    too many. Nothing in the workflow noticed, the mistyped name was handed to
+    the checkout action as a ref, and what came back was three retries ending in
+    "The process '/usr/bin/git' failed with exit code 1": a log full of
+    machinery that never once mentions the tag, the box it came from, or what
+    either of them should have held. The whole run was spent finding out that a
+    string was wrong.
+    """
+    doc = yaml.safe_load((ROOT / ".github" / "workflows" / "image.yml").read_text(encoding="utf-8"))
+    steps = doc["jobs"]["build"]["steps"]
+    shape = [i for i, step in enumerate(steps) if "is not a tag" in step.get("run", "")]
+    assert shape, "a mistyped tag becomes a git crash instead of one sentence naming what was typed"
+
+    checkout_at = next(i for i, step in enumerate(steps) if str(step.get("uses", "")).startswith("actions/checkout"))
+    assert shape[0] < checkout_at, "the tag is examined after it has already been handed to git"
+
+    guard = steps[shape[0]]
+    assert "workflow_dispatch" in str(guard.get("if", "")), \
+        "a tag push has no tag box, so this guard would fail every release build"
+
+    checkout = steps[checkout_at]
+    assert "trim(" in checkout.get("with", {}).get("ref", ""), \
+        "a tag copied out of a release page carries a space, and git calls that a ref that does not exist"
