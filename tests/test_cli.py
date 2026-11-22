@@ -174,14 +174,16 @@ events:
 def test_next_says_the_sound_starts_a_few_seconds_early(tmp_path, capsys):
     """`next` is the command people trust, so it promises the same number the
     daemon keeps: the time stays the computed one, and the note says the recording
-    reaches a speaker that has to be found on the network a little before it. A
-    speaker told `lead_seconds: 0` gets no note, because it starts on the minute."""
+    reaches a speaker that has to be found on the network a little before it —
+    twelve seconds for a Cast speaker, now that a group's rooms are asked for their
+    levels as part of the same hand-off. A speaker told `lead_seconds: 0` gets no
+    note, because it starts on the minute."""
     path = tmp_path / "muezzin.yaml"
     path.write_text(SPEAKERS, encoding="utf-8")
     assert main(["next", "-c", str(path)]) == 0
     rows = [ln for ln in capsys.readouterr().out.splitlines() if "fajr-adhan" in ln]
     assert len(rows) >= 2, rows
-    assert "(played 8 s early)" in rows[0], rows[0]
+    assert "(played 12 s early)" in rows[0], rows[0]
     assert "-> study, porch" in rows[0], "the slowest of the two is what gets paid for"
     quiet = SPEAKERS.replace("  - name: study\n    kind: google_cast\n    target: Study speaker\n", "")
     path.write_text(quiet, encoding="utf-8")
