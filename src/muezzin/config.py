@@ -101,6 +101,10 @@ class OutputConfig:
     host: Optional[str] = None
     port: Optional[int] = None
     volume: Optional[float] = None   # a speaker's level; a computer's is never touched
+    # For a Cast group: one speaker inside it, and the level it gets for the length of a
+    # call. A group has no level of its own that anybody hears, so a group's rooms are
+    # named here one at a time - and each one is put back where it was afterwards.
+    members: dict = field(default_factory=dict)
     lead_seconds: Optional[float] = None  # start this many seconds before the moment
     enabled: bool = True
 
@@ -115,6 +119,14 @@ class EventConfig:
     random: int = 0                          # ask the library for this many, picked as it fires
     targets: list[str] = field(default_factory=list)   # output names; empty = all enabled
     volume: Optional[float] = None           # overrides the output's own volume
+    # One level deeper than that: a speaker's own name on the network and the level to ask
+    # that one for at this event alone. Under an output, `members:` says what a room is
+    # asked for at every call; here it says what it is asked for at this one, and it
+    # outranks every other number written for that name. A room this event says nothing
+    # about is asked for whatever the output says (see backends._wanted_levels), which is
+    # how a prayer leaves three of a group's four rooms at the house's usual level while
+    # the kitchen gets woken for Fajr.
+    members: dict = field(default_factory=dict)
     days: Optional[list[str]] = None         # e.g. ["fri"] to restrict
 
 
@@ -208,6 +220,45 @@ class Profile:
         if ev.targets:
             return [o for o in (self.output(n) for n in ev.targets) if o and o.enabled]
         return self.enabled_outputs()
+
+
+def _member_levels(path, label, raw_members) -> dict:
+    """Read a `members:` block: a speaker's name on the network, and the level to ask for.
+
+    The same words for the same mistake wherever the block is written - under an output,
+    where it is what a room is asked for at every call, or under an event, where it is
+    what it is asked for at one - because the fix is the same either way: a name, a
+    number between 0 and 1, one per line.
+
+    Which names are legal is a question about the speakers, not about this file: a room
+    can be renamed in the Google Home app tomorrow. So nothing here looks a name up. The
+    page refuses a name the speakers are not answering to while they are answering, and
+    the log at the next call says which name it could not find and what it can see.
+    """
+    if not isinstance(raw_members, dict):
+        raise ValueError(f"{path}: {label} has a `members:` block that is not speaker names "
+                         "with levels under them, like `members:` with `Kitchen speaker: 0.4` "
+                         "on the line after")
+    levels: dict[str, float] = {}
+    for who, level in raw_members.items():
+        if isinstance(level, bool):
+            # `off:` and `yes:` parse as booleans in YAML, and float() would quietly turn
+            # them into 0.0 and 1.0: the room silenced or at full blast on a line that
+            # never asked for either. Words are not levels.
+            raise ValueError(f"{path}: {label} gives the speaker {who!r} the level {level!r}, "
+                             "which is a yes-or-no, not a number between 0 and 1. If that is "
+                             "what you mean, write 0.0 or 1.0.")
+        try:
+            value = float(level)
+        except (TypeError, ValueError):
+            raise ValueError(f"{path}: {label} gives the speaker {who!r} the level {level!r}, "
+                             "which is not a number between 0 and 1") from None
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"{path}: {label} gives the speaker {who!r} the level {value:g}. "
+                             "A speaker's level is a number between 0 and 1, the same way the "
+                             "Google Home app writes it.")
+        levels[str(who)] = value
+    return levels
 
 
 def load_profile(path) -> Profile:
@@ -338,6 +389,15 @@ def load_profile(path) -> Profile:
                     f"number of seconds between 0 and {MAX_LEAD_SECONDS:g}. A lead is how early the "
                     "sound starts so that the first note lands on the moment; for longer notice, put "
                     "offset_min on the event, where the printed time moves with it.")
+        # A group's rooms are written down one at a time, because a group has no level
+        # of its own that anybody hears (see backends). Written for any other kind of
+        # output it is a mistake worth stopping over: the name would never be looked up.
+        raw_members = item.get("members") or {}
+        members = _member_levels(path, f"output {item.get('name')!r}", raw_members)
+        if raw_members and kind != "google_cast":
+            raise ValueError(f"{path}: output {item.get('name')!r} is kind {kind} and carries "
+                             "`members:`. Speakers inside a group are a Cast thing; for this kind "
+                             "there is one thing to play through, and `volume:` is the level for it.")
         outputs.append(OutputConfig(
             name=str(item["name"]),
             kind=kind,
@@ -345,6 +405,7 @@ def load_profile(path) -> Profile:
             host=host,
             port=port,
             volume=(float(item["volume"]) if item.get("volume") is not None else None),
+            members=members,
             lead_seconds=lead,
             enabled=bool(item.get("enabled", True)),
         ))
@@ -383,14 +444,31 @@ def load_profile(path) -> Profile:
             if bad:
                 raise ValueError(f"{path}: event {name!r} has days it does not name: "
                                  f"{', '.join(bad)}; use {', '.join(WEEKDAYS)}")
+        targets = [str(t) for t in (item.get("targets") or [])]
+        # A prayer's own levels, for the house that wants Fajr to wake the kitchen and
+        # leave the study at its usual level. The names are read the same way they are
+        # under an output, and refused the same way; what is checked here instead is
+        # whether this event reaches anything that has a level to be asked for at all.
+        members = _member_levels(path, f"event {name!r}", item.get("members") or {})
+        if members:
+            reached = [o for o in outputs if o.enabled and (not targets or o.name in targets)]
+            if not any(o.kind == "google_cast" for o in reached):
+                names = [f"{o.name} (kind {o.kind})" for o in reached]
+                what = ", ".join(names) if names else "nothing enabled"
+                raise ValueError(
+                    f"{path}: event {name!r} names speakers under `members:`, but nothing it plays "
+                    f"through is a speaker muezzin casts to. What it reaches: {what}. "
+                    "A level is only ours to ask over a Cast connection; the level of a computer "
+                    "belongs to whoever is sitting at it.")
         events.append(EventConfig(
             name=name,
             at=str(item["at"]),
             offset_min=offset,
             media=[str(m) for m in (item.get("media") or [])],
             random=picks,
-            targets=[str(t) for t in (item.get("targets") or [])],
+            targets=targets,
             volume=(float(item["volume"]) if item.get("volume") is not None else None),
+            members=members,
             days=days,
         ))
 

@@ -71,6 +71,128 @@ def test_unknown_output_kind_is_rejected(tmp_path):
         load_profile(write(tmp_path, BASE.replace("kind: google_cast", "kind: google_case")))
 
 
+GROUP = """
+location: {latitude: 40.7128, longitude: -74.006, timezone: America/New_York}
+method: {preset: isna}
+media_dir: media
+outputs:
+  - name: whole-house
+    kind: google_cast
+    target: Home group
+    volume: 0.4
+    members:
+      Kitchen speaker: 0.5
+      Office speaker: 0.4
+events:
+  - name: fajr-adhan
+    at: fajr
+    media: [fajr.mp3]
+    targets: [whole-house]
+"""
+
+
+def test_a_group_can_be_handed_levels_room_by_room(tmp_path):
+    """`members:` is how a speaker group gets a level at all. Measured on a LAN with a
+    Google Home group in it, an ask aimed at the group moves a number inside the group
+    that the speakers inside it ignore, so the rooms have to be named one at a time. Each
+    one is put back where its owner had left it as soon as the call ends, which is why
+    writing 0.5 here is not a permanent change to somebody's kitchen."""
+    p = load_profile(write(tmp_path, GROUP))
+    out = p.output("whole-house")
+    assert out.volume == 0.4, "the level for the rooms the profile did not name"
+    assert out.members == {"Kitchen speaker": 0.5, "Office speaker": 0.4}
+
+
+def test_a_room_level_that_is_not_a_number_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="gives the speaker 'Kitchen speaker' the level"):
+        load_profile(write(tmp_path, GROUP.replace("Kitchen speaker: 0.5",
+                                                   "Kitchen speaker: quite loud")))
+
+
+def test_a_room_level_outside_the_range_is_rejected(tmp_path):
+    """40 is what a phone shows as a percentage and 0.4 is what a speaker is asked for.
+    The error says which one to write rather than quietly taking the loud one."""
+    with pytest.raises(ValueError, match="number between 0 and 1"):
+        load_profile(write(tmp_path, GROUP.replace("Office speaker: 0.4", "Office speaker: 40")))
+
+
+def test_a_room_level_written_as_a_yes_or_no_is_rejected(tmp_path):
+    """`off:` is the word somebody reaches for when they want a room quiet at Fajr, and
+    YAML hands it over as a boolean that float() would read as 0.0 - a level taken as
+    silence when the line meant a level. The refusal names the trap and the fix."""
+    with pytest.raises(ValueError, match="is a yes-or-no, not a number between 0 and 1"):
+        load_profile(write(tmp_path, GROUP.replace("Kitchen speaker: 0.5",
+                                                   "Kitchen speaker: off")))
+
+
+def test_a_members_block_that_is_not_rooms_and_levels_is_rejected(tmp_path):
+    bad = GROUP.replace("    members:\n      Kitchen speaker: 0.5\n      Office speaker: 0.4\n",
+                        "    members: [Kitchen speaker, Office speaker]\n")
+    with pytest.raises(ValueError, match="members:` block that is not speaker names with levels"):
+        load_profile(write(tmp_path, bad))
+
+
+def test_a_members_block_on_an_output_with_no_rooms_is_rejected(tmp_path):
+    """A LAN box and the computer's own speaker are one thing to play through: a list of
+    rooms beside them would never be looked up, so it is refused at load rather than
+    ignored until the morning it matters."""
+    with pytest.raises(ValueError, match="is kind file and carries"):
+        load_profile(write(tmp_path, BASE.replace(
+            "  - name: spare\n    kind: file\n    host: out",
+            "  - name: spare\n    kind: file\n    host: out\n    members:\n"
+            "      Kitchen speaker: 0.5")))
+
+
+def test_a_prayer_can_name_the_rooms_it_wants_at_its_own_level(tmp_path):
+    """The same block one level deeper: what the kitchen is asked for at this prayer and
+    at no other. A prayer that names some rooms says nothing about the rest of them, which
+    take whatever the output says, so the Fajr that only wakes the kitchen is two lines and
+    no opinion about the study. The names are the speakers' own names on the network, the
+    same words the sliders on the panel write."""
+    text = GROUP.replace("    media: [fajr.mp3]\n",
+                         "    media: [fajr.mp3]\n    members:\n      Kitchen speaker: 0.7\n")
+    p = load_profile(write(tmp_path, text))
+    assert p.events[0].members == {"Kitchen speaker": 0.7}
+    assert p.events[0].volume is None, "no blanket number, so the other rooms keep their own"
+
+
+def test_a_prayer_level_that_is_not_a_number_is_rejected(tmp_path):
+    """Read the same way as an output's rooms are, so the same mistake gets the same
+    sentence wherever it is written - and the sentence says which prayer, because the one
+    that is wrong is the one somebody has to go and fix."""
+    text = GROUP.replace("    media: [fajr.mp3]\n",
+                         "    media: [fajr.mp3]\n    members:\n      Kitchen speaker: mostly\n")
+    with pytest.raises(ValueError,
+                       match="event 'fajr-adhan' gives the speaker 'Kitchen speaker' the level"):
+        load_profile(write(tmp_path, text))
+
+
+def test_a_prayer_that_names_speakers_it_never_reaches_is_rejected(tmp_path):
+    """A level that cannot be asked is a level that goes unheard until somebody stands in
+    the kitchen wondering why it was quiet. This one is refused where it is typed rather
+    than at 5 am, and says what the prayer reaches instead, because the fix is usually
+    further up the file than the line that tripped."""
+    text = GROUP.replace("    members:\n      Kitchen speaker: 0.5\n      Office speaker: 0.4\n", "")
+    text = text.replace("    media: [fajr.mp3]\n",
+                        "    media: [fajr.mp3]\n    members:\n      Kitchen speaker: 0.7\n")
+    text = text.replace("kind: google_cast", "kind: file").replace("target: Home group",
+                                                                   "host: out")
+    with pytest.raises(ValueError, match="names speakers under `members:`, but nothing it plays"):
+        load_profile(write(tmp_path, text))
+
+
+def test_a_prayer_on_the_computer_s_own_speaker_naming_rooms_is_rejected(tmp_path):
+    """`members:` beside a prayer pointed at a computer or a LAN box is the same mistake as
+    beside such an output, in a place where it is easier to make: the panel will not offer
+    it, so a person typing it deserves to be told which line is wrong."""
+    text = BASE.replace("    targets: [study]",
+                        "    targets: [parlour]\n    members:\n      Kitchen speaker: 0.7")
+    text = text.replace("  - name: study\n    kind: google_cast\n    target: Study speaker",
+                        "  - name: parlour\n    kind: pc_speakers")
+    with pytest.raises(ValueError, match="names speakers under `members:`"):
+        load_profile(write(tmp_path, text))
+
+
 def test_typo_in_at_is_rejected(tmp_path):
     """`at: fagr` must not become a silent, quiet morning."""
     with pytest.raises(ValueError, match="unknown `at: fagr`"):
