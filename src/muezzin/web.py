@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, urlparse
 import yaml
 
 from . import __version__, calc, fileserve, geocode, hijri, localplay, net, yamledit
-from .backends import KINDS, lead_for, scan_speakers
+from .backends import KINDS, call_level, lead_for, scan_speakers
 from .config import (AUDIO_SUFFIXES, STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE,
                      load_profile, uses_starter_location, valid_host)
 from .page import PAGE
@@ -159,6 +159,27 @@ def _lead_shown(seconds: float):
     """
     value = float(seconds)
     return int(value) if value.is_integer() else round(value, 2)
+
+
+def _asked_level(asked):
+    """Turn what the page sent into a level, or say what is wrong with it.
+
+    Checked here, in the request, and not at 5 am: a `volume:` of 40 loads perfectly
+    well and a Cast device clamps it to full scale, so the house gets a shout at Fajr
+    instead of the background level somebody meant. An empty string or None means not
+    saying anything, which is a different sentence from 0 and the only way back to a
+    speaker's own default.
+    """
+    if asked in (None, ""):
+        return None
+    try:
+        level = float(asked)
+    except (TypeError, ValueError):
+        raise ValueError(f"{asked!r} is not a level; it is a number between 0 and 1")
+    if not 0.0 <= level <= 1.0:
+        raise ValueError(f"{level} is not a level: a speaker level is a number "
+                         "between 0 and 1, like 0.6")
+    return level
 
 
 class WebPanel:
@@ -339,6 +360,11 @@ class WebPanel:
         # inferred from the numbers: a profile may set the angles by hand and
         # then the honest answer is that there is no preset in it.
         preset = yamledit.block_value(text, "method", "preset")
+        # One pass over the outputs, because the events below read the same two answers
+        # about the network - which of these targets is a group, and which rooms the
+        # speakers say are inside it - and a page that polls every few seconds should not
+        # ask for them twice per speaker.
+        outputs = [self._output_row(o) for o in p.outputs]
         return {
             "now": local_now.strftime("%Y-%m-%d %H:%M %Z"),
             "version": __version__,
@@ -391,10 +417,7 @@ class WebPanel:
                           if self.runner.media else None),
             "days": days,
             "upcoming": next_events,
-            "events": [{"name": e.name, "at": e.at, "offset_min": e.offset_min,
-                        "media": e.media, "random": e.random,
-                        "targets": e.targets, "volume": e.volume,
-                        "days": e.days} for e in p.events],
+            "events": [self._event_data(e, outputs) for e in p.events],
             # the picker's choices, from the same table `muezzin methods` prints. The
             # flag is the engine's own: which midnight a method solves for. The page
             # groups on it, so it cannot drift out of step with the numbers.
@@ -407,27 +430,125 @@ class WebPanel:
             # profile is a valid profile, and a silent one
             "notices": self.notices(),
             "max_upload": MAX_UPLOAD,
-            "outputs": [{"name": o.name, "kind": o.kind, "target": o.target, "host": o.host,
-                         "port": o.port, "volume": o.volume, "enabled": o.enabled,
-                         # which kinds may be asked for a level at all: the answer comes
-                         # from the backend class, so the page cannot offer a slider for a
-                         # computer whose level belongs to the person using it
-                         "takes_volume": bool(getattr(KINDS.get(o.kind), "takes_volume", False)),
-                         # ... and what the LAN said that particular target is, because a
-                         # speaker group is not a speaker: it is several of them, each at
-                         # whatever level the Google Home app left them at, and nobody
-                         # outside that app moves them together. "" means the last scan did
-                         # not see the name, which the page says as itself.
-                         "target_kind": (self.cast_target_kind(str(o.target or ""))
-                                         if o.kind == "google_cast" else ""),
-                         # how early this speaker gets handed the recording, so the
-                         # first note is in the air when the printed time arrives
-                         "lead": _lead_shown(lead_for(o))}
-                        for o in p.outputs],
+            "outputs": outputs,
         }
 
-    # ---- actions the page can take ---------------------------------------
+    def _output_row(self, o) -> dict:
+        """One output as the page sees it: the profile's fields, plus the two answers
+        only the network can give (is that name a group, and which rooms are inside it).
 
+        A method rather than a comprehension in the middle of the state, because the
+        rooms and whether they are known come from one lookup and a page that polls
+        every few seconds should not make it twice per output.
+        """
+        cast = o.kind == "google_cast"
+        kind = self.cast_target_kind(str(o.target or "")) if cast else ""
+        rooms, known = self.cast_rooms(str(o.target or ""), o.members) if cast else ([], False)
+        return {"name": o.name, "kind": o.kind, "target": o.target, "host": o.host,
+                "port": o.port, "volume": o.volume, "enabled": o.enabled,
+                # which kinds may be asked for a level at all: the answer comes
+                # from the backend class, so the page cannot offer a slider for a
+                # computer whose level belongs to the person using it
+                "takes_volume": bool(getattr(KINDS.get(o.kind), "takes_volume", False)),
+                # ... and what the LAN said that particular target is, because a
+                # speaker group is not a speaker: it is several of them, each at
+                # whatever level the Google Home app left them at, and nobody
+                # outside that app moves them together. "" means the last scan did
+                # not see the name, which the page says as itself.
+                "target_kind": kind,
+                # ... and the rooms inside that name, each with the level this profile
+                # already asks it for and whether a speaker by that name is still out
+                # there. A group's row grows one slider per room out of this.
+                "rooms": rooms,
+                "rooms_known": known,
+                # the rooms this profile asks for a level of their own, which the
+                # drawer under a prayer reads so it can say what a room is asked for
+                # with nothing written under the prayer and with something written
+                "members": dict(o.members or {}),
+                # how early this speaker gets handed the recording, so the
+                # first note is in the air when the printed time arrives
+                "lead": _lead_shown(lead_for(o))}
+
+    def _event_data(self, ev, outputs: list) -> dict:
+        """One prayer as the page sees it: the profile's fields, plus the rooms this prayer
+        can be asked about and what each of them is asked for at this prayer.
+
+        A prayer's `members:` is the map under an output's row one level deeper, so the
+        page needs the same rooms here - but reached through this event's `targets:`, and
+        with two numbers per room rather than one: what the room is asked for if this prayer
+        says nothing about it, which is the house's own number and the reason a prayer that
+        nobody tuned reads as plain text, and what it is actually asked for with this
+        prayer's numbers in play. Both come from `backends.call_level`, so the figure beside
+        a slider is the figure the speaker will be asked for at 5 am.
+        """
+        rows = []
+        shown = set()
+        # A speaker the profile points at directly and a room of a group can answer to the
+        # same name, and then which row wins must not be decided by the order the outputs
+        # happen to be written in. The direct one goes first on purpose: if this prayer can
+        # reach that name over its own connection, the promise the page makes about what
+        # happens after the call - that it keeps the level - is the direct path's promise.
+        for o in sorted(outputs, key=lambda o: o["target_kind"] == "group"):
+            if not self._reaches(ev, o) or not o["takes_volume"]:
+                continue
+            group = o["target_kind"] == "group"
+            written = o["members"]
+            for room in self.level_rooms(str(o["target"] or ""), o["target_kind"], written):
+                name = str(room["name"])
+                if name in shown:
+                    # One name is one speaker, and a prayer's `members:` is keyed by that
+                    # name and not by the output it came in through: the profile here points
+                    # at one speaker both as itself and as a room of a group, so the drawer
+                    # gets one control for it, holding the line both paths read.
+                    continue
+                shown.add(name)
+                asked = call_level(name, ev.members, ev.volume, written, o["volume"])
+                rows.append({"name": name, "output": o["name"], "group": group,
+                             "seen": bool(room["seen"]),
+                             "written": (ev.members or {}).get(name),
+                             "usual": call_level(name, None, ev.volume, written, o["volume"]),
+                             "tonight": asked})
+        named = {r["name"] for r in rows}
+        # A name this prayer wrote that the scan cannot put in front of the page - a typo,
+        # or a speaker that is asleep - is still in the file and still has to be undoable
+        # here, so it is listed as itself rather than left for someone to find in the YAML.
+        rows += [{"name": str(who), "output": "", "group": False, "seen": False,
+                  "written": value,
+                  "usual": call_level(str(who), None, ev.volume, {}, None),
+                  "tonight": call_level(str(who), ev.members, ev.volume, {}, None)}
+                 for who, value in (ev.members or {}).items() if str(who) not in named]
+        return {"name": ev.name, "at": ev.at, "offset_min": ev.offset_min,
+                "media": ev.media, "random": ev.random,
+                "targets": ev.targets, "volume": ev.volume,
+                "members": dict(ev.members or {}), "days": ev.days, "levels": rows}
+
+    @staticmethod
+    def _reaches(ev, row: dict) -> bool:
+        """Does this prayer play through that output? The same question the loader asks
+        when it refuses a prayer that names rooms it will never reach, answered from the
+        row the page is already showing so the drawer cannot offer a speaker that this
+        call will not sound from."""
+        return bool(row["enabled"]) and (not ev.targets or row["name"] in ev.targets)
+
+    def level_rooms(self, target: str, kind: str, written: dict) -> list:
+        """The names this output's target can be asked for a level by.
+
+        A group is asked room by room, so its names come from the scan. A single speaker
+        has one name, which is the name the profile wrote in `target:`, and that is what a
+        prayer's `members:` line has to say to reach it. A target the last scan did not
+        see gets the names already written to it and nothing else: nothing here claims to
+        know what else lives behind that name, and a drawer that invented a room would be
+        a drawer that wrote a line the backend will never use.
+        """
+        if kind == "group":
+            rooms, _known = self.cast_rooms(target, written)
+            return rooms
+        if kind == "speaker":
+            return [{"name": target, "volume": None, "seen": True}]
+        return [{"name": who, "volume": value, "seen": False}
+                for who, value in (written or {}).items()]
+
+    # ---- actions the page can take ---------------------------------------
     def toggle_output(self, name: str, enabled: bool) -> dict:
         with self.lock:
             self.runner.set_enabled(name, enabled)
@@ -993,13 +1114,14 @@ class WebPanel:
         """What the last speaker scan called a Cast target: "group", "speaker", or "".
 
         A group is not a speaker with more speakers behind it. Measured on a real
-        LAN: ask a group for a level and its receiver replies with the speakers it
+        LAN: ask a group's own receiver for a level and it replies with the speakers it
         leads and each of their levels, and not one of those numbers moves - the ask
-        is accepted by a channel that has nothing to do with the four rooms. Nothing
-        outside the Google Home app moves several speakers together, so a profile
-        pointing at a group has no level for muezzin to write. The page has to know
-        which of the two a `target:` names, or it offers a slider that writes a number
-        nothing honours, which is worse than saying nothing.
+        lands on a channel that has nothing to do with the four rooms. So a level
+        written for a group is a promise about its rooms, not about the group: the
+        backend asks every room inside it over a connection of that room's own and
+        hands each one back when the call ends. The page still has to know which of the
+        two a `target:` names, because the number means something different there and
+        the sentence beside the slider has to say so.
 
         Answered from the cache, never with a scan of its own: this runs while
         building the state the page polls every few seconds, and one scan is ten
@@ -1013,13 +1135,50 @@ class WebPanel:
             return "speaker"
         return ""
 
+    def cast_rooms(self, target: str, written: dict) -> tuple[list, bool]:
+        """Which rooms sit inside a group's name, and what this profile asks each of them for.
+
+        The names are not in the group: neither its mDNS record nor its own receiver lists
+        the speakers inside it. What does answer is each speaker's setup endpoint, naming the
+        groups *it* belongs to, so the last scan built the list by turning that inside out
+        (see attach_group_members). The levels come from the profile, and a room with no line
+        of its own is reported with no level rather than a number made up for it, because
+        "follows the group's number" is the truth about what it will be asked for.
+
+        A name somebody wrote a level for that the scan cannot see stays in the list, marked
+        as not seen: it is the same name the backend warns about when it plays, and the page
+        that hid it would leave a typo to be found out at Fajr.
+
+        The second answer is whether the rooms are known at all. A group whose speakers all
+        stayed quiet has no list to offer, which is different news from a group that really
+        has no speakers in it, and the page has to say which of the two it is looking at.
+        """
+        scan = self._scan or {}
+        named = {str(who): value for who, value in (written or {}).items()}
+        group = next((g for g in scan.get("groups", []) if g.get("name") == target), None)
+        if group is None:
+            # No record for that name in the last scan: either it is a single speaker, or
+            # the group is asleep, or nobody has looked yet. The levels somebody wrote are
+            # still facts about the profile, and a page that hides them cannot undo them.
+            return [{"name": who, "volume": value, "seen": True}
+                    for who, value in named.items()], False
+        inside = [str(name) for name in (group.get("members") or [])]
+        known = bool(group.get("membership_known"))
+        rooms = [{"name": who, "volume": named.get(who), "seen": True} for who in inside]
+        # A name in the profile that no speaker claims: absent, when the speakers were
+        # saying who was in what, and merely unconfirmed when none of them would say,
+        # which is not a second helping of the same news.
+        rooms += [{"name": who, "volume": value, "seen": not known}
+                  for who, value in named.items() if who not in inside]
+        return rooms, known
+
     def warm_cast_scan(self) -> None:
         """Take the first speaker scan if this daemon has never taken one.
 
         Only for a question that cannot be answered without it, and only once:
-        whether a target is a group decides whether a level can land at all, and
-        finding that out is worth one scan the first time somebody asks. The answer
-        then sits in the same cache the page's speaker card reads.
+        whether a target is a group decides which speakers a written level actually
+        reaches, and finding that out is worth one scan the first time somebody asks.
+        The answer then sits in the same cache the page's speaker card reads.
         """
         if self._scan is not None:
             return
@@ -1182,11 +1341,12 @@ class WebPanel:
           level - the machine running muezzin, or the Pi in the attic - belongs to
           whoever is sitting at it, which is the same rule the preview on this page
           follows.
-        * and only onto a target that has a level of its own. A speaker group is a name
-          several speakers share: asked for a level its receiver answers with those
-          speakers and their own levels, and none of them move, because nothing outside
-          the Google Home app moves several speakers together. Writing the number anyway
-          leaves a profile that looks configured and a room that is not.
+        * a speaker group is not one speaker but several, and the number written for it is
+          what every room inside is asked for, for the length of a call. Measured on a LAN:
+          aimed at the group's own receiver the ask moves a number inside it that its
+          speakers ignore, so muezzin asks each room over a connection of that room's own and
+          hands each one back to the level its owner had left it at when the call ends. A room
+          at a level of its own is written in the profile under `members:`.
         * `null` puts it back to not saying anything, which on a Cast device means
           "whatever it is at right now".
         * the number is checked here, not at 5 am: a `volume:` of 40 loads, and a Cast
@@ -1196,17 +1356,7 @@ class WebPanel:
         name = str(payload.get("name") or "").strip()
         if not name:
             raise ValueError("which output?")
-        asked = payload.get("volume")
-        if asked in (None, ""):
-            level = None
-        else:
-            try:
-                level = float(asked)
-            except (TypeError, ValueError):
-                raise ValueError(f"{asked!r} is not a level; it is a number between 0 and 1")
-            if not 0.0 <= level <= 1.0:
-                raise ValueError(f"{level} is not a level: a speaker level is a number "
-                                 "between 0 and 1, like 0.6")
+        level = _asked_level(payload.get("volume"))
         # Whether this output's target is a group is a question about the network, and the
         # answer can cost a scan, so it is asked before the profile is locked: nobody else's
         # edit waits on a broadcast. The loaded profile is only read here, never written.
@@ -1214,32 +1364,205 @@ class WebPanel:
         if prior is not None and prior.kind == "google_cast" and prior.target:
             self.warm_cast_scan()
         with self._editing() as text:
-            rows = yamledit.entries(text, "outputs")
-            row = next((r for r in rows if yamledit.entry_scalar(r, "name") == name), None)
-            if row is None:
-                raise ValueError(f"no output called {name} in this profile")
-            kind = (yamledit.entry_scalar(row, "kind") or "").strip().lower()
-            cls = KINDS.get(kind)
-            if cls is None:
-                raise ValueError(f"{name} says it is {kind}, which is not one of "
-                                 f"{', '.join(sorted(KINDS))}")
-            if not getattr(cls, "takes_volume", False):
-                raise ValueError(f"{name} is {kind}: muezzin only asks a speaker it casts to "
-                                 "for a level, and the level of a computer belongs to whoever "
-                                 "is sitting at it")
+            row = self._row_that_takes_a_level(text, name)
             asked_of = (yamledit.entry_scalar(row, "target") or "").strip()
-            if self.cast_target_kind(asked_of) == "group":
-                raise ValueError(
-                    f"{name} points at {asked_of!r}, which the network says is a speaker group, "
-                    "not a speaker. A group has no level of its own to be asked for: asked, it "
-                    "answers with the speakers in it and the levels the Google Home app left "
-                    "them at, and none of those move. muezzin will not write a number nothing "
-                    "honours - point this output at one speaker, or set the group's level there")
+            if level is not None and self.cast_target_kind(asked_of) == "group":
+                # Worth one line in the log, because the number means something different
+                # here than it does beside a single speaker: it is what each room inside the
+                # group will be asked for while a call plays, and every one of them goes back
+                # afterwards. A room that wants a level of its own has a slider of its own
+                # under this row, and that one writes the `members:` line.
+                log.info("%s: %s is a speaker group, so %g is the level every room inside it "
+                         "is asked for while a call plays; each goes back to the level it was "
+                         "at when the call ends. A room at a level of its own has its own "
+                         "slider under this row", name, asked_of, level)
             saved = self.save_config(yamledit.edit_entry(text, "outputs", row["index"],
                                                          {"volume": level}))
         saved["output"] = name
         saved["volume"] = level
         return saved
+
+    def set_output_member(self, payload: dict) -> dict:
+        """Ask one room inside a speaker group for a level of its own, and write that ask.
+
+        This is the half of a group's level that a single number cannot say: the kitchen at
+        50% over what was 10%, the study at 40% over what was 80%, each of them back at 10%
+        and 80% the moment the call ends. The room's name is what the speaker answers to on
+        the network, not a name invented here, which is why the list of rooms comes from the
+        last scan and a name outside it is refused while the speakers are still saying what
+        group they belong to: a typo written into `members:` is a room that plays at whatever
+        level the Home app left it at, and the only notice of that is a line in the log at
+        Fajr. Once the speakers are not talking, nothing here claims to know the rooms, and
+        writing is allowed again.
+
+        An empty level takes the room's line out, which puts it back to following the group's
+        number: there is no level that means "as it was", because the level it was at is a
+        fact about the room, not a choice the profile can make in advance.
+        """
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise ValueError("which output?")
+        room = str(payload.get("speaker") or "").strip()
+        if not room:
+            raise ValueError("which room? the name a speaker inside that group answers to")
+        level = _asked_level(payload.get("volume"))
+        # The same bargain as above: a scan is a broadcast, so it happens before the
+        # profile is locked rather than while nobody else's edit can get through.
+        prior = next((o for o in self.runner.profile.outputs if o.name == name), None)
+        if prior is not None and prior.kind == "google_cast" and prior.target:
+            self.warm_cast_scan()
+        with self._editing() as text:
+            row = self._row_that_takes_a_level(text, name)
+            asked_of = (yamledit.entry_scalar(row, "target") or "").strip()
+            if self.cast_target_kind(asked_of) == "speaker":
+                raise ValueError(f"{asked_of} is one speaker and not a group, so it has no rooms "
+                                 f"to set one by one: {name} is asked for its level on its own row")
+            written = {str(who): value
+                       for who, value in ((prior.members if prior else {}) or {}).items()}
+            rooms, known = self.cast_rooms(asked_of, written)
+            if level is not None and known and not any(r["name"] == room for r in rooms):
+                raise ValueError(f"{asked_of} has no room called {room} on this network. The "
+                                 f"speakers that say they are inside it: "
+                                 f"{', '.join(r['name'] for r in rooms) or 'none would say'}")
+            saved = self.save_config(yamledit.edit_entry_map(
+                text, "outputs", row["index"], "members", room, level))
+        if level is None:
+            log.info("%s: %s has no level of its own again, so it follows what %s is asked for",
+                     name, room, asked_of)
+        else:
+            log.info("%s: %s inside %s will be asked for %g while a call plays, and goes back to "
+                     "the level it was at when the call ends", name, room, asked_of, level)
+        saved["output"] = name
+        saved["speaker"] = room
+        saved["volume"] = level
+        return saved
+
+    def set_event_member(self, payload: dict) -> dict:
+        """Ask one speaker for a level at one prayer, and write that ask under the prayer.
+
+        This is what a house asks for when the same group is not wanted at the same level
+        every time: the kitchen woken harder for Fajr, the study left alone, and the prayer
+        that wants nothing extra left with nothing written under it at all. The room's name
+        is the same name the group's own `members:` uses - what the speaker answers to on
+        the network - and it is refused here for the same reason: a name the speakers are
+        not claiming, typed while they are talking, would become a line the backend only
+        notices as a warning at Fajr.
+
+        An empty level takes the line out, which puts the room back to whatever the house
+        asks of it: there is no number that means "as it was", because where the room was
+        left is a fact about the room and not a choice the profile can make in advance.
+        """
+        at = str(payload.get("at") or "").strip()
+        if not at:
+            raise ValueError("which prayer?")
+        friday = bool(payload.get("friday"))
+        room = str(payload.get("speaker") or "").strip()
+        if not room:
+            raise ValueError("which room? the name a speaker answers to on the network")
+        level = _asked_level(payload.get("volume"))
+        ev = self._profile_event(at, friday)
+        reached = [o for o in (self.runner.profile.targets_for(ev) if ev else [])
+                   if getattr(KINDS.get(o.kind), "takes_volume", False)]
+        # A scan is a broadcast, so it happens before the profile is locked, and only when
+        # there is a speaker behind this prayer to ask.
+        if reached:
+            self.warm_cast_scan()
+        with self._editing() as text:
+            row = self._event_row(yamledit.entries(text, "events"), at, friday)
+            if row is None:
+                raise ValueError(f"no prayer at {at}{' on Fridays' if friday else ''} "
+                                 "in this profile")
+            if ev is None:
+                # The text has this prayer and the running profile does not: the two got
+                # out of step, and "plays through nothing askable" would blame the outputs
+                # for a prayer the daemon has not even loaded.
+                raise ValueError(f"the profile file has a prayer at {at}{' on Fridays' if friday else ''} "
+                                 "but the running daemon has not loaded it; press reload and try again")
+            if not reached:
+                raise ValueError(f"{at} plays through nothing muezzin can ask for a level. "
+                                 "A level is only ours to ask over a Cast connection; the "
+                                 "level of a computer belongs to whoever is sitting at it")
+            # A name is refused only when every output this prayer plays through has
+            # actually answered about its rooms. What the scan knows about one speaker says
+            # nothing about what a group that would not say contains, and a refusal built
+            # on the first answer while a later output stayed silent would turn a guess
+            # into a verdict. Silence anywhere is treated as not knowing, which is the same
+            # bargain the group's own room slider keeps.
+            certain, names, as_room = True, [], False
+            for o in reached:
+                target = str(o.target or "")
+                kind = self.cast_target_kind(target)
+                if kind == "group":
+                    rooms, inside = self.cast_rooms(target, o.members)
+                    certain = certain and inside
+                else:
+                    rooms = self.level_rooms(target, kind, o.members)
+                    certain = certain and kind == "speaker"
+                names += [str(r["name"]) for r in rooms]
+                if kind == "group" and any(str(r["name"]) == room for r in rooms):
+                    as_room = True
+            if level is not None and certain and room not in names:
+                seen = ", ".join(dict.fromkeys(names)) or "not one room in any group it reaches"
+                raise ValueError(f"{room} is not a speaker this prayer plays through. The "
+                                 f"speakers it plays through: {seen}")
+            saved = self.save_config(yamledit.edit_entry_map(
+                text, "events", row["index"], "members", room, level))
+        if level is None:
+            log.info("%s: %s has no level for this prayer of its own, so it follows what the "
+                     "profile asks of it", at, room)
+        elif as_room:
+            log.info("%s: %s will be asked for %g for this prayer alone, and goes back to the "
+                     "level it was at when the call ends", at, room, level)
+        else:
+            # A speaker the profile points at directly has a level of its own, and asking it
+            # for another one is what the output's own `volume:` has always done: it stays.
+            # Only a group's rooms are borrowed and handed back, because only they were
+            # taken over a connection of their own for the length of one call.
+            log.info("%s: %s will be asked for %g for this prayer alone, and keeps that level "
+                     "after the call the way a speaker of its own does", at, room, level)
+        saved["at"] = at
+        saved["friday"] = friday
+        saved["speaker"] = room
+        saved["volume"] = level
+        return saved
+
+    def _profile_event(self, at: str, friday: bool):
+        """The prayer in the loaded profile that the page is pointing at.
+
+        The text has the entry the write goes into and the profile has what that entry
+        reaches, which is the question a scan answers. Same bargain as `_event_row`, and
+        the same reason: a Friday prayer and the everyday one are two entries, and writing
+        the numbers of one under the other would be a quiet weekday.
+        """
+        for ev in self.runner.profile.events:
+            if ev.at != at:
+                continue
+            in_friday = bool(ev.days and any(str(d).lower().startswith("fri") for d in ev.days))
+            if in_friday == friday:
+                return ev
+        return None
+
+    def _row_that_takes_a_level(self, text: str, name: str) -> dict:
+        """The entry for one output, insisting it is a kind muezzin may ask for a level.
+
+        Shared by the two level asks, because both are refused for the same reason: the
+        message a person needs is about the kind of thing the output is, not about which
+        of the two sliders they reached for.
+        """
+        rows = yamledit.entries(text, "outputs")
+        row = next((r for r in rows if yamledit.entry_scalar(r, "name") == name), None)
+        if row is None:
+            raise ValueError(f"no output called {name} in this profile")
+        kind = (yamledit.entry_scalar(row, "kind") or "").strip().lower()
+        cls = KINDS.get(kind)
+        if cls is None:
+            raise ValueError(f"{name} says it is {kind}, which is not one of "
+                             f"{', '.join(sorted(KINDS))}")
+        if not getattr(cls, "takes_volume", False):
+            raise ValueError(f"{name} is {kind}: muezzin only asks a speaker it casts to "
+                             "for a level, and the level of a computer belongs to whoever "
+                             "is sitting at it")
+        return row
 
     def save_upload(self, filename: str, data: bytes) -> dict:
         """Put a recording in media_dir, if it really is a recording.
@@ -1685,6 +2008,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self._json(self.panel.rename_output(body))
             elif self.path == "/api/output/volume":
                 self._json(self.panel.set_output_volume(body))
+            elif self.path == "/api/output/room":
+                self._json(self.panel.set_output_member(body))
+            elif self.path == "/api/event/room":
+                self._json(self.panel.set_event_member(body))
             elif self.path == "/api/library/hold":
                 self._json(self.panel.hold_recording(body))
             elif self.path == "/api/library/delete":
