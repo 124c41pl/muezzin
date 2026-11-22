@@ -401,3 +401,134 @@ def test_a_value_that_would_read_back_as_something_else_is_quoted():
         assert yaml.safe_load(f"x: {ye.scalar(word)}") == {"x": word}
     assert ye.scalar("Bedroom") == "Bedroom"
     assert ye.scalar("192.168.0.21") == "192.168.0.21"
+
+
+# --- the rooms inside a speaker group, which are a map under one entry --------
+#
+# `members:` is the one place in a profile where an entry holds names of its own, and
+# those names are whatever the Google Home app calls the speakers: spaces in them, a
+# colon now and then. The shape is `- name: front-room` / `members:` /
+# `Kitchen speaker: 0.6`, and the page writes it now, so both the reading and the
+# writing of it belong here rather than in a browser.
+
+HEAD = ("location: {latitude: 40.7128, longitude: -74.006, timezone: America/New_York}\n"
+        "media_dir: media\nout_dir: out\n")
+
+ROOMS = ('outputs:\n  - name: front-room\n    kind: google_cast\n'
+         '    target: "Whole-house group"\n    members:\n'
+         '      # the kitchen is where the kids wake up\n'
+         '      Kitchen speaker: 0.2  # by the window\n'
+         '      Study speaker: 0.4\n'
+         '  - name: nest\n    kind: google_cast\n    target: "Study speaker"\n')
+
+
+def test_the_rooms_under_an_entry_read_back_whichever_way_they_were_written(tmp_path):
+    """The notes around a `members:` block belong to the person, not to the levels: the
+    note at the end of a line is not part of the number, and the note on a line of its
+    own is not a room. An output with nothing written about its rooms loads as a
+    household that has never said anything about them, and a map written on one line
+    still reads back - reading it costs nothing, even though rewriting it is refused
+    (see below)."""
+    profile = _loads_ok(HEAD + ROOMS, tmp_path)
+    assert profile.output("front-room").members == {"Kitchen speaker": 0.2,
+                                                    "Study speaker": 0.4}, \
+        "the block the loader reads is the block the page writes, comments and all"
+    assert profile.output("nest").members == {}, \
+        "an output with nothing written about its rooms promises nothing about them"
+    one_line = ('outputs:\n  - name: front-room\n    kind: google_cast\n'
+                '    members: {Kitchen speaker: 0.2}\n')
+    assert _loads_ok(HEAD + one_line, tmp_path).output("front-room").members == \
+        {"Kitchen speaker": 0.2}
+
+
+def test_a_room_s_level_lands_under_the_group_that_carries_it(tmp_path):
+    """The line the page writes, and the loader agreeing: `members:` under that output,
+    one room's own name per line, and everything nobody asked about left exactly as it
+    was - including the note somebody put at the end of the line they changed."""
+    new = ye.edit_entry_map(ROOMS, "outputs", 0, "members", "Kitchen speaker", 0.6)
+    assert new.count("Kitchen speaker") == 1 and "      Kitchen speaker: 0.6" in new
+    assert "# by the window" in new, "the note was theirs; changing the number is not a licence to erase it"
+    assert "# the kitchen is where the kids wake up" in new
+    assert "      Study speaker: 0.4" in new and "  - name: nest\n" in new, \
+        "the other room and the other output are not this edit"
+    assert _loads_ok(HEAD + new, tmp_path).output("front-room").members == \
+        {"Kitchen speaker": 0.6, "Study speaker": 0.4}
+
+
+def test_a_prayer_can_be_given_its_own_room_levels_the_same_way(tmp_path):
+    """The same map under the other list in the file. The editor knows an entry by its
+    place in a section, so a prayer is written into the same way an output is and nothing
+    about the shape of the file has to change; what matters is that the entry the drawer
+    did not touch keeps whatever it had, which is what lets one prayer wake the kitchen
+    without moving what somebody set for Fajr."""
+    text = (HEAD + 'outputs:\n  - name: front-room\n    kind: google_cast\n'
+            '    target: "Whole-house group"\n'
+            'events:\n  - name: fajr-adhan\n    at: fajr\n    media: [azan.mp3]\n'
+            '    targets: [front-room]\n'
+            '  - name: maghrib-adhan  # the one the family is home for\n'
+            '    at: maghrib\n    media: [azan.mp3]\n    targets: [front-room]\n')
+    new = ye.edit_entry_map(text, "events", 1, "members", "Kitchen speaker", 0.6)
+    assert "      Kitchen speaker: 0.6" in new
+    assert "# the one the family is home for" in new, "the note belongs to the entry, not to the field"
+    assert new.count("targets: [front-room]") == 2, "both prayers still play where they played"
+    assert _loads_ok(new, tmp_path).events[1].members == {"Kitchen speaker": 0.6}
+    cleared = ye.edit_entry_map(new, "events", 1, "members", "Kitchen speaker", None)
+    assert "members:" not in cleared, "a prayer with nothing written under it goes back to as usual"
+    assert _loads_ok(cleared, tmp_path).events[1].members == {}
+
+
+def test_taking_the_last_room_out_takes_the_empty_field_with_it(tmp_path):
+    """A room that should follow the group's number is a room with no line of its own:
+    `Kitchen speaker: null` would be a number the loader refuses, and an empty `members:`
+    is a sentence left half-written. The comment outlives them both, because a comment is
+    the person's, not ours to delete - except the note at the end of the line being taken
+    out, which had nothing else it was written about."""
+    one_room = ('outputs:\n  - name: front-room\n    kind: google_cast\n'
+                '    members:\n      # keep it low at Fajr\n'
+                '      Kitchen speaker: 0.2  # by the window\n')
+    first = ye.edit_entry_map(ROOMS, "outputs", 0, "members", "Kitchen speaker", None)
+    assert "      Kitchen speaker" not in first and "      Study speaker: 0.4" in first, \
+        "one room goes and the field keeps its other value"
+    assert "    members:" in first, "the field still has a room under it, so it stays"
+    both = ye.edit_entry_map(first, "outputs", 0, "members", "Study speaker", None)
+    assert "members:" not in both
+    assert "# the kitchen is where the kids wake up" in both
+    assert "# by the window" not in both, "that note died with the line it was written on"
+    profile = _loads_ok(HEAD + both, tmp_path)
+    assert profile.output("front-room").members == {}
+    assert profile.output("front-room").target == "Whole-house group"
+
+
+def test_a_name_written_twice_under_one_group_leaves_one_line(tmp_path):
+    """Two identical keys under one map is something a person can end up with by hand:
+    yaml reads the last of them and warns about the first. Setting that room's level is
+    the moment to leave one line, not to add a third copy of the same mistake."""
+    twice = ('outputs:\n  - name: front-room\n    kind: google_cast\n    members:\n'
+             '      Kitchen speaker: 0.2\n      Kitchen speaker: 0.3\n')
+    new = ye.edit_entry_map(twice, "outputs", 0, "members", "Kitchen speaker", 0.6)
+    assert new.count("Kitchen speaker") == 1 and "Kitchen speaker: 0.6" in new
+    assert _loads_ok(HEAD + new, tmp_path).output("front-room").members == \
+        {"Kitchen speaker": 0.6}
+
+
+def test_a_room_named_with_a_colon_in_it_is_written_so_it_reads_as_one_name(tmp_path):
+    """The Home app lets a room be called "Bedroom: upstairs", and the only safe reading
+    of a line like that is the one that knows where a quoted name stops. Written bare, it
+    reads back as a room nobody has and a level nobody asked for."""
+    new = ye.edit_entry_map('outputs:\n  - name: front-room\n    kind: google_cast\n',
+                            "outputs", 0, "members", "Bedroom: upstairs", 0.6)
+    assert '"Bedroom: upstairs": 0.6' in new, new
+    assert _loads_ok(HEAD + new, tmp_path).output("front-room").members == \
+        {"Bedroom: upstairs": 0.6}, \
+        "and reading it back gives the same name back, not two halves of it"
+
+
+def test_a_map_written_on_one_line_is_refused_rather_than_unpicked():
+    """`members: {Kitchen speaker: 0.2}` is valid YAML and something a person may well
+    have typed. Turning it into a block is a formatting change nobody asked for, and doing
+    it halfway leaves a file the loader refuses - which is a morning with no adhan in it."""
+    flow = ('outputs:\n  - name: front-room\n    kind: google_cast\n'
+            '    members: {Kitchen speaker: 0.2}\n')
+    with pytest.raises(ValueError) as exc:
+        ye.edit_entry_map(flow, "outputs", 0, "members", "Kitchen speaker", 0.6)
+    assert "one per line" in str(exc.value)

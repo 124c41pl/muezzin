@@ -472,6 +472,35 @@ def entry_list(entry, key):
     return None
 
 
+def _split_pair(body: str) -> Optional[tuple[str, str]]:
+    """Split `name: value` when the name may be quoted and the value may hold colons.
+
+    A room's name in the Google Home app is "Kitchen speaker", but it can also be
+    "Bedroom: upstairs", and the only safe reading of that line is the one that knows a
+    quoted name ends at its own quote mark.
+    """
+    body = body.strip()
+    if not body:
+        return None
+    if body[0] in ("\"", "'"):
+        quote, i = body[0], 1
+        while i < len(body):
+            if body[i] == "\\":
+                i += 2
+                continue
+            if body[i] == quote:
+                rest = body[i + 1:].lstrip()
+                if not rest.startswith(":"):
+                    return None
+                return _value_of(body[:i + 1]), rest[1:]
+            i += 1
+        return None
+    name, sep, rest = body.partition(":")
+    if not sep:
+        return None
+    return _value_of(name), rest
+
+
 def strip_quotes(value: str) -> str:
     value = value.strip()
     if value[:1] in "\"'" and value[-1:] == value[:1] and len(value) > 1:
@@ -533,6 +562,78 @@ def edit_entry(text, key, index, edits, add_comment=None):
             if isinstance(value, (list, tuple)):
                 while hit + 1 < len(out) and out[hit + 1].lstrip().startswith("- "):
                     del out[hit + 1]
+    lines = _split(text)
+    return "\n".join(lines[:row["start"]] + out + lines[row["end"]:])
+
+
+def edit_entry_map(text, key, index, field, name, value):
+    """Set one name inside a nested mapping of one entry, or take that line out.
+
+    This is how a room's level gets written: `- name: front-room` / `members:` /
+    `Kitchen speaker: 0.6`. Passing None for the value deletes the name instead of
+    writing `null`, because the profile's loader wants a number beside every name under
+    `members:`, and a room that should follow the group's number is a room with no line
+    of its own. If that was the only line, the now-empty `members:` goes too: an empty
+    map is a sentence nobody wrote on purpose.
+    """
+    rows = entries(text, key)
+    if not 0 <= index < len(rows):
+        raise IndexError("no such entry")
+    row = rows[index]
+    column = _key_indent(row["text"])
+    indent = " " * column
+    out = row["text"].split("\n")
+    hit = next((i for i, line in enumerate(out) if _at(line, field, column)), None)
+    if hit is not None:
+        inline = out[hit].split(":", 1)[1].strip()
+        if inline.startswith("{"):
+            # The same bargain as append_entry makes for a one-line list: unpicking a
+            # line somebody formatted themselves is not a small thing to do unsolved.
+            raise ValueError(f"{field}: is written on one line; put its names one per line "
+                             f"underneath it to change a level here")
+    # The block under the field: names at one column deeper, and nothing else.
+    deeper, mine, last = None, [], hit
+    j = (hit + 1) if hit is not None else 0
+    while hit is not None and j < len(out):
+        body = out[j].strip()
+        if not body or body.startswith("#"):
+            j += 1
+            continue
+        col = len(out[j]) - len(out[j].lstrip(" \t"))
+        if col <= column:
+            break
+        if deeper is None:
+            deeper = col
+        if col == deeper:
+            last = j
+            pair = _split_pair(body)
+            if pair and pair[0] == name:
+                mine.append(j)
+        j += 1
+    if mine and value is None:
+        # Take the name's line out, and the field's own line as well if nothing is
+        # left under it. A comment on a line of its own stays: it is the person's, not
+        # ours to delete. A note at the end of the line being taken out goes with it,
+        # because it had nothing else it was written about.
+        gone = set(mine)
+        if not [i for i in range(hit + 1, last + 1) if i not in gone
+                and out[i].strip() and not out[i].lstrip(" \t").startswith("#")
+                and len(out[i]) - len(out[i].lstrip(" \t")) == deeper]:
+            gone.add(hit)
+        out = [line for i, line in enumerate(out) if i not in gone]
+    elif mine:
+        keep = mine[0]
+        note = _TRAILING.search(out[keep])
+        pad = " " * (deeper if deeper is not None else column + 2)
+        out[keep] = (f"{pad}{scalar(name)}: {scalar(value)}"
+                     + (f"  {note.group(1).lstrip()}" if note else ""))
+        gone = set(mine[1:])           # a repeated name reads as the last one; keep one line
+        out = [line for i, line in enumerate(out) if i not in gone]
+    elif value is not None:
+        pad = " " * (deeper if deeper is not None else column + 2)
+        line = f"{pad}{scalar(name)}: {scalar(value)}"
+        out = out[:last + 1] + [line] + out[last + 1:] if hit is not None \
+            else out + [f"{indent}{field}:", line]
     lines = _split(text)
     return "\n".join(lines[:row["start"]] + out + lines[row["end"]:])
 
