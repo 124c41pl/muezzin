@@ -44,11 +44,19 @@ find, so the page is strict about what it will work under:
 ## What the page looks like
 
 Deep green and gold, over a khatam — an eight-point star lattice — drawn into the
-page as an inline SVG. Today's card has an arched top, because a rounded top
-corner is already the shape of a mihrab and of a dome; there is no figurative
-imagery anywhere, and no Qur'anic text used as decoration. Prayer names appear in
-Arabic beside the English labels — الفجر، الشروق، الظهر، العصر، المغرب، العشاء،
-نصف الليل، الشفع — and the Hijri date sits in the header and on every day row.
+page as an inline SVG. There is no figurative imagery anywhere, and no Qur'anic text
+used as decoration. Prayer names appear in Arabic beside the English labels — الفجر، الشروق،
+الظهر، العصر، المغرب، العشاء، نصف الليل، الشفع — and the Hijri date sits in the header.
+The occasions of a day — a fast, a mourning, a feast — are pills, and they ride beside
+that day's name wherever the page names a day.
+
+The page used to say the same minutes twice: one card wrote out each day's prayer times,
+and the other wrote out the calls that happen at some of them. It says them once now, in
+the **Events** card, which shows one day at a time, opens on today, and walks to the day
+before and the day after with two arrows or the left and right keys of a keyboard. What
+that costs is worth naming: a prayer the profile makes no call for — Sunrise, the middle
+of the night — is not printed anywhere on the page now. `muezzin times` and the API still
+give every one of them.
 
 Every font, icon, script and the lattice itself are in the one document the daemon
 already serves — its source is `page.py`, one string handed over unchanged, so there
@@ -84,7 +92,8 @@ It moves nothing else. No prayer time, no event, no playback depends on the Hijr
 date; there is a test that asserts exactly that, because a display feature that
 quietly shifts Fajr would be the worst kind of feature.
 
-Fixed-date observances are marked on the day rows — Ashura, Arbaeen, the two
+Fixed-date observances ride beside the day they fall on, in the strip above the Events
+list — Ashura, Arbaeen, the two
 Eids, Eid al-Ghadir, the births, Laylat al-Qadr, and so on — coloured by kind:
 grey-blue for mourning days, gold for celebrations, teal for the plain ones. They
 are decoration on a calendar, not a ruling about when anything is observed, and
@@ -454,7 +463,12 @@ outputs:
   - name: house-group
     kind: google_cast
     target: Whole-house group             # Google Home groups work, including one speaker
-                                          # inside them; a group has no level of its own
+    volume: 0.5                           # inside them: this is what every room inside is
+                                          # asked for while a call plays, and each room
+                                          # goes back to its own level afterwards
+    members:                              # rooms at levels of their own, one per line:
+      Kitchen speaker: 0.6                # the sliders under the group's row write these,
+      Study speaker: 0.4                  # each named as `muezzin devices` prints them
   - name: pc
     kind: pc_speakers              # this machine's default output, at its own level
   - name: attic-pi
@@ -479,6 +493,11 @@ events:
     media: [fajr.mp3]
     targets: [study, house-group] # per-event: this is the part that is missing elsewhere
     volume: 0.5                  # one level for the cast speakers this event reaches
+    members:                     # the same block one level deeper: what THIS call asks
+      Kitchen speaker: 0.6       # of one named room; the sliders under a prayer's row
+      Study speaker: 0.4         # write these, and a prayer nobody tuned has neither line
+                                 # Rooms this prayer never named follow these numbers,
+                                 # which is where an event's ask outranks the output's.
   - name: sunrise-tune
     at: sunrise
     media: [dua.mp3]
@@ -523,8 +542,12 @@ nothing is refused at load time, and an event that asks for more than the folder
 offer plays what the folder has and says how short it was, rather than going quiet.
 
 The page has a card for that folder rather than a form for it: **Recordings in the
-folder** lists every file `media_dir` holds, with the events whose `media:` names each
-one, and beside each row a switch, an **add to** and a delete. `POST /api/library/hold`
+folder** lists every file `media_dir` holds, and beside each row a **Random** switch and
+an **Event** column — a dropdown naming an event, an **add to** that puts the recording on
+it, and a delete. Which events name a recording are not listed as words of their own: that
+column and its button are where a name gets put onto an event, taking one back off is a line
+of YAML you can edit in the card below, and the delete says which event is in the way when one
+would be left behind. `POST /api/library/hold`
 writes the switch into `library: exclude:` — into the profile, because the drawing reads
 the profile, so a hold kept as page state would be forgotten by the next Fajr.
 `POST /api/library/insert` appends a recording to the end of one event's playlist, which
@@ -560,8 +583,9 @@ because the cost is only ever paid after the moment has gone. So the daemon wake
 early and hands the recording over a few seconds before the moment, which is what
 puts the first note at the time instead of behind it.
 
-How early is what that kind of speaker costs: eight seconds for a Cast speaker,
-one for a Pi box that is a single request away, nothing for a computer's own
+How early is what that kind of speaker costs: twelve seconds for a Cast speaker -
+the hand-off includes asking the rooms inside a group for their levels - one for a
+Pi box that is a single request away, nothing for a computer's own
 speakers or a file output, which start instantly. The slowest speaker an event
 wants sets the lead for that event, so a house with one slow speaker hears
 everything a few seconds early rather than hearing that one speaker late. Each
@@ -687,24 +711,85 @@ Three honest limits of this seam:
   opened. Since the level is applied by the same code that plays an adhan, the
   number you set is the number a **test** comes out at, which is the part that used
   to be decided by whoever last touched the speaker.
-* **a speaker group has no level of its own.** A group is a name several speakers
-  share, so asking that name for a level is asking several levels at once - and that is
-  what the ask looks like on the wire. Measured on this LAN against a four-speaker Home
-  group: the `SET_VOLUME` reaches the group's receiver, which answers with a multizone
-  message naming Tabby at 0.16, Kitchen at 0.41, Alex at 0.25 and Office at 0.46; the
-  ask is sent again at 1.0, at 0.35 and at 0.1, and after each one those four numbers
-  are exactly where the Google Home app left them. The installed pychromecast has no
-  multizone support to reach for either, and several speakers being made quieter
-  together is something only the Home app does on this LAN. So the page is told what the last scan called each output's target -
-  `target_kind` in the state, a fact kept separate from `takes_volume`, which is about
-  the kind of output rather than about what its name covers - and a row the network
-  called a group says whose level it is instead of offering a slider. Asking a group for
-  a level is refused before the profile is opened, because the alternative is a number
-  in the file that nothing honours. A `volume:` written onto a group by hand still goes
-  out with each play, since a group assembled in a browser tab is a different thing that
-  does answer to it, and one line in the log says that its members will not hear it. The
-  levels that can be heard belong to the individual speakers: set them in the Home app,
-  or give each speaker its own output.
+* **a speaker group has no level of its own, so its level is borrowed from the rooms
+  inside it and handed back afterwards.** A group is a name several speakers share, so
+  asking that name for a level is asking several levels at once - and that is what the
+  ask looks like on the wire. Measured on this LAN against a four-speaker Home group:
+  the `SET_VOLUME` reaches the group's receiver, which answers with a multizone message
+  naming Tabby at 0.16, Kitchen at 0.41, Alex at 0.25 and Office at 0.46; the ask is
+  sent again at 1.0, at 0.35 and at 0.1, and after each one those four numbers are
+  exactly where the Google Home app left them. The installed pychromecast has no
+  multizone support to reach for either. So a level written for a group is understood
+  as a promise about its rooms, not about the group's own number: muezzin finds which
+  speakers are inside - the same read-back the devices list uses, each speaker's setup
+  endpoint saying which groups it belongs to - connects to each one over a connection
+  of its own, remembers the level that room was at, and asks the room for the written
+  level. When the call ends, whether it finished, failed half-way or was stopped from
+  the page, each room goes back to exactly where its owner had left it. A prayer call
+  can put the kitchen at 0.5 and the office at 0.4 while their owners had them at 0.1
+  and 0.8, and the house wakes to 0.1 and 0.8, the same numbers the Home app shows -
+  which is what makes it honest to set a level at all. A room muezzin moved while the
+  call was playing - the Home app, or a person at the speaker - is left where that
+  newer ask put it rather than rolled back, and a room that never answered about
+  itself is named in the log instead of given an invented level. Rooms at levels of
+  their own are written under `members:` in the profile, one speaker name per line, and
+  the page writes them: a group's row grows one slider per room it saw, each room named
+  by what it answers to on the network rather than by a box to type in. A name that has
+  never been out there is refused before it is written; a name that went stale - a
+  speaker renamed in the Home app - stays on the row saying it is not out there, because
+  a level nobody can account for is worse than an untidy row. `volume:` on the group is
+  what every room inside is asked for, and a room with no line of its own is asked for
+  exactly that. The same block one level deeper says what a single call asks of a room. A
+  house is not the same house at five in the morning and at two in the afternoon, so an
+  event can carry `members:` of its own, keyed by the same names the network gives, and the
+  page opens it as a drawer under the prayer: the prayer's row carries one line saying what
+  that prayer asks - `as usual`, the rooms that were tuned, or how many of them - and
+  pressing it grows one slider per room that prayer reaches and no others, which is what
+  keeps four rooms times nine prayers from becoming a wall of sliders nobody reads. Only the
+  rooms that were moved are written, so the prayer that wants nothing extra has nothing
+  written under it and stays a line of text. A room's number for one call is settled in this
+  order: the prayer's own line for that room, then the prayer's `volume:` for every room it
+  plays through, then the output's line for that room, then the output's `volume:`, then the
+  default. Being specific about this prayer comes first, which is a change for a profile
+  carrying both an event `volume:` and standing `members:` lines on its output: the event's
+  number now covers the rooms that event never named. What happens after the call is not the
+  same both ways round, and the page says which way: a room that reached the prayer as a room
+  of a group is borrowed over a connection of its own and handed its old level back, while a
+  speaker the profile points at directly is asked for the new level the way its output's own
+  `volume:` always asked it and keeps that level afterwards. One function,
+  `backends.call_level`, makes that decision, so the figure beside a slider on the page is
+  the figure the speaker is handed at 5 am and not an estimate of it. What was borrowed lives in one book per process rather than one per
+  output, because a profile can reach one speaker twice - a whole-house group and the
+  kitchen group that kitchen is also in - and two sets of notes about one room would
+  leave it sitting at a level nobody in the house chose: the number to go back to
+  belongs to whoever picked the speaker up first, and whoever is last done with it is
+  the one that writes that number back. A daemon and a `muezzin play-now` in another
+  window keep a separate book, which is why one daemon per machine is the honest way
+  to run this. Because finding the
+  rooms and borrowing their levels is part of the hand-off, a Cast output now starts
+  twelve seconds before the moment instead of eight. The only case where the ask still
+  goes to the group's own receiver is a group none of whose speakers answered, which is
+  what the log then says, because a browser-tab group is a different thing that does
+  answer to it - and even that number is borrowed and handed back, since a figure
+  nobody hears has no business staying in the Home app.
+* **a speaker group says BUFFERING in the middle of a file, and that is not the end of
+  the file.** Measured on this LAN on a night the network was unhappy, watching the asr call
+  go to a four-speaker Home group: the group's own player state said PLAYING at 14:34:41,
+  then BUFFERING a second later, and again half a second after that. That is what its
+  members do when they fall out of step and take the stream again, and the rooms were still
+  reciting. What one poll of it used to be read as was the end of the call: muezzin sent the
+  quit and wrote nothing in the log, because a buffering state is no error to report. The
+  recitation carried on - the quit goes to the group's receiver while its members carry the
+  sound, which is why nobody heard anything wrong - but the rooms' borrowed levels went back
+  underneath it, so the call finished at the levels the house had chosen rather than the ones
+  the profile asked for. So a state that is not playing has to outlast a poll of its own
+  before the watch believes it, and a file that comes back to PLAYING gets the rest of its
+  minutes. A player left PAUSED across two of those polls is something else again and is
+  named in the log as a call that did not finish, rather than counted as one that did. And a
+  stream that says BUFFERING and never says PLAYING again - a network that really did drop
+  it, rather than a member that dipped - is given two minutes and then given up on, because
+  waiting out the ceiling would leave the house at borrowed levels and the rest of the
+  evening's calls queued behind a speaker that has been silent for half an hour.
 * a command-line player is a separate process, so what comes back from a recording
   it cannot decode is an exit code rather than a diagnosis. `mpg123` and `ffplay`
   cover what a Cast speaker accepts; `paplay` and `aplay` are wav only, which is why

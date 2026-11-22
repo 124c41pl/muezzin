@@ -191,11 +191,13 @@ log says which ones went out. `library: exclude:` keeps a recording out of the d
 without deleting it, which is the answer to the recitation you own but would not want
 heard by accident.
 
-The **Recordings in the folder** card is that folder on the page: every file, how big it
-is, and which prayers play it. Beside each one, a switch keeps it out of the drawing and
-writes the name under `library: exclude:`; **add to** puts it at the *end* of a prayer's
-list, which is where a dua after the adhan goes; and **delete** refuses while a prayer
-still plays it, because that is the one thing on the page you cannot undo.
+The **Recordings in the folder** card is that folder on the page: every file and how big it
+is, then two columns you work with. The **Random** switch keeps a recording out of the drawing
+and writes the name under `library: exclude:`; the **Event** column names an event and puts the
+recording at the *end* of its list, which is where a dua after the adhan goes; taking it back off
+an event is a line in the profile, which the card below edits; and **delete** refuses while an
+event still names it, because that is the one thing on the page you cannot undo — the answer says
+which event was in the way.
 
 ### Then run it
 
@@ -238,14 +240,23 @@ port). Open `http://<the machine's LAN address>:8020` from a phone on the same
 wifi — which is how you stand in the kitchen and find out whether the speaker you
 just added is actually reachable.
 
-On it: three days of times for the method in the profile; the next events and
-which output each resolves to; every output with a name you can type in, an on/off
-switch, a level slider for the speakers muezzin is allowed to ask a level of (a row
-whose target the network called a speaker group says so instead, because a group's
-level belongs to the Google Home app), and a
+On it: the **Events** card, which is the timetable - one day at a time, opening on today,
+since the page used to write the same minutes out twice in two cards. The strip above the
+list says which day is showing and carries that day's occasions, the arrows beside it walk to
+the day before and the day after and so do the left and right keys of a keyboard, and one
+press gives the whole list back; each row also says which output that call resolves to. Then:
+every output with a name
+you can type in, an on/off
+switch, a level slider for the speakers muezzin is allowed to ask a level of (on a row
+whose target the network called a speaker group, that number is what every room inside
+is asked for while a call plays, and each room goes back to its own level when it ends), one
+slider per room under that row - which is what writes the `members:` lines a person used to
+have to type by hand - and a
 **test** button; the method dropdown; a clip per prayer and a Friday
-column; the recordings in your folder, each with the prayers that play it, a switch for
-the random drawing and an **add to**; what is on the LAN right now, with **use** /
+column, and a `levels:` line under each prayer that opens on request into one slider per
+room that prayer plays through; the recordings in your folder, each with a **Random** switch
+for the drawing and an **Event**
+column that puts it on an event; what is on the LAN right now, with **use** /
 **stop using**; a **Where**
 section with a map on it; and the profile YAML itself with a save button. A band above
 it says out loud whatever is still missing — a location nobody chose, no speakers, or
@@ -351,9 +362,43 @@ the device list, along with the player it picked for itself.
   speakers share, and measuring it here: a level asked of the whole-house group reaches
   its receiver, which answers by naming the four speakers inside it and the level each
   of them is at — and not one of those four numbers moves, whatever it is asked at. So
-  the page puts no slider on a group's row and refuses to write a level onto one,
-  because a knob that changes nothing is worse than no knob. The levels to change are
-  the speakers' own, in the Google Home app; or give each speaker its own output.
+  muezzin does not ask the group: it asks every room inside it, over a connection of
+  that room's own, for the length of one call, and hands each room back to the level its
+  owner had left it at the moment the call ends. A Fajr call can bring the kitchen up to
+  60% and the study to 40% while their owners had them at 10% and 80%, and when it is
+  over the Home app still reads 10% and 80% — the adhan had its levels, the rooms kept
+  theirs. `volume:` on the output is what every room inside is asked for; rooms at
+  levels of their own get a line under `members:`, one speaker name per line. The page writes
+  those lines too: a group's row grows one slider per room it saw, each room named by the
+  speaker itself rather than typed in, and a room with no level of its own is asked for
+  the group's number. One prayer can want numbers of its own, and that line lives under the
+  prayer rather than under the group: each prayer's row carries a `levels:` line — `as
+  usual`, or `kitchen 60% tabby 35%` once some have been moved, or `4 rooms tuned` when
+  there are too many to spell out — and pressing it opens one slider per room that prayer
+  plays through, which writes a `members:` block under that event. Only the rooms that were
+  moved get a line, so a prayer nobody tuned has nothing written under it at all, and the
+  rooms it never named go on following what the Outputs card asks of them. The one thing
+  that changed for a file written before this: a prayer's own `volume:` now covers the rooms
+  it never named, ahead of the standing `members:` lines on the output, because the number
+  about this prayer is the more specific one. A prayer pointed at a folder, or at the
+  computer's own speakers, says there is nothing to ask instead of offering a box, and a
+  name written under a prayer that no speaker answers to any more is listed there with the
+  same words and taken out from the same place. What happens when the call ends is two things
+  at once, and the line on the page says which: a room of a group is handed back the level its
+  owner had it at, while a speaker the profile points at directly keeps the level it was asked
+  for, the way that output's own number always has. Each line puts what the room will be asked
+  at that call beside what it would have been asked anyway, because the figure next to a
+  slider is the figure the speaker is handed at 5 am and not a suggestion about one.
+  A room that is off, or that was moved by hand mid-call, is left
+  alone and named in the log rather than guessed at — and so is a name in `members:` that
+  no speaker out there answers to any more, which the row says out loud instead of
+  quietly dropping it. What was borrowed is kept in one book per process rather than one
+  per output, because a profile can reach one speaker twice — a whole-house group and the
+  kitchen group that kitchen is also in — and two sets of notes about one room would
+  leave it at a level nobody in the house chose: the number to go back to belongs to
+  whoever picked the speaker up first, and whoever is last done with it writes that
+  number back. One daemon per machine is the honest setup, then; a daemon and a
+  `muezzin play-now` in another window keep separate books.
 * On macOS the firewall asks whether Python may receive incoming connections the
   first time you run a daemon or a box. Say allow, or the page will not answer and
   discovery will not work.
