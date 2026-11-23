@@ -37,7 +37,12 @@ RUN useradd --create-home --uid 10001 azan \
  && chown -R azan:azan /app
 USER azan
 
-# 8020 is the panel, 8010 the media server the speakers pull audio from.
+# 8020 is the panel, 8010 the media server the speakers pull audio from. These are
+# the defaults, not a promise: MUEZZIN_WEB_PORT and MUEZZIN_HTTP_PORT say otherwise
+# for one container, which is how a second muezzin on the same machine gets its own
+# ports without rewriting the command below. EXPOSE keeps the defaults, because it
+# is documentation for whoever is reading this file, and Docker uses it for nothing
+# except what `docker inspect` reports.
 EXPOSE 8020 8010
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
@@ -48,5 +53,11 @@ ENTRYPOINT ["/app/docker-entrypoint.sh"]
 # schedule. On a network you do not trust, put "--read-only" at the end of the
 # arguments in a compose `command:`; the config folder has to be writable for the
 # page to save at all, read-only or not.
-CMD ["daemon", "-c", "/app/config/muezzin.yaml", "--web", "8020"]
+#
+# `--web` is left bare on purpose. The number is what a second container has to
+# change, and an argument already carrying a number beats an environment variable,
+# so pinning 8020 here would mean rewriting this whole line - and the argument list
+# is also where the read-only and allow-host choices live. A bare --web says "the
+# page runs", and MUEZZIN_WEB_PORT says on which port, 8020 when it is not set.
+CMD ["daemon", "-c", "/app/config/muezzin.yaml", "--web"]
 

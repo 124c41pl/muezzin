@@ -91,6 +91,28 @@ def test_the_container_lets_the_page_finish_the_setup():
     assert "login" in docker + compose, "the cost of a writable page is stated, not implied"
 
 
+def test_a_second_container_can_move_the_ports_without_rewriting_the_command():
+    """The machine that already runs muezzin is the one that has to change a port.
+
+    A container can set its environment without being handed the argument list, but
+    an argument that already carries a number outranks a variable — that is the
+    whole reason a `command:` in somebody's own compose file still wins. So a port
+    pinned in this image's CMD turns MUEZZIN_WEB_PORT into a no-op for exactly the
+    person who needs it, and nothing in the build says so: they set the variable,
+    the page answers on 8020 anyway, and the second container fails on the port the
+    first one is holding. A bare `--web` is what keeps the knob turned.
+
+    The names belong in the README for the same reason they belong in the image: the
+    alternative to documenting them is that they exist and nobody reaches for them.
+    """
+    docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    cmd = _instruction(docker, "CMD")
+    assert '"--web"]' in cmd, "the image pins its own page port, so the environment cannot move it"
+    for name in ("MUEZZIN_WEB_PORT", "MUEZZIN_HTTP_PORT"):
+        assert name in docker, f"the image says nothing about {name}"
+        assert name in (ROOT / "README.md").read_text(encoding="utf-8"), f"{name} is undocumented"
+
+
 def test_the_first_run_of_a_container_has_a_profile_to_read():
     """A daemon pointed at an empty volume answers with a usage error and exits 2,
     which on `docker compose up` reads as a broken image rather than as a step

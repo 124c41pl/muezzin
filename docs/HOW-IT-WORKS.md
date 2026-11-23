@@ -642,7 +642,10 @@ something you configure: each box reports what it found on its own machine, whic
 is how you can tell from the daemon's side that the Pi really does have mpg123.
 
 A Cast speaker plays a **URL it fetches itself**, so the daemon starts a small
-HTTP server for `media_dir` (port 8010). That means:
+HTTP server for `media_dir` — port 8010, which `http_port:` in the profile moves,
+and which `MUEZZIN_HTTP_PORT` moves again for one run when that machine is already
+running a muezzin and 8010 is spoken for. `0` there means take a free one, and the
+URL handed to a speaker names whichever port the server actually got. That means:
 
 * the **firewall on the machine running the daemon must let the speakers reach
   that port** — this is the most common reason a speaker connects and stays
@@ -825,6 +828,11 @@ machine running the daemon stays the brain:
 ```bash
 muezzin box --name attic-pi --port 8090     # advertises itself with mDNS
 ```
+
+Two boxes on one machine need a different `--name` each and a different port;
+`MUEZZIN_BOX_PORT` gives the second one a port without touching the command line,
+which is what a container has. Discovery carries the number either way, because the
+box advertises the port it is actually listening on.
 
 Then in the daemon's profile:
 

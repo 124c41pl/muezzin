@@ -351,7 +351,9 @@ arguments; the bottom of `docker-compose.yml` has that shape ready to uncomment.
 is an argument: `--web 8080` on the daemon, `--port 8080` on the bare `web` command.
 The media port — the one a speaker pulls the recording from — is a profile field,
 `http_port: 8010`, and the page never changes it, so you edit it in
-`./config/muezzin.yaml`. Both listen on `0.0.0.0`.
+`./config/muezzin.yaml`. Both listen on `0.0.0.0`. Either number can come from the
+environment instead, and for the machine already running a muezzin that is the only
+practical way to say it; both ways are below.
 
 With `network_mode: host` there is nothing to map: a `ports:` line is ignored, and
 the port on the machine is simply the port the program was told to use. So moving
@@ -363,6 +365,59 @@ services:
     network_mode: host
     command: ["daemon", "-c", "/app/config/muezzin.yaml", "--web", "8080"]
 ```
+
+Neither number has to be written into the arguments at all. `MUEZZIN_WEB_PORT` is the
+page's port, `MUEZZIN_HTTP_PORT` the media port — it stands in for `http_port:` in the
+profile — and `MUEZZIN_BOX_PORT` is the port `muezzin box` answers on. They are there
+for the machine that already runs a muezzin: a container arrives with its command line
+already written, and setting a variable next to the image name is a smaller ask than
+rewriting it. Two rules keep the two ways of saying a port from quarrelling:
+
+* a number written on the command line wins over the variable, because that was said
+  out loud for this run;
+* the variable never *starts* the page. `--web` decides whether there is a page at all,
+  the variable decides which port, and the published image runs a bare `--web` so the
+  variable has something to fill in.
+
+And when a number really is taken, the daemon says which of its two servers could not
+listen and names both places to say another one, rather than ending on the operating
+system's `Address already in use` line — which does not know this program has two ports.
+
+So two daemons on one machine — two households, or a study and a hall — are the same
+service twice, each with its own folders and its own pair of ports:
+
+```yaml
+services:
+  study:
+    image: ghcr.io/124c41pl/muezzin:0.1.5
+    network_mode: host
+    volumes:
+      - ./study/config:/app/config
+      - ./study/media:/app/media
+    environment:
+      TZ: America/New_York
+      MUEZZIN_WEB_PORT: "8020"
+      MUEZZIN_HTTP_PORT: "8010"
+    command: ["daemon", "-c", "/app/config/muezzin.yaml", "--web"]
+  hall:
+    image: ghcr.io/124c41pl/muezzin:0.1.5
+    network_mode: host
+    volumes:
+      - ./hall/config:/app/config
+      - ./hall/media:/app/media
+    environment:
+      TZ: America/New_York
+      MUEZZIN_WEB_PORT: "8021"      # the page; 8020 if the study is not running
+      MUEZZIN_HTTP_PORT: "8011"     # the media port; 0 means take a free one
+    command: ["daemon", "-c", "/app/config/muezzin.yaml", "--web"]
+```
+
+In host networking both numbers are the machine's, so both have to differ; a speaker is
+handed whichever port the media server actually got, which is why `MUEZZIN_HTTP_PORT: 0`
+costs nothing on the speaker side. The two daemons want their own `config` and media
+folders as well, since that is where each one keeps its schedule and its recordings. The
+same idea covers a second box: `MUEZZIN_BOX_PORT`, and a different `--name`, which is the
+name the page lists it under.
 
 To pick a host port that has nothing to do with the one inside the container —
 because 8020 is taken on that machine, or because you are on Docker Desktop, where

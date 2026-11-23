@@ -31,6 +31,15 @@ services:
       # Times come from `location.timezone` in the profile, not from TZ; this
       # only makes the log lines read like your day.
       TZ: America/New_York
+      # A second muezzin on this machine needs its own two ports, and with host
+      # networking those are the machine's own ports, not the container's. These
+      # variables are why the image's own command says a bare `--web`: an argument
+      # that already carries a number outranks a variable, and a port pinned in the
+      # image would leave nothing for the variable to change. `MUEZZIN_HTTP_PORT`
+      # stands in for `http_port:` in the profile; 0 means take a free one, and the
+      # speaker is handed whichever port the media server actually got.
+      # MUEZZIN_WEB_PORT: "8021"
+      # MUEZZIN_HTTP_PORT: "8011"
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
@@ -41,13 +50,25 @@ services:
   # It also carries --read-only, which is the other reason to want this shape: a
   # page on a network you do not trust, showing the times and changing nothing.
   #
+  # The left-hand port is the one you dial, so "8080:8020" moves the page to 8080
+  # on this machine without touching anything inside the container.
+  #
+  # --allow-host is not decoration here. The page answers to localhost, to its own
+  # address, and to names it was told about - and behind a published port the
+  # browser's Host header names this machine (192.168.0.5), which is not an address
+  # the container knows it has, so the request is refused with 403 by the same
+  # DNS-rebinding guard described in SECURITY.md. Name the address you type;
+  # localhost on this machine is already believed, and the port is ignored in the
+  # comparison, which is what makes remapping free.
+  #
   # muezzin-lookup-only:
-  #   image: muezzin:0.1.5
+  #   image: muezzin:0.1.5            # or ghcr.io/124c41pl/muezzin:0.1.5, no build
   #   ports:
-  #     - "8020:8020"
+  #     - "8080:8020"
   #   volumes:
   #     - ./config:/app/config
-  #   command: ["web", "-c", "/app/config/muezzin.yaml", "--port", "8020", "--read-only"]
+  #   command: ["web", "-c", "/app/config/muezzin.yaml", "--port", "8020",
+  #             "--read-only", "--allow-host", "192.168.0.5"]
 
 volumes:
   muezzin-out:

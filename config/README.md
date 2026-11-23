@@ -40,3 +40,18 @@ Neither is needed, nothing about a lookup is stored here, and no lookup in this
 program asks for an API key. With no outbound network at all the times do not care: type
 the coordinates in by hand, put `map_tiles: off` in the profile, and this daemon never
 asks anybody anything.
+
+Ports are the other thing a second muezzin on the same machine has to change, and neither
+number is a reason to edit a file:
+
+    MUEZZIN_WEB_PORT="8021"    # the page, for `daemon --web` and for `web --port`
+    MUEZZIN_HTTP_PORT="8011"   # the server speakers pull audio from; 0 means take a free one
+    MUEZZIN_BOX_PORT="8091"    # the port `muezzin box` answers on
+
+The variable outranks `http_port:` above, because the machine starting the process is the
+one that knows which ports are free, and your file is left exactly as it was. A number
+written on the command line outranks the variable, because that was said out loud for
+this run. And no variable starts the page by itself: `--web` is still what opens it, the
+variable only says which port, which is worth knowing on a machine where environment
+variables come from somewhere else. See the **Ports** section of the main README for the
+compose shape of all this.
