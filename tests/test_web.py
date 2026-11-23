@@ -58,6 +58,24 @@ def panel(tmp_path):
         runner.shutdown()
 
 
+NARROW = "@media (max-width:620px)"
+
+
+def column_widths(html, table, cell="th"):
+    """The widths the columns of one table are told, as two lists: what a wide window
+    gets, and what the rules for a narrow window get. A media query retells a table's
+    columns for a phone, so read as one list they would be a table with twice as many
+    columns as it has. Most tables are told by their headers; a table built without a
+    header row has to be told by its cells, which is the same rule from the other end."""
+    wide, _, phone = html.partition(NARROW)
+
+    def grab(text):
+        return [int(w) for w in
+                re.findall(rf"{table} {cell}:nth-child\(\d\) \{{ width:(\d+)%", text)]
+
+    return grab(wide), grab(phone)
+
+
 def test_the_page_itself_is_served(panel):
     web, _, _ = panel
     status, html = call(web.port, "/", raw=True)
@@ -590,6 +608,24 @@ def test_the_page_has_room_for_the_three_new_answers(panel):
     assert "still in force" in html
 
 
+def test_no_two_things_on_the_page_are_asked_for_by_the_same_name(panel):
+    """Pressing look-again used to run the scan and change nothing you could see: the tag
+    beside the button said a newer time, the count under it changed, and the table of
+    speakers stayed exactly as it was. Two elements were called #found - the geocoder's
+    answer list under Where, which comes first in the document, and the speaker table under
+    Speakers on the network - and a page asks for a name by taking the first element that
+    carries it, so the scan's rows went into the other card instead. The check covers the
+    whole page, markup built inside the script included, because that is where a second
+    name hides; a template that makes its own name is not a name to compare."""
+    _, page = call(panel[0].port, "/", raw=True)
+    names = re.findall(r'id="([a-zA-Z_][\w-]*)"', page)
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    assert not dupes, f"two things on the page are named {' and '.join(dupes)}"
+    asked = set(re.findall(r"\$\('#([a-zA-Z_][\w-]*)'\)", page))
+    missing = sorted(asked - set(names))
+    assert not missing, f"the page reaches for {', '.join(missing)}, which nothing on it answers to"
+
+
 def test_a_bad_asr_choice_is_refused(panel):
     web, _, _ = panel
     status, reply = call(web.port, "/api/method", {"preset": "isna", "asr_shadow": "maybe"})
@@ -894,13 +930,16 @@ def test_the_scheduled_call_is_not_cut_short_by_stopping_a_test(panel):
 
 
 def test_the_page_has_a_transport_and_no_way_to_move_a_computers_level(panel):
-    """Two things the page has to get right that no Python assertion about audio can
-    catch: the preview is labelled as this computer making the sound, and the only level
-    anything on the page can move is the level of a speaker muezzin casts to. The level of
-    a computer - the one running this program, or a box on the LAN - belongs to the person
-    sitting in front of it, so that kind of output gets words instead of a control and the
-    script never sets the level of the player making the sound. The other slider is a place
-    inside a recording, which is filled in from the file's length - not a 0 to 1 thing."""
+    """Three things the page has to get right that no Python assertion about audio can
+    catch: the preview is labelled as this computer making the sound, the only levels
+    anything on the page can move belong to speakers muezzin casts to, and the script never
+    touches the level of the player making the sound. The level of a computer - the one
+    running this program, or a box on the LAN - belongs to the person sitting in front of it,
+    so that kind of output gets words instead of a control. The other three sliders are a
+    speaker muezzin casts to, one room inside a speaker group, and what one prayer asks of
+    one of those rooms, which are all the same kind of number: a fraction of that room's own
+    scale. The last slider is a place inside a recording, which is filled in from the file's
+    length - not a 0 to 1 thing."""
     web, _, _ = panel
     _, html = call(web.port, "/", raw=True)
     assert "/api/clip" in html and "play it here" in html
@@ -909,15 +948,26 @@ def test_the_page_has_a_transport_and_no_way_to_move_a_computers_level(panel):
     assert not re.search(r"\b\w+\.volume\s*=(?!=)", script), \
         "the page must not set the level of the browser showing it, or of any computer"
     sliders = re.findall(r'<input[^>]*type="range"[^>]*>', html)
-    assert len(sliders) == 2, \
-        "one slider for a place inside a recording, one for a speaker we are casting to"
+    assert len(sliders) == 4, \
+        ("one slider for a place inside a recording, one for a speaker we are casting to, "
+         "one for a room inside a group we are casting to, and one for what a single prayer "
+         "asks of one of those rooms")
     seek = next(s for s in sliders if 'id="seek"' in s)
     level = next(s for s in sliders if "data-level" in s)
+    room = next(s for s in sliders if "data-room=" in s)
+    prayer = next(s for s in sliders if "data-lv-set" in s)
     assert 'max="0"' in seek, \
         "a position bar starts with nothing on it and takes its length from the file"
     assert 'aria-label="how far into it you are"' in seek
-    assert 'min="0"' in level and 'max="1"' in level and 'step="0.05"' in level, \
-        "a speaker level is a fraction of that speaker's own scale, the same number `volume:` holds"
+    for slider, what in ((level, "a speaker"), (room, "a room inside one"),
+                         (prayer, "a prayer's ask of one room")):
+        assert 'min="0"' in slider and 'max="1"' in slider and 'step="0.05"' in slider, \
+            (f"a {what} level is a fraction of that speaker's own scale, the same number "
+             "`volume:` holds")
+    assert "data-room-name" in room, \
+        "a room is named by what it answers to on the network, not by a name typed in here"
+    assert "data-lv-name" in prayer, \
+        "the same holds for a prayer's own room: the name is the network's, never typed in"
     assert "takes_volume" in script and "not ours to ask" in script, \
         "the control only appears for a kind the daemon itself says can be asked for a level"
     assert 'id="hush"' in html and "pause" in html, "the preview needs a pause"
@@ -935,24 +985,165 @@ def test_the_test_button_of_an_output_sits_inside_the_card(panel):
     name box measured in characters is part of the same complaint - a speaker called
     whole-house lost its last letters, and a name you cannot read is a name you cannot
     rename. Nothing here runs a browser, so the page is read as text; the shape it
-    actually makes was checked with a screenshot of this page in a narrow window."""
+    actually makes was checked with a screenshot of this page in a narrow window. The rooms
+    inside a group had the same accident, one slider at a time. The card had a second one, in the
+    space between a phone and a desk: a told width is a percentage, and at a window only a little
+    wider than a phone the card is much narrower than the one those percentages were weighed
+    against, so the switch stood over the edge of its own column and on top of the slider beside
+    it, while test and stop - asked to keep to one line - were one line about as wide as the
+    column and ran sideways over it. A word costs nothing but a line when it breaks; a control
+    costs the card. The same six columns are retold for a narrow window, because a fifth of a
+    phone is not a fifth of a desktop; what a phone then looks like - and whether the controls fit
+    the columns they are given - is the test below this one."""
     web, _, _ = panel
     _, html = call(web.port, "/", raw=True)
     assert '<section class="wide"><h2>Outputs</h2>' in html, \
         "a table this wide belongs to the whole page, not to one column of it"
     assert "#outputstbl { table-layout:fixed }" in html, \
         "the columns have to be told their widths, not left to size themselves by their words"
-    assert "#outputstbl td:last-child { white-space:nowrap" in html, \
-        "the button is the column that must never be the one that grows or wraps"
-    widths = re.findall(r"#outputstbl th:nth-child\(\d\) \{ width:(\d+)%", html)
+    assert "#outputstbl td:last-child { text-align:right }" in html and "white-space:nowrap" not in html, \
+        "the button column is the one that must never be the one that grows, and nothing on this " \
+        "page asks a row of buttons to keep to one line: a line that cannot break is as wide as " \
+        "both buttons together, and it runs sideways over the column next to it"
+    widths, phone = column_widths(html, "#outputstbl")
     assert len(widths) == 6, "every column is given a width"
-    assert sum(int(w) for w in widths) == 100, f"the columns add up to {sum(int(w) for w in widths)}%"
+    assert sum(widths) == 100, f"the columns add up to {sum(widths)}%"
+    assert len(phone) == 6, "every column is given a width for a phone as well"
+    assert sum(phone) == 100, f"the phone's columns add up to {sum(phone)}%"
+    # A percentage is only a width once a window is known. The narrowest window this set of
+    # widths has to serve is one pixel wider than the phone rules take over, because the card
+    # is the whole page there; the columns that hold a control are weighed against the control,
+    # since a control has a width it cannot go under. A word is not weighed, because a word
+    # breaks where it has to and a column that breaks a word costs nothing but a line.
+    desk = 621 - 44 - 32          # window, main's padding, the card's own padding
+    on = desk * widths[3] / 100
+    assert on >= 38 + 8, \
+        f"the switch column of this card is {on:.0f}px at the narrow end of its range, and the " \
+        f"switch standing in it is 38px across, plus the 8px a cell keeps for itself on the right"
+    level = desk * widths[4] / 100
+    assert level >= 80, f"the level column is {level:.0f}px there and the slider in it is 80px wide"
+    button = desk * widths[5] / 100
+    assert button >= 50 + 8, \
+        f"the last column is {button:.0f}px there and stop is about 50px across: the wider the " \
+        f"column, the less room the two of them need to stand on one line"
     assert "#outputstbl input[type=range] { width:80px" in html, \
         "a slider left to its own devices is wider than the column it lives in, which is " \
         "exactly how the test button ended up outside the card once already"
+    roomrow = re.search(r"const roomrow=o=>(.*)", html).group(1)
+    assert 'class="roomrow"' in roomrow and "colspan" not in roomrow, \
+        "the rooms inside a group get rows of their own: one cell holding four rooms is how " \
+        "the sliders ran past the edge of this card, and a room is a row, not a phrase"
+    assert roomrow.count("<td") == 6, \
+        f"a room row has {roomrow.count('<td')} cells where this table has six, so the room's " \
+        "controls would not sit under the group's own"
+    assert "<td></td><td></td><td><input" in roomrow, \
+        "a room's slider belongs in the fifth column, under the slider of the group it is in"
+    assert 'class="roomname"' in roomrow, "a room is named in the column the outputs' names are in"
     assert "word-break:break-word" not in html, \
         "that breaks a long word at the first chance it gets, mid-word, in every cell"
     assert "width:12ch" not in html, "a name box measured in characters hides the end of a name"
+
+
+def test_a_phone_gets_switches_and_sliders_the_finger_can_find(panel):
+    """This panel gets opened on a phone as often as on a laptop - the level of a speaker
+    is a thing people fix while the speaker is making the noise - and there the switches
+    and the sliders were in each other's way, for two different reasons. A switch 38px by
+    20px is smaller than the pad of a thumb, and a mis-hit is worse than a miss because
+    what it sends rewrites the profile. And six columns told their widths in percentages
+    leave four centimetres of phone to a level column: an 80px slider, its figure, and a
+    sentence about what a group's number does, all pushing at one another. So the switch's
+    box grows to 44px while its track stays the size it was drawn at; the sliders grow
+    taller and fill the column they are given; the figure drops onto a line under its
+    slider; and the columns of both tables are retold for a phone rather than merely
+    narrowed. No browser runs here either, so the arithmetic is done here instead: the
+    narrow columns are weighed against the width a phone's card actually gets, and against
+    the width of the control that has to sit inside them. A button is the control that cannot
+    break a word to fit, so the buttons in a table row are told to fill the column they are
+    in, one under the other; and a card is told it may be narrower than 320px, because below
+    that a card wider than the window puts its own buttons off the screen. A column of ordinary
+    words is not weighed, because a word that does not fit costs a line and nothing else; the
+    size of a file is weighed, because the only other place it can break is inside the number."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert NARROW in html, "a phone is told something different from a wide window"
+    phone = html.split(NARROW)[1]
+    assert ".switch { width:44px; height:44px" in phone, \
+        "the thing a thumb presses is the size of a thumb, not the size of the drawing"
+    assert ".switch:before" in phone and "height:20px" in phone, \
+        "the track keeps the size it was drawn at, so the target grows and the look does not"
+    assert "input[type=range] { height:34px }" in phone, "a slider bar a thumb can hold"
+    assert "#outputstbl input[type=range] { width:100%; min-width:0 }" in phone, \
+        "the level bar fills its column instead of a fixed 80px that is wider than that column"
+    assert "#outputstbl td > .tag" in phone and "display:block" in phone, \
+        "the figure for a level stands under its slider rather than wedged beside it"
+    assert "#outputstbl .roomnote { display:none }" in phone, \
+        "the sentence about what a group's number does is said under the card, not in the row"
+    assert 'class="unknown roomnote"' in html and 'class="unknown why"' in html, \
+        "the row itself says which of its sentences a narrow window may leave out"
+    card = 320 - 24 - 24          # what a table has to sit in: main and section paddings
+    assert "main { padding:12px; grid-template-columns:minmax(0,1fr) }" in phone, \
+        "the page's frame gives the tables their width back on a phone, and a card is never " \
+        "asked to be wider than the window it was opened in"
+    assert "section { padding:12px }" in phone, \
+        "the edge a card keeps for itself is given back to the table inside it"
+    assert "td > button:not(.switch)" in phone and "display:block; width:100%" in phone, \
+        "a button in a column that was told its width stands on a line of its own and fills " \
+        "that column, so it cannot grow past the card around it either"
+    assert "padding-right:0; text-align:center" in phone, \
+        "the edge a cell keeps for itself on the right is given back where the column's " \
+        "whole content is a switch"
+    for table, switch_column, what in (("#outputstbl", 4, "the switch of an output"),
+                                       ("#libtbl", 3, "the switch of a recording")):
+        wide, narrow = column_widths(html, table)
+        assert len(narrow) == len(wide), \
+            f"{table} retells {len(narrow)} columns where the table has {len(wide)}"
+        assert sum(narrow) == 100, f"the phone's columns of {table} add up to {sum(narrow)}%"
+        px = card * narrow[switch_column - 1] / 100
+        assert px >= 44, f"{what} is 44px across and its column on a phone is {px:.0f}px"
+    px = card * column_widths(html, "#outputstbl")[1][5] / 100
+    assert px >= 38 + 14, \
+        f"same as the group is what the button in a room's row says, and that column on a phone " \
+        f"is {px:.0f}px: shorter than the longest word in it once the button's own padding is " \
+        f"counted, and a button told to fill its column cannot make the column wider"
+    px = card * column_widths(html, "#libtbl")[1][1] / 100
+    assert px >= 24 + 8, \
+        f"the size column of the recordings card on a phone is {px:.0f}px, and a size is two " \
+        f"words with a space between them: three digits at the table's own 14px are about 24px " \
+        f"across, and a cell keeps 8px of its column, so below this the number itself breaks " \
+        f"and the row reads 84 / 2 KB"
+    found = column_widths(html, "#foundtbl")[1]
+    px = card * found[4] / 100
+    assert px >= 40, \
+        f"stop using is two words, and its column on a phone is {px:.0f}px - not enough for " \
+        f"the longer of them, let alone for a thumb"
+
+
+def test_the_page_shows_a_lamp_while_it_waits_on_the_daemon(panel):
+    """Nothing on this page is instant: moving a slider means rewriting the file, and
+    looking at the network takes a few seconds. So a person who moves something and sees
+    nothing has no way to tell a slow ask from a dead one. The answer is a lamp rather than
+    a curtain - the page stays readable and clickable while the daemon works - and the lamp
+    is lit by a timer, not by the request: an ask that answers in a few tens of
+    milliseconds never shows anything, which is what keeps the page from flickering every
+    time anybody touches it."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert 'id="busy" role="status" hidden' in html and "still working" in html, \
+        "no lamp, or one that is on before anything is being asked"
+    assert "position:fixed" in html and "pointer-events:none" in html, \
+        "the lamp sits over the page instead of in front of it: a page that is thinking can " \
+        "still be read, and the next slider can still be moved"
+    lamp = html.split("let waiting=0")[1].split("async function api")[0]
+    delay = re.search(r"\},(\d+)\)", lamp).group(1)
+    assert 200 <= int(delay) <= 800, \
+        f"the lamp comes up after {delay}ms: too soon is a flicker over every ask, too late is a page that looks stuck"
+    assert "setTimeout" in lamp and "clearTimeout" in lamp, \
+        "a fast answer has to cancel the lamp the timer was going to light"
+    body = html.split("async function api(path,body){")[1].split("\n}")[0]
+    assert "begun()" in body and "} finally { ended(); }" in body, \
+        "every request lights the lamp and puts it out again, including one that was refused"
+    assert html.count("waiting++") == 1 and html.count("--waiting") == 1, \
+        "two asks in the air are one wait to a person watching, so one counter counts them"
 
 
 def test_the_speaker_scan_is_cached_and_says_when_it_ran(panel, monkeypatch):
@@ -1066,8 +1257,9 @@ def test_a_rename_that_would_collide_or_lead_nowhere_is_refused(two_outputs):
 # all the page has to do is write that number for the kinds it is allowed to write it
 # for. A computer's own level, whether it is the machine running this program or a box
 # on the LAN, stays the property of whoever is sitting at it. A speaker group is the
-# third kind of answer: it is a name several speakers share, and no program outside the
-# Google Home app can move them together, so there is no number to write for it.
+# third kind of answer: it is a name several speakers share, and it has no level of its
+# own that anybody hears, so the number written there is what every room inside is asked
+# for while a call plays - and each room is put back where it was when the call ends.
 
 CAST_AND_PC = (BASE.replace('  - name: outbox\n    kind: file\n    host: "{out}"\n',
                             '  - name: nest\n    kind: google_cast\n'
@@ -1076,6 +1268,13 @@ CAST_AND_PC = (BASE.replace('  - name: outbox\n    kind: file\n    host: "{out}"
                             '    target: "Whole-house group"\n'
                             '  - name: outbox\n    kind: file\n    host: "{out}"\n'
                             '  - name: this-pc\n    kind: pc_speakers\n'))
+
+# The same household with a room the profile already asks for a level, written last month,
+# and a speaker since renamed in the Home app: the name in the file answers to nobody now.
+CAST_WITH_A_STALE_ROOM = CAST_AND_PC.replace(
+    '  - name: front-room\n    kind: google_cast\n    target: "Whole-house group"\n',
+    '  - name: front-room\n    kind: google_cast\n    target: "Whole-house group"\n'
+    '    members:\n      Study speakers: 0.3\n')
 
 
 def one_speaker_and_one_group(timeout=5.0, ask_members=True):
@@ -1089,6 +1288,19 @@ def one_speaker_and_one_group(timeout=5.0, ask_members=True):
             "boxes": [], "asked": 1, "silent": []}
 
 
+def a_group_of(*who):
+    """The same answer from the network with different speakers inside the group. What the
+    rooms are called is a fact about somebody else's house, and a test that wants to tell
+    two rooms apart cannot make do with one room named twice."""
+    found = one_speaker_and_one_group()
+    found["groups"][0]["members"] = list(who)
+    found["speakers"] = [{"name": name, "model": "Nest Mini",
+                          "id": name.lower().replace(" ", "-"),
+                          "address": "192.168.0.23", "port": 8009, "group": False}
+                         for name in who]
+    return found
+
+
 @pytest.fixture
 def one_speaker_one_computer(tmp_path, monkeypatch):
     """One speaker muezzin casts to, one group it casts to, one folder, and the computer's
@@ -1096,6 +1308,21 @@ def one_speaker_one_computer(tmp_path, monkeypatch):
     from muezzin import web as web_module
     monkeypatch.setattr(web_module, "scan_speakers", one_speaker_and_one_group)
     web, out, runner = _serve(tmp_path, CAST_AND_PC)
+    try:
+        yield web, out, tmp_path
+    finally:
+        web.stop()
+        runner.shutdown()
+
+
+@pytest.fixture
+def a_room_somebody_renamed_since(tmp_path, monkeypatch):
+    """The same household, with one `members:` line that outlived the speaker it named:
+    written last month, and somebody has since renamed that speaker in the Home app. The
+    page cannot invent the name back, and it must not drop the level either."""
+    from muezzin import web as web_module
+    monkeypatch.setattr(web_module, "scan_speakers", one_speaker_and_one_group)
+    web, out, runner = _serve(tmp_path, CAST_WITH_A_STALE_ROOM)
     try:
         yield web, out, tmp_path
     finally:
@@ -1174,14 +1401,16 @@ def test_a_level_that_makes_no_sense_is_refused_before_the_speaker_is_shouted_at
     assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before
 
 
-def test_a_speaker_group_is_never_handed_a_level(one_speaker_one_computer):
-    """The measured reason this exists. A level asked of a Google Home group reaches its
-    receiver, which answers with the speakers inside it and the levels they are at, and
-    after the ask every one of those numbers is exactly where the Home app left it - four
-    speakers, four levels, none of them moved. So the number is written, the daemon sends
-    it, and the room is untouched, which is the worst shape a control can have: it looks
-    like it worked. Hence the page is told what the network called the target, and the ask
-    is refused with the reason said out loud."""
+def test_a_group_row_writes_what_every_room_inside_it_will_be_asked_for(one_speaker_one_computer,
+                                                                        caplog):
+    """The measured reason the page used to refuse this. A level aimed at a Google Home
+    group reaches its receiver, which answers with the speakers inside it and the levels
+    they are at, and after the ask every one of those numbers is exactly where the Home app
+    left it - four speakers, four levels, none of them moved. So for years the honest answer
+    was that there was no number to write. Now the backend asks each room inside the group
+    over a connection of that room's own and hands each one back when the call ends, which
+    makes the number worth writing - and worth saying out loud, because beside a single
+    speaker a level is that speaker's level and here it is every room's."""
     web, _, tmp_path = one_speaker_one_computer
     _, st = call(web.port, "/api/state")
     rows = {o["name"]: o for o in st["outputs"]}
@@ -1193,29 +1422,573 @@ def test_a_speaker_group_is_never_handed_a_level(one_speaker_one_computer):
     assert rows["front-room"]["target_kind"] == "group"
     assert rows["nest"]["target_kind"] == "speaker", "a speaker of its own keeps its slider"
     assert rows["outbox"]["target_kind"] == "", "a folder is nobody's speaker"
-    before = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
-    status, reply = call(web.port, "/api/output/volume", {"name": "front-room", "volume": 0.1})
-    assert status == 400 and "speaker group" in reply["error"], reply
-    assert "0.1" not in (tmp_path / "muezzin.yaml").read_text(encoding="utf-8"), \
-        "a refusal that still wrote the number is not a refusal"
+    with caplog.at_level("INFO"):
+        status, reply = call(web.port, "/api/output/volume",
+                             {"name": "front-room", "volume": 0.4})
+    assert status == 200 and reply["volume"] == 0.4, reply
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "volume: 0.4" in on_disk, "the same key the single-speaker rows write"
+    assert "Whole-house group is a speaker group" in caplog.text
+    assert "every room inside it" in caplog.text, "the log says what the number means here"
 
 
-def test_the_page_says_a_group_has_no_level_of_its_own(panel):
-    """Where the words live, since a refusal is worth little if the page still offers the
-    slider and the reason only turns up once it has been pressed. The row for a group's
-    output says whose level it is, and the card says what becomes of a level already
-    written there, because that is the situation a person arrives at: the number is in
-    their profile from before, and the speakers never heard it."""
+def test_the_page_says_what_a_group_row_s_level_does(panel):
+    """Where the words live, since a number that behaves differently in two rows has to say
+    so before it is pressed and not after. The row for a group's output carries a note about
+    what the level does, and the card says what becomes of it, because a level moved for a
+    call is a thing a person will notice in the room afterwards if they are not told."""
     web, _, _ = panel
     _, html = call(web.port, "/", raw=True)
-    assert "target_kind=='group'" in html, "the row is built from what the network said"
-    assert "a group: not ours" in html
-    assert "each left at whatever level the Google Home app set it to" in html
-    assert "a level written for a group stays unused" in html
+    assert "target_kind=='group'" in html, "the row is still built from what the network said"
+    assert "every room inside, each back after" in html, "the row itself says what its number is"
+    assert "each room goes back to wherever its owner had left it" in html
+    assert "members:" in html, "rooms at levels of their own are pointed at where they go"
+    assert "a level written for a group stays unused" not in html, \
+        "the sentence that was true when nothing honoured a group's level"
     assert "st.outputs.some(o=>o.takes_volume)" in html, \
         "a fresh page goes and looks at the network, because the row is only honest once "\
         "the page knows whether the name behind it is one speaker or a group"
 
+
+# ---- one room inside a group, at a level of its own -------------------------
+#
+# A group's number is one sentence, and a prayer call is not one sentence: one room
+# wanted over the call, another wanted low, and both wanted their own level back
+# afterwards. The backend can already do that with a `members:` line per room; what it
+# could not do before was be written from the page, which meant the only household that
+# got per-room levels was the one willing to type speaker names by hand out of an mDNS
+# browse. So the group's row grows a slider per room, and the names come from what the
+# speakers say they belong to rather than from a box to type in.
+
+def test_a_group_row_offers_each_room_inside_it_its_own_number(one_speaker_one_computer):
+    """The list of rooms is not in the group: neither its mDNS record nor its own receiver
+    says who is inside it. The last scan built the list by asking every speaker which groups
+    it belongs to, and that is what the row is made of - each room with the level the profile
+    asks it for, or nothing at all when the room has no line of its own and will be asked for
+    the group's number instead."""
+    web, _, _ = one_speaker_one_computer
+    _, st = call(web.port, "/api/state")
+    rows = {o["name"]: o for o in st["outputs"]}
+    assert rows["front-room"]["rooms"] == [], "nobody has looked at the network yet"
+    call(web.port, "/api/speakers")
+    _, st = call(web.port, "/api/state")
+    rows = {o["name"]: o for o in st["outputs"]}
+    assert rows["front-room"]["rooms"] == [{"name": "Study speaker", "volume": None,
+                                            "seen": True}]
+    assert rows["front-room"]["rooms_known"] is True
+    assert rows["nest"]["rooms"] == [], "a speaker of its own has no rooms inside it"
+    assert rows["outbox"]["rooms"] == [], "a folder is nobody's speaker"
+
+
+def test_a_room_s_level_is_written_under_the_group_that_carries_it(one_speaker_one_computer,
+                                                                   caplog):
+    """The write is the whole point of the feature, and it has to land where the backend
+    reads it: `members:` under that output, the room's own network name, one line each. The
+    profile is reloaded in the same request, so the next adhan - which may already be
+    running - is asked for what the slider just said."""
+    web, _, tmp_path = one_speaker_one_computer
+    call(web.port, "/api/speakers")
+    with caplog.at_level("INFO"):
+        status, reply = call(web.port, "/api/output/room",
+                             {"name": "front-room", "speaker": "Study speaker", "volume": 0.35})
+    assert status == 200, reply
+    assert reply["speaker"] == "Study speaker" and reply["volume"] == 0.35
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "members:" in on_disk and "Study speaker: 0.35" in on_disk, \
+        "a name and a number on one line each, the way a person would have typed it"
+    assert web.runner.profile.output("front-room").members == {"Study speaker": 0.35}
+    _, st = call(web.port, "/api/state")
+    row = next(o for o in st["outputs"] if o["name"] == "front-room")
+    assert row["rooms"] == [{"name": "Study speaker", "volume": 0.35, "seen": True}], \
+        "the slider comes back where the profile put it"
+    assert "0.35" in caplog.text and "goes back to" in caplog.text, \
+        "the log says what will happen to the room when the call ends"
+
+
+def test_two_rooms_at_two_levels_and_the_group_at_a_third(one_speaker_one_computer,
+                                                          monkeypatch):
+    """The shape the feature exists for, seen from the profile's side: one name the schedule
+    points at, three different numbers under it, and nothing written anywhere saying what
+    either room was at beforehand - that is a fact the speaker is asked for the moment the
+    call starts, over a connection of that room's own."""
+    from muezzin import web as web_module
+    web, _, tmp_path = one_speaker_one_computer
+    monkeypatch.setattr(web_module, "scan_speakers",
+                        lambda *args, **kw: a_group_of("Kitchen speaker", "Study speaker"))
+    call(web.port, "/api/speakers")
+    for room, level in (("Kitchen speaker", 0.1), ("Study speaker", 0.2)):
+        status, reply = call(web.port, "/api/output/room",
+                             {"name": "front-room", "speaker": room, "volume": level})
+        assert status == 200, reply
+    call(web.port, "/api/output/volume", {"name": "front-room", "volume": 0.5})
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "Kitchen speaker: 0.1" in on_disk and "Study speaker: 0.2" in on_disk
+    assert web.runner.profile.output("front-room").volume == 0.5
+    assert web.runner.profile.output("front-room").members == {
+        "Kitchen speaker": 0.1, "Study speaker": 0.2}
+
+
+def test_a_room_with_no_line_of_its_own_follows_the_group_again(one_speaker_one_computer):
+    """There is no level that means "as it was", because what the room was at is a fact
+    about the room and not a choice the profile can make in advance. So going back is
+    taking the line out, and an empty `members:` block goes with it: a key left behind
+    with nothing under it is the sort of thing that outlives its meaning."""
+    web, _, tmp_path = one_speaker_one_computer
+    call(web.port, "/api/speakers")
+    call(web.port, "/api/output/room",
+         {"name": "front-room", "speaker": "Study speaker", "volume": 0.35})
+    status, reply = call(web.port, "/api/output/room",
+                         {"name": "front-room", "speaker": "Study speaker", "volume": ""})
+    assert status == 200, reply
+    assert reply["volume"] is None
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "members:" not in on_disk and "Study speaker" in on_disk, \
+        "the room's line goes and the name the group is made of stays"
+    assert web.runner.profile.output("front-room").members == {}
+
+
+def test_a_room_the_network_cannot_see_stays_on_the_row_and_says_so(a_room_somebody_renamed_since):
+    """Names go stale: a speaker renamed in the Home app, a typo written last month. The
+    backend warns when it plays and cannot find the name, and a page that hid the line
+    would leave a room playing at a level nobody can account for - so the row keeps it and
+    says it is not out there. Writing a fresh name nobody claims is refused (see the next
+    test); taking such a name out never is, because that is how a typo gets undone without
+    opening the file."""
+    web, _, tmp_path = a_room_somebody_renamed_since
+    call(web.port, "/api/speakers")
+    _, st = call(web.port, "/api/state")
+    row = next(o for o in st["outputs"] if o["name"] == "front-room")
+    assert [r["name"] for r in row["rooms"]] == ["Study speaker", "Study speakers"]
+    assert [r["seen"] for r in row["rooms"]] == [True, False]
+    assert row["rooms"][1]["volume"] == 0.3, \
+        "the level in the file is shown even when no speaker claims the name"
+    status, reply = call(web.port, "/api/output/room",
+                         {"name": "front-room", "speaker": "Study speakers", "volume": ""})
+    assert status == 200, reply
+    assert "members:" not in (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+
+
+def test_a_room_that_is_not_a_room_is_refused(one_speaker_one_computer):
+    """Every refusal here is a mistake that would otherwise be found out at Fajr: a level
+    written for one speaker under a name the network calls one speaker is a level the
+    backend ignores, and a level written for a room the group has no way of finding is a
+    room that plays at whatever the Home app left it at. Both are said here, in the same
+    request, with the rooms that do exist named back."""
+    web, _, tmp_path = one_speaker_one_computer
+    call(web.port, "/api/speakers")
+    before = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    for payload, why in (
+        ({"name": "nest", "speaker": "Study speaker", "volume": 0.5},
+         "one speaker and not a group"),
+        ({"name": "front-room", "speaker": "Kitchen speaker", "volume": 0.5},
+         "no room called Kitchen speaker"),
+        ({"name": "front-room", "speaker": "Study speaker", "volume": 3}, "between 0 and 1"),
+        ({"name": "front-room", "speaker": "Study speaker", "volume": "loud"}, "not a level"),
+        ({"name": "front-room", "speaker": "", "volume": 0.5}, "which room"),
+        ({"name": "outbox", "speaker": "Study speaker", "volume": 0.5}, "belongs to whoever"),
+    ):
+        status, reply = call(web.port, "/api/output/room", payload)
+        assert status == 400 and why in reply["error"], (payload, status, reply)
+    assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before, \
+        "a refusal that still wrote a level is not a refusal"
+
+
+def test_the_page_says_what_a_rooms_level_does_and_where_it_goes(panel):
+    """Where the words live again: a room's slider is a different promise from the group's,
+    because it is only in force while a call is playing and the room is left holding
+    whatever its owner had it at afterwards. And the fine print has to point at the line
+    the page writes, since the point of the sliders is that nobody has to write it."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert 'class="roomrow"' in html, \
+        "a group's rooms get rows of their own under the group's row, in the table's columns"
+    assert "no speaker would say which rooms are inside" in html, \
+        "and when the scan could not say what a group holds, the group's own row says that"
+    assert "same as the group" in html, "a room with no level of its own says what it follows"
+    assert "data-room-name" in html, "the room is named by the network, not typed in here"
+    assert "no speaker by that name out there" in html, \
+        "a level written for a speaker nobody claims says so on the row"
+    assert "back to its own level afterwards" in html, \
+        "the room is told what happens to it when the call ends"
+    assert "one members: line per room into the profile" in html, \
+        "and where the number lands, for whoever reads the file afterwards"
+
+
+# ---- one prayer, its own rooms, its own numbers -----------------------------
+#
+# A group's number is one decision, made once, for every time the group is played - and a
+# house is not the same house at five in the morning and at two in the afternoon. The
+# kitchen wants waking for Fajr; the study wants nothing much for dhuhr. The backend could
+# already read a `members:` block under an event, but nothing could write one, so each
+# prayer's row carries the line saying what that prayer asks and opens, on request, one
+# slider per room that prayer reaches and nothing more.
+
+# The household with the group's standing number written down last month, plus a morning
+# prayer that already asks more of every room it plays through than the house usually does.
+A_LOUD_MORNING = (CAST_AND_PC
+                  .replace('  - name: front-room\n    kind: google_cast\n'
+                           '    target: "Whole-house group"\n',
+                           '  - name: front-room\n    kind: google_cast\n'
+                           '    target: "Whole-house group"\n    volume: 0.2\n')
+                  .replace("    media: [fajr.mp3]\n", "    media: [fajr.mp3]\n    volume: 0.5\n"))
+
+# The same house with the morning prayer pointed at a folder instead of a speaker.
+A_PRAYER_IN_A_FOLDER = CAST_AND_PC.replace(
+    "    media: [fajr.mp3]\n", "    media: [fajr.mp3]\n    targets: [outbox]\n")
+
+
+# The same house, and a morning prayer with one room's number written under it for a
+# speaker that has since been renamed in the Home app: the line is still in the file, it is
+# still the number this call will ask for, and nobody out there answers to that name.
+A_PRAYER_WITH_A_STALE_ROOM = A_LOUD_MORNING.replace(
+    "    media: [fajr.mp3]\n    volume: 0.5\n",
+    "    media: [fajr.mp3]\n    volume: 0.5\n    members:\n      Study speakers: 0.7\n")
+
+
+@pytest.fixture
+def a_house_tuned_for_the_morning(tmp_path, monkeypatch):
+    """Three rooms the scan can name, the group's own number in the file, and one prayer with
+    a number of its own. Three rooms because a test that wants to say "only the room you moved
+    got a line" cannot do it with one, and because the study is here both as a speaker of its
+    own and as a room of the group, which is the one case where the drawer has to offer a
+    speaker once and not twice."""
+    from muezzin import web as web_module
+    monkeypatch.setattr(web_module, "scan_speakers", lambda *a, **kw: a_group_of(
+        "Kitchen speaker", "Tabby speaker", "Study speaker"))
+    web, out, runner = _serve(tmp_path, A_LOUD_MORNING)
+    try:
+        yield web, out, tmp_path
+    finally:
+        web.stop()
+        runner.shutdown()
+
+
+@pytest.fixture
+def a_prayer_with_no_speaker_to_ask(tmp_path):
+    """A prayer whose only output is a folder on disk: nothing behind it to ask, and the
+    page has to know that without being told by a person who tried."""
+    web, out, runner = _serve(tmp_path, A_PRAYER_IN_A_FOLDER)
+    try:
+        yield web, out, tmp_path
+    finally:
+        web.stop()
+        runner.shutdown()
+
+
+@pytest.fixture
+def a_prayer_whose_room_was_renamed(tmp_path, monkeypatch):
+    """The same house as the tuned morning, with the kitchen's number already in the file
+    under a name the speakers no longer answer to - which is what a rename in the Home app
+    leaves behind, and the state a person has to be able to undo from the page."""
+    from muezzin import web as web_module
+    monkeypatch.setattr(web_module, "scan_speakers", lambda *a, **kw: a_group_of(
+        "Kitchen speaker", "Tabby speaker", "Study speaker"))
+    web, out, runner = _serve(tmp_path, A_PRAYER_WITH_A_STALE_ROOM)
+    try:
+        yield web, out, tmp_path
+    finally:
+        web.stop()
+        runner.shutdown()
+
+
+def _rows(web, at):
+    """One prayer's rooms as the page sees them, keyed by who they are."""
+    _, st = call(web.port, "/api/state")
+    ev = next(e for e in st["events"] if e["at"] == at)
+    return {(r["name"], r["output"]): r for r in ev["levels"]}, ev
+
+
+def test_a_prayer_offers_only_the_rooms_it_reaches(a_house_tuned_for_the_morning):
+    """The rooms a prayer can be tuned for are not every speaker on the network: they are
+    the rooms of the outputs this prayer plays through, each with two numbers. One is what
+    the room is asked for if this prayer says nothing about it, which is the house's own
+    number and the reason an untuned prayer is a line of text and not four sliders; the
+    other is what it will actually be asked for, tonight, with this prayer in the way."""
+    web, _, _ = a_house_tuned_for_the_morning
+    call(web.port, "/api/speakers")
+    rows, ev = _rows(web, "fajr")
+    assert sorted(rows) == [("Kitchen speaker", "front-room"), ("Study speaker", "nest"),
+                            ("Tabby speaker", "front-room")], \
+        "the group spelled out as the rooms the scan named, and the one speaker as itself"
+    assert ("Study speaker", "front-room") not in rows, \
+        ("the study reaches this prayer twice over, as a speaker and as a room of the group, "
+         "and a drawer with two sliders writing one line is a drawer that lies about one")
+    assert ev["volume"] == 0.5 and ev["members"] == {}, "the prayer speaks, but of all rooms at once"
+    assert all(r["written"] is None for r in rows.values()), "nothing tuned yet"
+    assert rows[("Kitchen speaker", "front-room")]["usual"] == 0.5, \
+        "the number the room is asked for when the prayer says nothing is the prayer's own"
+    assert rows[("Kitchen speaker", "front-room")]["tonight"] == 0.5
+    assert rows[("Study speaker", "nest")]["group"] is False, \
+        "one speaker is not a group of one: the name written is the name in target:"
+    _, dhuhr = _rows(web, "dhuhr")
+    rooms = [r for r in dhuhr["levels"] if r["output"] == "front-room"]
+    assert [r["tonight"] for r in rooms] == [0.2] * len(rooms), \
+        "a prayer with nothing to say about level falls back to the group's standing number"
+
+
+def test_a_prayer_s_level_is_written_under_the_prayer_and_nowhere_else(a_house_tuned_for_the_morning,
+                                                                      caplog):
+    """The line has to sit where the backend reads it, which is one level deeper than the
+    group's: same word, same shape, under the event. And only the rooms that were moved get
+    a line - a prayer that leaves the study alone has nothing to say about the study, and a
+    profile filled with lines spelling out what was not changed is a profile nobody maintains."""
+    web, _, tmp_path = a_house_tuned_for_the_morning
+    call(web.port, "/api/speakers")
+    with caplog.at_level("INFO"):
+        status, reply = call(web.port, "/api/event/room",
+                             {"at": "fajr", "friday": False, "speaker": "Kitchen speaker",
+                              "volume": 0.6})
+    assert status == 200, reply
+    assert reply["volume"] == 0.6 and reply["speaker"] == "Kitchen speaker"
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    inside = on_disk.split("  - name: fajr-adhan")[1].split("  - name: dhuhr-nudge")[0]
+    assert re.search(r"^    members:\n      Kitchen speaker: 0\.6\s*$", inside, re.M), \
+        "one line, under the prayer that asked for it, at the depth the prayer's fields sit at"
+    assert on_disk.count("members:") == 1, "the group's own line was not touched on the way past it"
+    assert "Tabby speaker" not in on_disk, \
+        "the rooms left alone stay unmentioned: their levels are facts about the house"
+    assert web.runner.profile.output("front-room").members == {}
+    assert next(e for e in web.runner.profile.events if e.at == "fajr").members == \
+        {"Kitchen speaker": 0.6}
+    rows, _ = _rows(web, "fajr")
+    assert rows[("Kitchen speaker", "front-room")]["written"] == 0.6
+    assert rows[("Kitchen speaker", "front-room")]["tonight"] == 0.6, "the ask this call will make"
+    assert rows[("Tabby speaker", "front-room")]["tonight"] == 0.5, \
+        "the room nobody named follows the prayer's own number, not the group's"
+    assert "for this prayer alone" in caplog.text and "goes back to" in caplog.text, \
+        "the log has to say which prayer, and that the room is handed its old level back"
+
+
+def test_the_log_says_which_kind_of_speaker_keeps_its_level(tmp_path, monkeypatch, caplog):
+    """Two of these rooms are on loan and one is not. A room of a group is asked for a level
+    over a connection this program opened for the call, so it is handed back the number it was
+    at when the call ends; a speaker the profile points at directly has a level of its own, and
+    asking it for another one is what that output's `volume:` has always done - it stays put
+    afterwards. Same slider, two different promises, and the person who moved it is owed the
+    difference. The study is kept out of the scanned group here on purpose: the house where a
+    speaker is inside the group as well is the other case, where the borrowing wins."""
+    from muezzin import web as web_module
+    found = one_speaker_and_one_group()
+    found["groups"][0]["members"] = ["Kitchen speaker", "Tabby speaker"]
+    monkeypatch.setattr(web_module, "scan_speakers", lambda *a, **kw: found)
+    web, out, runner = _serve(tmp_path, A_LOUD_MORNING)
+    try:
+        call(web.port, "/api/speakers")
+        with caplog.at_level("INFO"):
+            for room, level in (("Kitchen speaker", 0.6), ("Study speaker", 0.45)):
+                status, reply = call(web.port, "/api/event/room",
+                                     {"at": "fajr", "friday": False, "speaker": room,
+                                      "volume": level})
+                assert status == 200, reply
+    finally:
+        web.stop()
+        runner.shutdown()
+    said = [r.getMessage() for r in caplog.records if "for this prayer alone" in r.getMessage()]
+    assert len(said) == 2, said
+    assert "goes back to the level it was at when the call ends" in said[0], \
+        "a borrowed room gets its own number back: " + said[0]
+    assert "keeps that level after the call" in said[1], \
+        "a speaker of its own is left where it was asked to be: " + said[1]
+    assert "Study speaker: 0.45" in (tmp_path / "muezzin.yaml").read_text(encoding="utf-8"), \
+        "and the line is written the same either way: the difference is what happens next"
+
+
+def test_a_prayer_that_says_nothing_of_its_own_leaves_nothing_behind(a_house_tuned_for_the_morning):
+    """Undoing a prayer's level is taking the line out, and an emptied `members:` key goes
+    with it: the same bargain as a room on the Outputs card, for the same reason. Where a
+    speaker was left sitting is a fact about that speaker, and no number written in a
+    profile can claim to know it in advance."""
+    web, _, tmp_path = a_house_tuned_for_the_morning
+    call(web.port, "/api/speakers")
+    call(web.port, "/api/event/room",
+         {"at": "fajr", "friday": False, "speaker": "Kitchen speaker", "volume": 0.6})
+    status, reply = call(web.port, "/api/event/room",
+                         {"at": "fajr", "friday": False, "speaker": "Kitchen speaker",
+                          "volume": ""})
+    assert status == 200, reply
+    assert reply["volume"] is None
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "members:" not in on_disk, "the emptied block is not left outliving its meaning"
+    assert next(e for e in web.runner.profile.events if e.at == "fajr").members == {}
+    rows, _ = _rows(web, "fajr")
+    assert rows[("Kitchen speaker", "front-room")]["written"] is None
+    assert rows[("Kitchen speaker", "front-room")]["tonight"] == 0.5
+
+
+def test_a_friday_prayer_and_the_everyday_one_are_two_lines(a_house_tuned_for_the_morning):
+    """The day-scope is part of which entry a number belongs to, not a detail of it: a
+    kitchen tuned for Friday's asr is not a kitchen tuned for Tuesday's, and there is no
+    everyday asr in this profile to write the number into instead."""
+    web, _, tmp_path = a_house_tuned_for_the_morning
+    call(web.port, "/api/speakers")
+    status, reply = call(web.port, "/api/event/room",
+                         {"at": "asr", "friday": True, "speaker": "Kitchen speaker",
+                          "volume": 0.45})
+    assert status == 200, reply
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "    members:\n      Kitchen speaker: 0.45" in on_disk.split("  - name: friday-tune")[1]
+    assert "  - name: fajr-adhan" in on_disk.split("    members:")[0], \
+        "the Friday entry is the one below the line, not the one above it"
+    assert next(e for e in web.runner.profile.events
+                if any(str(d).lower().startswith("fri") for d in (e.days or ()))).members == \
+        {"Kitchen speaker": 0.45}
+    assert next(e for e in web.runner.profile.events if e.at == "fajr").members == {}
+    status, reply = call(web.port, "/api/event/room",
+                         {"at": "asr", "friday": False, "speaker": "Kitchen speaker",
+                          "volume": 0.45})
+    assert status == 400 and "no prayer at asr" in reply["error"], \
+        "there is no everyday asr here, and the number does not go looking for one"
+
+
+def test_a_name_the_speakers_are_not_claiming_is_refused_for_a_prayer_too(a_house_tuned_for_the_morning):
+    """The same guard as a room on a group's row, for the same reason: a name typed while
+    the speakers are answering is a line the backend will only mention as a warning at Fajr,
+    by which time the kitchen is playing at whatever the Home app left it at. The names that
+    do exist are said back, because that is the fix."""
+    web, _, tmp_path = a_house_tuned_for_the_morning
+    call(web.port, "/api/speakers")
+    before = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    for payload, why in (
+        ({"at": "fajr", "speaker": "Bedroom speaker", "volume": 0.5},
+         "not a speaker this prayer plays through"),
+        ({"at": "fajr", "speaker": "Kitchen speaker", "volume": 3}, "between 0 and 1"),
+        ({"at": "fajr", "speaker": "Kitchen speaker", "volume": "loud"}, "not a level"),
+        ({"at": "fajr", "speaker": "", "volume": 0.5}, "which room"),
+        ({"at": "", "speaker": "Kitchen speaker", "volume": 0.5}, "which prayer"),
+        ({"at": "maghrib", "speaker": "Kitchen speaker", "volume": 0.5}, "no prayer at maghrib"),
+    ):
+        status, reply = call(web.port, "/api/event/room", payload)
+        assert status == 400 and why in reply["error"], (payload, status, reply)
+    status, reply = call(web.port, "/api/event/room",
+                         {"at": "fajr", "speaker": "Bedroom speaker", "volume": 0.5})
+    assert "Kitchen speaker" in reply["error"], "the names that do exist, named back"
+    assert (tmp_path / "muezzin.yaml").read_text(encoding="utf-8") == before, \
+        "a refusal that still wrote a level is not a refusal"
+
+
+def test_a_group_that_would_not_name_its_rooms_does_not_get_the_other_groups_answer(tmp_path,
+                                                                                    monkeypatch):
+    """The other half of the guard: a refusal about a room name needs every output this
+    prayer plays through to have answered about its rooms. What one group says about
+    itself says nothing about what a different group that would not say contains, and a
+    name typed at that one may be perfectly real - the backend is the place that finds
+    out, with a warning in the morning's log, rather than the page turning one group's
+    silence into a verdict about another's."""
+    from muezzin import web as web_module
+
+    def two_groups(*a, **kw):
+        found = a_group_of("Kitchen speaker", "Tabby speaker", "Study speaker")
+        found["groups"].append({"name": "Upstairs group", "id": "xyz", "group": True,
+                                "members": [], "membership_known": False, "silent": []})
+        return found
+
+    monkeypatch.setattr(web_module, "scan_speakers", two_groups)
+    text = A_LOUD_MORNING.replace(
+        '  - name: nest\n',
+        '  - name: upstairs\n    kind: google_cast\n    target: "Upstairs group"\n'
+        '  - name: nest\n')
+    web, _, runner = _serve(tmp_path, text)
+    try:
+        call(web.port, "/api/speakers")
+        status, reply = call(web.port, "/api/event/room",
+                             {"at": "fajr", "friday": False, "speaker": "Hall speaker",
+                              "volume": 0.35})
+        assert status == 200, reply
+        on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+        assert "      Hall speaker: 0.35" in on_disk, \
+            "a name typed while one group kept silent is written, not judged"
+        assert next(e for e in web.runner.profile.events
+                    if e.at == "fajr").members == {"Hall speaker": 0.35}
+    finally:
+        web.stop()
+        runner.shutdown()
+
+
+def test_a_prayer_in_the_file_the_running_daemon_has_not_loaded_says_so(a_house_tuned_for_the_morning):
+    """The file on disk and the profile in the running daemon can get out of step - a line
+    added by an editor outside the page, before the reload lands - and a number asked of a
+    prayer only the file knows has to be answered with exactly that, rather than with a
+    complaint about outputs that were never pointed at a prayer the daemon has not loaded."""
+    web, _, tmp_path = a_house_tuned_for_the_morning
+    path = tmp_path / "muezzin.yaml"
+    on_disk = path.read_text(encoding="utf-8")
+    path.write_text(on_disk.replace(
+        "    media: [fajr.mp3]\n    volume: 0.5\n",
+        "    media: [fajr.mp3]\n    volume: 0.5\n"
+        "  - name: isha-adhan\n    at: isha\n    media: [fajr.mp3]\n"), encoding="utf-8")
+    status, reply = call(web.port, "/api/event/room",
+                         {"at": "isha", "friday": False, "speaker": "Kitchen speaker",
+                          "volume": 0.5})
+    assert status == 400 and "has not loaded it" in reply["error"], reply
+    assert "plays through nothing" not in reply["error"], \
+        "the outputs are not the problem: the daemon never saw this prayer"
+
+
+def test_a_prayer_pointed_at_a_folder_has_no_levels_to_give(a_prayer_with_no_speaker_to_ask):
+    """A prayer that plays through a folder, or through the computer's own speakers, has no
+    rooms: the level of a computer belongs to whoever is sitting at it. The row says so
+    instead of offering sliders, and the write is refused rather than writing a line the
+    backend will never read."""
+    web, _, tmp_path = a_prayer_with_no_speaker_to_ask
+    rows, ev = _rows(web, "fajr")
+    assert rows == {} and ev["levels"] == [], "a folder has no rooms and none are invented"
+    status, reply = call(web.port, "/api/event/room",
+                         {"at": "fajr", "speaker": "Kitchen speaker", "volume": 0.5})
+    assert status == 400 and "nothing muezzin can ask for a level" in reply["error"], reply
+    assert "members:" not in (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+
+
+def test_a_name_the_speakers_no_longer_answer_to_is_listed_and_undoable(a_prayer_whose_room_was_renamed):
+    """A prayer's `members:` line outlives the speaker it named: renamed in the Home app,
+    moved off the network, asleep. The line is still in the file and still changes what gets
+    asked, so the drawer lists it as itself, says nobody out there answers to it, and lets it
+    be taken out here instead of sending somebody into the YAML to find it."""
+    web, _, tmp_path = a_prayer_whose_room_was_renamed
+    call(web.port, "/api/speakers")
+    rows, ev = _rows(web, "fajr")
+    assert sorted(rows) == [("Kitchen speaker", "front-room"), ("Study speaker", "nest"),
+                            ("Study speakers", ""), ("Tabby speaker", "front-room")], \
+        "the name nobody claims is listed as itself, not hidden because the scan moved on"
+    stale = rows[("Study speakers", "")]
+    assert stale["seen"] is False and stale["written"] == 0.7
+    assert stale["tonight"] == 0.7, "and it is still the number this call will ask for"
+    assert all(r["seen"] for r in rows.values() if r["name"] != "Study speakers")
+    status, reply = call(web.port, "/api/event/room",
+                         {"at": "fajr", "friday": False, "speaker": "Study speakers",
+                          "volume": ""})
+    assert status == 200, ("taking a stale name out is never refused", reply)
+    assert "members:" not in (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    rows, ev = _rows(web, "fajr")
+    assert ev["members"] == {}, "the profile in memory is what the page said it was"
+    assert ("Study speakers", "") not in rows, "and the line leaves the drawer with the file"
+
+
+def test_the_page_gives_a_prayer_its_own_collapsible_line(panel):
+    """The rooms are four sliders and a prayer has two of them, which is how the Sound card
+    used to be a wall. So a prayer's row carries one line that says what that prayer asks -
+    as usual, or the rooms that were tuned, or how many - and the sliders only appear when
+    that line is pressed. The words have to be in the page either way: a person deciding
+    whether to press it needs to know what is behind it, and that the number there outranks
+    the one the Outputs card holds is the whole reason the line is here and not there."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert 'class="lvrow"' in html, "the sliders live in a row of their own under the prayer"
+    assert "levels: as usual" in html, "a prayer with nothing of its own to say says it in words"
+    assert "rooms tuned" in html, "and once there are too many to spell out, it counts them"
+    assert "data-lv-name" in html, "the room is named by the network, not typed in here"
+    assert "same as usual" in html, "and taking the line out is a button, not an errand into the file"
+    assert "not a speaker this prayer plays through" in html, \
+        "a name that outlived its place in this prayer stays where it can be undone"
+    assert "no level for it to ask" in html, \
+        "a prayer that reaches no speaker muezzin casts to says that, instead of an empty box"
+    assert "number written here outranks the one the Outputs card holds" in html, \
+        "where the number wins from, said on the card that writes it"
+    assert "back to its own level when the call ends" in html, \
+        "a room of a group is on loan for the length of one call, and the slider says so"
+    assert "keeps that level after the call" in html, \
+        "and a speaker the profile points at directly is not on loan: that level outlives the call"
+    assert "dataset.open" in html, \
+        "which prayer is open is kept on the table, so the next poll cannot shut it in a hand"
 
 # ---- the folder of recordings, which is the library -------------------------
 #
@@ -1226,10 +1999,14 @@ def test_the_page_says_a_group_has_no_level_of_its_own(panel):
 # and - the one with no undo - be deleted, which only happens once nothing plays it.
 
 def test_the_folder_listing_says_who_plays_each_recording(panel):
-    """The listing is the page's only view of the folder, and three questions get asked
-    of it: how big is it, is anything playing it, and is it held back from the drawing.
-    A recording two events share is one row with both names on it, because the file is
-    one file - deleting it would take two prayers down, and the row says so."""
+    """Three questions get asked of the folder: how big is it, is anything playing it, and is
+    it held back from the drawing. The page shows the first and the third, and answers the
+    second with the column that changes it - the event a recording gets put on - rather than
+    with a column of words that could only agree with it or fall behind it. The answer still
+    carries the names, because the guard in front of the one action with no undo has to say
+    which event is in the way, and it reads that same list. A recording two events share is
+    one row with both names on it, because the file is one file - deleting it would take two
+    prayers down."""
     web, _, _ = panel
     _, st = call(web.port, "/api/state")
     rows = {r["name"]: r for r in st["media_library"]}
@@ -1411,24 +2188,215 @@ def test_the_recordings_card_is_a_table_that_fits_its_card(panel):
     """The Outputs card is the one that had a button fall outside it, and this card has the
     same shape - names nobody controls, then the buttons - so it is built the same way on
     purpose. A recording is called whatever whoever put it in the folder called it, and a
-    table left to size itself lets that name push the delete button past the border."""
+    table left to size itself lets that name push the delete button past the border. Four
+    columns, not five: which events hold a recording's name used to be said twice, once as a
+    column of words and once by the Event column whose dropdown is the event the recording
+    gets put on - and a column that can only agree with its neighbour or fall behind it is a
+    fifth of the card spent repeating itself, when the delete underneath already says which
+    event is in the way. The switch column is weighed at both ends of its range, because a
+    percentage is a width only against a window: the phone's, and the narrowest desk window
+    this set serves."""
     web, _, _ = panel
     _, html = call(web.port, "/", raw=True)
     assert '<section class="wide"><h2>Recordings in the folder</h2>' in html, \
-        "five columns of names take the width of the page, not one column of it"
+        "four columns of names take the width of the page, not one column of it"
     assert "#libtbl { table-layout:fixed }" in html, \
         "the columns are told their widths instead of growing to their words"
-    widths = re.findall(r"#libtbl th:nth-child\(\d\) \{ width:(\d+)%", html)
-    assert len(widths) == 5, "every column is given a width"
-    assert sum(int(w) for w in widths) == 100, f"the columns add up to {sum(int(w) for w in widths)}%"
+    widths, phone = column_widths(html, "#libtbl")
+    assert len(widths) == 4, "every column is given a width"
+    assert sum(widths) == 100, f"the columns add up to {sum(widths)}%"
+    assert len(phone) == 4, "every column is given a width for a phone as well"
+    assert sum(phone) == 100, f"the phone's columns add up to {sum(phone)}%"
+    assert "<th>name</th><th>size</th><th>Random</th><th>Event</th>" in html, \
+        "the two columns a person works with are called what they are for: the random drawing, " \
+        "and the event the recording goes on"
+    assert "<th>played by</th>" not in html and "<th>in the drawing</th>" not in html, \
+        "the column of words that said which events play a recording is gone, because the " \
+        "Event column is where that is done, and the daemon names the event that is in the way " \
+        "of a delete that would leave one behind"
+    assert "<td colspan=4>nothing in" in html, \
+        "the row that says the folder is empty spans the four columns this table has"
+    desk = 621 - 44 - 32          # the narrowest window this set of widths serves
+    px = desk * widths[2] / 100
+    assert px >= 38 + 8, \
+        f"the switch column of this card is {px:.0f}px at the narrow end of its range, and the " \
+        f"switch standing in it is 38px across, plus the 8px a cell keeps on its right"
     assert "#libtbl td { overflow-wrap:break-word }" in html, \
         "a long name breaks at the edge of its own cell rather than leaving the card"
+    assert "#libtbl th:nth-child(3), #libtbl td:nth-child(3) { text-align:center }" in html and \
+        "#libtbl th:last-child, #libtbl td:last-child { text-align:center }" in html, \
+        "the switch and the buttons stand in the middle of the columns they were given: a " \
+        "control is one small thing in a column much wider than itself, and buttons that begin " \
+        "wherever the longest word in the row leaves them read as a list that lost its edge"
     assert 'id="library"' in html and 'data-hold="' in html and 'data-rm="' in html, \
         "a row is worked on by its name, which is what the profile holds"
     assert "sure? gone for good" in html, "the button with no undo asks once before it acts"
     assert "'.switch[data-name]'" in html, \
         "the on/off switch of an output and the switch of a recording look alike and " \
         "must not share a handler"
+
+
+def test_the_speakers_card_is_a_table_that_fits_its_card(panel):
+    """The Outputs card lost its test button to the edge of the card, and the Recordings card
+    was built the same way on purpose. The Speakers card was neither: it was the one table on
+    the page left to size itself, because on a desk its rows are short. On a phone they are
+    not, and this is the card with the worst words to hold - a name the person typed into the
+    speaker itself, an address that is one unbroken word with no space in it anywhere, and the
+    speaker's maker's own phrase for what the thing is. The table grew wider than the card
+    around it, and the last column, the use button, sat outside the border. So this card's
+    columns are told their widths too, on a desk and on a phone, and on a phone the address
+    gives most of its width to the buttons: an address read across three lines still says
+    which box it is, while a button that fell off the card says nothing to anybody."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert '<table id="foundtbl">' in html, \
+        "the speaker table needs a name of its own before it can be told its columns"
+    assert "#foundtbl { table-layout:fixed }" in html, \
+        "the columns are told their widths instead of growing to their words"
+    widths, phone = column_widths(html, "#foundtbl")
+    assert len(widths) == 5, "every column is given a width"
+    assert sum(widths) == 100, f"the columns add up to {sum(widths)}%"
+    assert len(phone) == 5, "every column is given a width for a phone as well"
+    assert sum(phone) == 100, f"the phone's columns add up to {sum(phone)}%"
+    assert phone[4] > phone[2], \
+        f"the button column of a phone row is {phone[4]}% and the address column {phone[2]}%: " \
+        f"the words of the speaker's maker give way to the thing a person presses"
+    assert "#foundtbl td { overflow-wrap:break-word }" in html, \
+        "192.168.1.40:8006 is one word the width of a card, and it breaks at its own edge"
+    assert '<span class="known">' in html and "stop using</button>" in html, \
+        "a row says which output the box is already in use as, then offers to stop it; with no " \
+        "cell on this page told to keep its words on one line, both of those take the room they " \
+        "need inside the card"
+    assert 'id="found"' in html and 'colspan=5' in html, \
+        "the table got a name of its own to be told, and the rows it builds still answer to found"
+
+
+def test_the_events_card_is_the_timetable_and_opens_on_today(panel):
+    """The list the daemon sends covers today and the two days after it, which on a house
+    with five calls a day is fourteen lines in a card that gets asked two things: what
+    happens next, and what tomorrow holds. So the card draws one day at a time. The day is
+    named once, in a strip above the table, with an arrow each side of it, and the rows under
+    it carry a clock instead of a date because the date has already been said. The keyboard's
+    left and right keys walk the same walk, and give it up while the cursor is inside
+    something being typed into. The whole list is one press away for anybody who wants the wall.
+    This card is the timetable now: the card that spelled out each day's prayer times drew the
+    same minutes twice, and it is gone - which is why the card is called Events and not Next
+    events, and why it opens on the day the household is standing in rather than on the first
+    line of the list, which can be an evening that is already over."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert "<section><h2>Events</h2>" in html, \
+        "a card that holds the whole planned fortnight is not called Next anything"
+    assert "Timetable" not in html and 'id="days"' not in html, \
+        "the second copy of the same minutes is gone, and with it the box it was drawn in"
+    assert "st.days.map" not in html, \
+        "the day blocks were built by walking the day list; nothing walks it that way now"
+    assert '<div class="daynav">' in html and 'id="upprev"' in html and 'id="upnext"' in html, \
+        "a day of the list can only be folded away if the page says which day it is showing"
+    assert 'aria-label="the day before"' in html and 'aria-label="the day after"' in html, \
+        "an arrow is a picture, so the word for it has to be there for a reader"
+    assert 'id="upday"' in html and 'id="upalldays"' in html, \
+        "the day being shown is named, and every day of it is one press away"
+    assert ">all the days</button>" in html and "'just this day'" in html, \
+        "the button says what pressing it does, in both directions"
+    assert "let upday=null, upall=false" in html, \
+        "which day is showing is remembered, not asked of the clock: this page redraws " \
+        "itself every few seconds, and a card that jumped back to today mid-read is worse " \
+        "than the wall it replaced"
+    assert "(st.days&&st.days[0]&&st.days[0].date)||''" in html, \
+        "today is the day the daemon calls today, in the profile's timezone, and not the " \
+        "date whatever the phone happens to be set to"
+    assert "if(upday===null || !by[upday]) upday=upToday(order)" in html, \
+        "the card opens on today, not on the first line of the list the daemon sent"
+    assert "for(const day of order) if(day>=d) return day;" in html, \
+        "late at night today has no calls left in it, and then the day to open on is the " \
+        "next one that has any"
+    assert "'#refresh').onclick=()=>act(()=>{ upday=null;" in html, \
+        "refresh is the one gesture that starts the card over on today, and act() loads " \
+        "once afterwards rather than the handler loading a second time"
+    assert "e.when.slice(-5)" in html and "when.slice(0,-6)" in html, \
+        "the date of the day comes out of every row and into the strip above the table, " \
+        "which is what lets the first column be a clock"
+    assert "' (today)'" in html and "upMarks(upday)" in html, \
+        "the strip says when the day it names is today, and carries that day's occasions, " \
+        "which is where the pills went when the day blocks did"
+    assert "'ArrowLeft'" in html and "'ArrowRight'" in html, \
+        "the two keys a hand reaches for on its own walk the day the way the arrows do"
+    assert "tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA'" in html, \
+        "an arrow key inside the YAML box, a name being renamed or a dropdown of an event " \
+        "belongs to that control and not to this card"
+    assert "#upprev, #upnext { min-width:38px }" in html, \
+        "an arrow is wider than the character it is drawn with, so a finger or a mouse can find it"
+    _, _, narrow = html.partition(NARROW)
+    assert "#upprev, #upnext { min-width:44px" in narrow, \
+        "on a phone the arrows are as big as everything else a finger aims at"
+    assert ".daynav { display:flex" in html and "flex-wrap:wrap" in html, \
+        "the name of a day beside four controls is wider than a phone card, and the strip " \
+        "wraps under it instead of pushing an arrow out of the card"
+    widths, phone = column_widths(html, "#uptbl")
+    desk = 621 - 44 - 32
+    px = desk * widths[0] / 100
+    assert px >= 38 + 8, \
+        f"the when column is {px:.0f}px at the narrowest window the desktop rules serve, and " \
+        f"a clock at this page's own 14px is about 38px across with 8px of the column kept " \
+        f"back by the cell"
+    assert "<td colspan=4>nothing scheduled in the next two days" in html, \
+        "a quiet schedule is still said inside the table rather than leaving it blank"
+    # The card cuts a row's date off the end of `when` by counting characters, and it works
+    # out which group of rows is today by comparing that group's date with the daemon's, which
+    # is only safe while the daemon sends one shape and hands the days over in order. So both
+    # are pinned here, at the end the card reads from.
+    _, st = call(web.port, "/api/state")
+    assert st["upcoming"], "there is nothing here to check the shape of"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", st["days"][0]["date"]), st["days"][0]["date"]
+    dates = [e["date"] for e in st["upcoming"]]
+    assert dates == sorted(dates), "the card walks the days in order, so an arrow is one day"
+    for e in st["upcoming"]:
+        assert re.fullmatch(r"\w{3} \d{2} \w{3} \d{2}:\d{2}", e["when"]), \
+            f"the card reads the clock off the end of {e['when']!r}, so the shape has to hold"
+        assert e["when"][-6] == " " and e["when"][4:6] == e["date"][8:10], \
+            f"{e['when']!r} and the date it is filed under, {e['date']}, do not agree"
+
+
+def test_no_table_the_page_draws_is_left_to_size_itself(panel):
+    """Every card that draws a table got told its columns, one at a time, each after a button
+    fell outside the border of the card it was drawn in. This check covers the lot at once,
+    because the page keeps building new rows out of words it did not choose: a file name, a
+    name typed into a speaker, an address with no space in it, a place name off somebody
+    else's map, the list of clips a call will play. A table that sizes itself to those words
+    leans the far side of the row - nearly always the buttons - over the card. Not one table is
+    left unsized now: the days used to draw their own, out of a prayer's name and the minute it
+    falls at, and that card is gone - the Events card is the timetable, told column by column
+    like everything else on the page."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert '<table id="hitstbl">' in html, \
+        "the list of places that answered a search builds a table with no name to be told"
+    for table, columns in (("#uptbl", 4), ("#outputstbl", 6), ("#soundtbl", 4),
+                           ("#libtbl", 4), ("#foundtbl", 5)):
+        assert f"{table} {{ table-layout:fixed }}" in html, \
+            f"{table} still sizes itself to its words"
+        widths, phone = column_widths(html, table)
+        assert len(widths) == columns, f"{table} tells {len(widths)} widths for {columns} columns"
+        assert sum(widths) == 100, f"the columns of {table} add up to {sum(widths)}%"
+        assert len(phone) == columns, f"{table} is not retold for a phone"
+        assert sum(phone) == 100, f"the phone's columns of {table} add up to {sum(phone)}%"
+        assert f"{table} td {{ overflow-wrap:break-word }}" in html, \
+            f"a long word in {table} breaks at the edge of its own cell"
+    # The answers of a search have no header row, so their cells are what gets told.
+    widths, phone = column_widths(html, "#hitstbl", "td")
+    assert len(widths) == 4 and sum(widths) == 100, f"an answer row tells {widths}"
+    assert len(phone) == 4 and sum(phone) == 100, f"a phone's answer row tells {phone}"
+    assert "#hitstbl { table-layout:fixed }" in html and "#hitstbl td { overflow-wrap:break-word }" in html
+    assert "<table>" not in html, \
+        "every table on the page now carries a name to be told its columns; the one that " \
+        "sized itself belonged to the day blocks, and they are gone"
+    assert "#soundtbl select { width:100% }" in html, \
+        "a select fills the column it was given instead of asking the table for the width of " \
+        "the longest name it offers"
+    assert "#foundtbl td > button, #hitstbl td > button" in html, \
+        "the buttons of a row stand one under the other and fill their column, so a control " \
+        "that cannot break a word to fit never grows past the card"
 
 
 def test_the_hijri_knob_moves_the_date_the_page_shows(panel):

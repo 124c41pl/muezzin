@@ -416,7 +416,13 @@ class Runner:
         """One speaker's share of one event. Errors stop at this speaker."""
         try:
             log.info("%s -> %s (%s)", ev.name, out.name, out.kind)
-            backend.play(media, ev.volume)
+            # The prayer's own levels travel with it: `volume` is what this event asks of
+            # everything it plays through, `members` what it asks of one named speaker.
+            # Both are borrowed for the length of the call and handed back after it, so a
+            # morning that wanted the kitchen at 60% leaves the kitchen where its owner
+            # had it. `play_now` deliberately does not pass them: a test click asks what
+            # the output would be asked on any other morning.
+            backend.play(media, ev.volume, ev.members)
         except localplay.Stopped as exc:
             # Somebody asked for this one to stop, which is not a speaker that broke.
             # The line is still worth having in the morning's log, because a call to

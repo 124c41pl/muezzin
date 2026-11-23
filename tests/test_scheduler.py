@@ -412,10 +412,10 @@ def test_a_config_save_while_a_speaker_is_busy_does_not_cut_the_note_short(tmp_p
         started, hold = threading.Event(), threading.Event()
         real_play = old_backend.play
 
-        def slow_play(paths, volume):
+        def slow_play(paths, volume, members=None):
             started.set()
             assert hold.wait(10), "the play was cut off"
-            real_play(paths, volume)
+            real_play(paths, volume, members)
 
         monkeypatch.setattr(old_backend, "play", slow_play)
         runner._pending.put(events_for_date(profile, TUESDAY)[0])
@@ -458,7 +458,7 @@ def test_disabling_an_output_waits_for_the_note_it_was_playing(tmp_path, monkeyp
         monkeypatch.setattr(backend, "close", lambda: closed.append(True))
         started, hold = threading.Event(), threading.Event()
         monkeypatch.setattr(backend, "play",
-                            lambda paths, volume: (started.set(), hold.wait(10)))
+                            lambda paths, volume, members=None: (started.set(), hold.wait(10)))
         runner._pending.put(events_for_date(profile, TUESDAY)[0])
         assert started.wait(5), "the player thread never started"
 
@@ -505,14 +505,18 @@ def test_the_slowest_speaker_an_event_wants_sets_the_lead(tmp_path, monkeypatch)
     """A speaker on the network has to be found by name, connected to, and told to
     fetch a file before anyone hears a note, and that costs seconds nobody can know
     in advance. So the moment is paid for a little early, by as much as the slowest
-    speaker this event wants needs. What a profile says for one speaker beats what
-    its kind usually costs, and `lead_seconds: 0` is an answer, not an absence:
-    exactly on the minute."""
+    speaker this event wants needs. A Cast target pays for the rooms behind it as
+    well: a group's level is borrowed from each speaker inside it, which is another
+    round of asking done at the same time as finding the group. What a profile says
+    for one speaker beats what its kind usually costs, and `lead_seconds: 0` is an
+    answer, not an absence: exactly on the minute."""
     from muezzin import scheduler
     from muezzin.scheduler import Runner, lead_of, tidy_is_safe
 
     profile, _ = profile_for(tmp_path, SLOW_HOUSE)
-    assert lead_of([profile.output("nest")]) == 8.0       # a Nest: found on the LAN
+    assert lead_of([profile.output("nest")]) == 12.0, \
+        "a Nest on the LAN pays the Cast number whether or not it has rooms behind it: " \
+        "membership is a fact about the network, and the lead is paid before anyone knows"
     assert lead_of([profile.output("box")]) == 1.0        # a box one request away
     assert lead_of([profile.output("drawer")]) == 0.0     # writing a file is instant
     assert lead_of([profile.output("porch")]) == 0.0      # told to be exactly on time
@@ -524,7 +528,7 @@ def test_the_slowest_speaker_an_event_wants_sets_the_lead(tmp_path, monkeypatch)
         sev = events_for_date(profile, TUESDAY)[0]
         names = [o.name for o in profile.targets_for(sev.event)]
         assert names == ["nest", "box", "drawer", "porch"]
-        assert runner.lead(sev) == 8.0, "the slowest target is the one that gets paid for"
+        assert runner.lead(sev) == 12.0, "the slowest target is the one that gets paid for"
     finally:
         runner.shutdown()
 
@@ -576,7 +580,7 @@ def test_two_speakers_hear_the_call_at_the_same_instant(tmp_path):
         order, hold = [], threading.Event()
 
         class Slow:
-            def play(self, paths, volume=None):
+            def play(self, paths, volume=None, members=None):
                 order.append("slow in")
                 hold.wait(10)
                 order.append("slow out")
@@ -585,7 +589,7 @@ def test_two_speakers_hear_the_call_at_the_same_instant(tmp_path):
                 pass
 
         class Quick:
-            def play(self, paths, volume=None):
+            def play(self, paths, volume=None, members=None):
                 order.append("quick")
 
             def close(self):
@@ -660,7 +664,7 @@ def test_the_sound_goes_out_before_the_time_it_belongs_to(tmp_path):
     played = []
 
     class Stamp:
-        def play(self, paths, volume=None):
+        def play(self, paths, volume=None, members=None):
             played.append(dt.datetime.now(dt.timezone.utc))
 
         def close(self):

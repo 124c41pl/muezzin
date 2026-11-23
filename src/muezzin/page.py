@@ -52,25 +52,14 @@ PAGE = """<!doctype html>
  table { width:100%; border-collapse:collapse; font-size:14px }
  th { text-align:left; color:var(--dim); font-weight:500; font-size:12.5px; padding:4px 8px 4px 0 }
  td { padding:5px 8px 5px 0; border-top:1px solid var(--line) }
- .day { border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin:0 0 14px;
-  background:rgba(13,24,21,.6) }
- /* today gets the arch: two rounded top corners, which is already the shape of a
-    mihrab and of a dome. No pictures, no figures - the geometry does the work. */
- .day.today { border-color:var(--gold2); border-top-left-radius:60px 44px;
-  border-top-right-radius:60px 44px; background:rgba(20,44,34,.75) }
- .dayhead { display:flex; flex-wrap:wrap; gap:8px; align-items:baseline; margin-bottom:8px }
- .day .pl { color:var(--dim) }
- .day .ar { color:var(--dim); text-align:right }
- .day .t { text-align:right; font-variant-numeric:tabular-nums }
- .hij { color:var(--gold); font-size:13px }
+ /* The occasions of a day - a fast, a mourning, a feast - are pills, and they ride along
+    with the day they belong to wherever that day is named on the page. */
  .mark { font-size:12px; border:1px solid var(--line); border-radius:20px; padding:1px 9px }
  .mark.mourn { color:var(--mourn); border-color:#39566b; background:rgba(60,90,115,.18) }
  .mark.celebrate { color:var(--gold2); border-color:#5c4a22; background:rgba(217,171,78,.14) }
  .mark.plain { color:var(--turq) }
-  /* the Arabic name of the day, inside its own pill, in the pill's colour */
-  .mark .ar { color:inherit; font-size:13px }
- .now td { color:var(--gold2) }
- .now .pl { color:var(--gold) }
+ /* the Arabic name of the day, inside its own pill, in the pill's colour */
+ .mark .ar { color:inherit; font-size:13px }
  button:disabled { opacity:.45; cursor:default; border-color:var(--line) }
  button { background:#163026; color:var(--fg); border:1px solid var(--line);
   border-radius:6px; padding:5px 10px; cursor:pointer; font:inherit }
@@ -88,9 +77,10 @@ PAGE = """<!doctype html>
   border-radius:6px; padding:5px 8px; font:inherit; max-width:100% }
  select:disabled, input:disabled { opacity:.45 }
  .row select { min-width:190px }
- /* The only slider on this page is a place inside a recording. It is gold like
-    everything else you can press. Nothing here moves a level: the volume of a
-    computer belongs to the person sitting in front of it. */
+ /* Every slider on this page is something you can press, and every one of them is about a
+    speaker: a place inside a recording, or the level muezzin asks a speaker to come out at.
+    Nothing here moves the volume of a computer, which belongs to the person sitting in front
+    of it. */
  input[type=range] { accent-color:var(--gold); width:200px; max-width:55vw; padding:0 }
  .members { color:var(--dim); font-size:13px }
  .known { color:var(--turq) }
@@ -108,6 +98,14 @@ PAGE = """<!doctype html>
   border-left:3px solid var(--gold); border-radius:8px; padding:9px 13px;
   margin:10px 0 0; font-size:13.5px; max-width:1200px }
  .fine.warn { color:var(--bad) }
+ /* The long fine print under a card folds under one line on a phone-width window,
+    where the explanations - not the tables - are most of the scrolling. The fold is
+    written open in the markup, so the words stand on the page before any script has
+    a say and a wide window keeps reading them the way it always did; the rules under
+    the phone width, further down, are what shut it and show the summary line, and
+    the script carries the fold across a rotation or a resize. */
+ details.finefold { margin:0; color:var(--dim); font-size:12.5px }
+ details.finefold > summary { display:none }
  /* How a position gets shown: a diagram of bearings drawn here from the numbers,
     which works with the network unplugged, and squares of somebody else's map, which
     the daemon fetches and credits where they appear - on by default, and stopped by
@@ -124,36 +122,135 @@ PAGE = """<!doctype html>
     of words in it. Left to itself the table grows to whatever its words need, the
     card around it does not grow with it, and the last column - the test button - ends
     up outside the edge of the card. A fixed layout with stated widths keeps every
-    column under the header it belongs to. The widths follow what each column holds,
-    and the last one is the width of a button: that is the column that must never be
-    the one that falls off the edge. A word too long for its column is broken where it
-    has to be, not at the first opportunity. */
+    column under the header it belongs to. The widths are weighed against the narrowest
+    window this set serves, which is the one just above the phone rules: there the card is
+    the whole page, six columns share it, and every column holding a control has to be wider
+    than that control at its own size. Two of them were not. A seven percent sliver for the
+    on column is less than the 38px switch standing in it, so the switch ran over the edge of
+    its column and on top of the slider beside it; and the last column asked its two buttons
+    to keep to one line, which made them one unbreakable line about as wide as the column, so
+    test and stop ran sideways over the level column. A word can be broken where it has to be
+    and this card says so; a control cannot, so a column with a control in it is given a width
+    the control fits, and two buttons in one cell are allowed to stand on two lines. */
  #outputstbl { table-layout:fixed }
  #outputstbl th:nth-child(1) { width:21% }
- #outputstbl th:nth-child(2) { width:15% }
- #outputstbl th:nth-child(3) { width:17% }
- #outputstbl th:nth-child(4) { width:7% }
- #outputstbl th:nth-child(5) { width:21% }
- #outputstbl th:nth-child(6) { width:19%; text-align:right }
+ #outputstbl th:nth-child(2) { width:13% }
+ #outputstbl th:nth-child(3) { width:15% }
+ #outputstbl th:nth-child(4) { width:9% }
+ #outputstbl th:nth-child(5) { width:22% }
+ #outputstbl th:nth-child(6) { width:20%; text-align:right }
  #outputstbl td { overflow-wrap:break-word }
- #outputstbl td:last-child { white-space:nowrap; text-align:right }
+ #outputstbl td:last-child { text-align:right }
  #outputstbl input[type=range] { width:80px; vertical-align:middle }
+ /* The rooms inside a group are not speakers in the list, so they get rows of their own
+    under the group's row, in the same columns as the row above - a room's slider under
+    the group's own slider, because it is the same kind of number. They used to be one long
+    line of names and sliders inside one cell, and the last cell of a row is the one that
+    must never end up outside the card: four rooms asked to be, and ran past its edge. A
+    room row carries no rule above it, and the rooms are marked off from the outputs by a
+    left edge, so a room reads as belonging to the group above it rather than as an output
+    of its own. The names are what those speakers call themselves on the network, and each
+    one has a slider because the whole reason for naming the rooms is that the kitchen and
+    the study are not the same room at the same loudness. */
+ #outputstbl tr.roomrow td { border-top:0; padding:2px 8px 2px 0 }
+ #outputstbl tr.roomrow td.roomname { padding-left:13px; border-left:2px solid var(--line) }
+ #outputstbl tr.roomrow .tag { font-size:11.5px }
+ /* A prayer's levels are not a column. Most prayers are happy with the numbers the house
+    already asks its speakers for and say nothing of their own, so a column of sliders per
+    room would hang four sliders off every row of this table and bury the two things the
+    card is for. The row carries a short summary instead - `levels: as usual`, or the rooms
+    that were moved - and pressing it opens a row of its own under the prayer, holding only
+    the rooms this prayer plays through. The left edge is the same mark a room inside a
+    group is marked off by, because it is the same kind of thing: lines that belong to the
+    row above them, in that row's columns. */
+ /* The Sound card is a table of what the day will play, and its cells hold a select each:
+    a select's own width is the width of the longest recording name in it, which on this page
+    is a name somebody gave a file. So the columns are told, as the other cards' are, and the
+    select fills the column it was given instead of asking the table for a name's width. The
+    levels row spans the whole row already, so that row is untouched by this. */
+ #soundtbl { table-layout:fixed }
+ #soundtbl th:nth-child(1) { width:20% }
+ #soundtbl th:nth-child(2) { width:12% }
+ #soundtbl th:nth-child(3) { width:34% }
+ #soundtbl th:nth-child(4) { width:34% }
+ #soundtbl td { overflow-wrap:break-word }
+ #soundtbl select { width:100% }
+ #soundtbl tr.lvrow td { border-top:0; padding:4px 8px 4px 0 }
+ #soundtbl tr.lvrow .lvline { padding-left:13px; border-left:2px solid var(--line) }
+ #soundtbl tr.lvrow input[type=range] { width:80px; vertical-align:middle }
+ #soundtbl tr.lvrow .tag { font-size:11.5px }
+ #soundtbl tr.lvrow .lvname { display:inline-block; min-width:16ch }
+ #soundtbl button.lv { display:block; margin-top:5px; font-size:11.5px }
  /* The same shape as the Outputs table, for the same reason: a recording is called
     whatever the person who put it in the folder called it, and a table that sizes
-    itself lets a long name push the buttons clean out of the card. */
+    itself lets a long name push the buttons clean out of the card. It has four columns
+    now rather than five. Which events hold a recording's name used to be said twice: once
+    as words of their own, and once by the Event column, whose dropdown names the event to
+    put the recording on and whose button takes it off again - and the second of those is
+    where the first is changed, so the words column could only ever agree with it or be
+    out of date. The two columns a person presses are lined up down the page instead of
+    starting wherever the longest word in the column leaves them: a switch is one small
+    thing standing in a column far wider than itself, and buttons that begin at a different
+    place in every row look like a list that has lost its edge. */
  #libtbl { table-layout:fixed }
- #libtbl th:nth-child(1) { width:24% }
+ #libtbl th:nth-child(1) { width:26% }
  #libtbl th:nth-child(2) { width:9% }
- #libtbl th:nth-child(3) { width:21% }
- #libtbl th:nth-child(4) { width:11% }
- #libtbl th:nth-child(5) { width:35% }
+ #libtbl th:nth-child(3) { width:11% }
+ #libtbl th:nth-child(4) { width:54% }
  #libtbl td { overflow-wrap:break-word }
  #libtbl select { max-width:100% }
+ #libtbl th:nth-child(3), #libtbl td:nth-child(3) { text-align:center }
+ #libtbl th:last-child, #libtbl td:last-child { text-align:center }
  /* The name is the box you type in, so it is as wide as the column it sits in rather
     than a fixed number of characters: a speaker called whole-house lost its last
     letters in a 12ch box, and a name you cannot read in full is a name you cannot
     rename without guessing. */
  .rename { width:100%; min-width:0; box-sizing:border-box; padding:3px 6px }
+ /* The Speakers card is the third table on this page that takes its rows from words it did
+    not choose, and it is the worst of the three: a name the person typed into the speaker
+    itself, an address that is one unbroken word, and the speaker maker's own words for what
+    the thing is. It was the one table left to size itself, because on a desk its rows are
+    short. Its columns are told here for the same reason as the other two - and the last one,
+    the column holding use and stop using, is the one that sat outside the card. */
+ #foundtbl { table-layout:fixed }
+ #foundtbl th:nth-child(1) { width:24% }
+ #foundtbl th:nth-child(2) { width:16% }
+ #foundtbl th:nth-child(3) { width:20% }
+ #foundtbl th:nth-child(4) { width:22% }
+ #foundtbl th:nth-child(5) { width:18%; text-align:right }
+ #foundtbl td { overflow-wrap:break-word }
+ /* The Events card is the last table on the page whose words are not its own: an event
+    is called whatever the person who wrote the profile called it, and the last column of the
+    row is the list of recordings that call will play, which is longer still. Told columns,
+    same as the rest, so the list of clips wraps inside its cell instead of leaning the table
+    out of the card. */
+ #uptbl { table-layout:fixed }
+ #uptbl th:nth-child(1) { width:14% }
+ #uptbl th:nth-child(2) { width:32% }
+ #uptbl th:nth-child(3) { width:27% }
+ #uptbl th:nth-child(4) { width:27% }
+ #uptbl td { overflow-wrap:break-word }
+ /* The card below this comment shows one day of the list at a time, and the day it is
+    showing is said once, in the strip above the table. So the first column of a row carries
+    a clock and nothing else: five characters, near enough 38px at this page's own 14px, and
+    a cell keeps 8px of its column for itself, which an eighth of a wide card covers with
+    room to spare. What came off that column went to the two lists, which were the columns
+    running out. The strip wraps, because a narrow card is narrower than the name of a day
+    beside four controls, and the last thing anybody should lose on a small screen is the
+    arrow that goes back. */
+ .daynav { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px }
+ #upday { color:var(--gold2); font-variant-numeric:tabular-nums }
+ #upprev, #upnext { min-width:38px }
+ /* The list of places that answered a search is a table the page builds out of somebody
+    else's map: a label that runs the length of a line, then the numbers, then the two buttons
+    at the end of the row. It has no header row to be told, so its cells are told instead, and
+    the same rule keeps the far end of an answer inside the card it was drawn in. */
+ #hitstbl { table-layout:fixed }
+ #hitstbl td:nth-child(1) { width:34% }
+ #hitstbl td:nth-child(2) { width:18% }
+ #hitstbl td:nth-child(3) { width:20% }
+ #hitstbl td:nth-child(4) { width:28% }
+ #hitstbl td { overflow-wrap:break-word }
  .mapbox img { width:100%; height:100%; display:block }
  .spot { position:absolute; width:9px; height:9px; margin:-4px 0 0 -4px; border-radius:50%;
   background:var(--gold); box-shadow:0 0 0 3px rgba(11,20,17,.8) }
@@ -161,6 +258,159 @@ PAGE = """<!doctype html>
  .cities div { margin-bottom:5px }
  #dial text { fill:var(--dim); font-size:9.5px }
  #dial line, #dial circle { stroke-width:1 }
+ /* One lamp for every promise this page makes to the daemon - a level written to the
+    profile, a look at what is on the LAN, a recording handed to a speaker across the room.
+    It is fixed to the bottom of the window rather than in the middle of it, because the
+    page is worth reading while the daemon is busy, and it takes no clicks: a person who
+    wants to move the next slider while the last one is still travelling may do so. It is
+    shown by a timer rather than by the request, so the asks that answer in a twentieth of a
+    second never show anything at all, and only a wait long enough to wonder about gets a
+    light. The ring turns because a still mark next to a slow ask reads like a broken one. */
+ #busy { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); z-index:5;
+  display:flex; gap:9px; align-items:center; pointer-events:none; background:#0d1815;
+  border:1px solid var(--line); border-radius:20px; padding:8px 15px; font-size:13px;
+  color:var(--dim); box-shadow:0 6px 22px rgba(0,0,0,.45) }
+ #busy[hidden] { display:none }
+ .spin { width:13px; height:13px; box-sizing:border-box; border:2px solid var(--line);
+  border-top-color:var(--gold); border-radius:50%; animation:turn 1s linear infinite }
+ @keyframes turn { to { transform:rotate(360deg) } }
+ @media (prefers-reduced-motion: reduce) { .spin { animation-duration:3s } }
+ /* A phone is the machine this page most often gets opened on - the level of a speaker is
+    a thing you fix while the speaker is making the noise - and on a phone the switches and
+    the sliders were in the way of each other, for two different reasons.
+    The switch was 38px by 20px, smaller than the pad of a thumb. A switch that answers a
+    press half an inch either side of where it was made is worse than one that is hard to
+    hit, because what it sends rewrites the profile. So the target grows and the drawing
+    does not: the box becomes 44px square with nothing in it but the track and the knob,
+    and the track is the same 38px by 20px it was drawn at, held in the middle of the box.
+    The crowding was the other thing, and it belongs to the tables. Six columns told their
+    widths in percentages leave a fifth of a phone to the level column, about four
+    centimetres: an 80px slider, a chip beside it and the sentence about what a group's
+    number does, all in that space, each pushing at the others - which is how the test
+    button of a row once ended up outside the card. Under this width the slider fills its
+    own column instead of a fixed number of pixels and is taller, so a thumb has something
+    to hold; the chip drops onto a line under it rather than beside it; the sentence about
+    a group gives the row up, being said again in full in the lines under the card; and the
+    columns are retold so that each control has the width the control needs. A prayer's
+    levels line is told the same way, because it is the same kind of line, just as narrow,
+    with a name and two chips in front of its bar. */
+ @media (max-width:620px) {
+  /* The grid asks for columns of at least 320px, which is fair on a desk and a promise the
+     page cannot keep on a narrow phone: below that width every card insists on being wider
+     than the window it was opened in, and the card's own right edge - where the buttons are -
+     falls off the screen. Under this width the column is allowed to shrink to the window, and
+     the cards inside it, their tables and their buttons follow it down to whatever is left. */
+  main { padding:12px; grid-template-columns:minmax(0,1fr) }
+  section { padding:12px }
+  .switch { width:44px; height:44px; border-radius:8px; background:none }
+  .switch:before { content:""; position:absolute; left:3px; right:3px; top:12px; height:20px;
+   border-radius:10px; background:#2b3f38 }
+  .switch[aria-checked=true] { background:none }
+  .switch[aria-checked=true]:before { background:var(--gold) }
+  .switch:after { top:15px; left:6px }
+  .switch[aria-checked=true]:after { left:24px }
+  input[type=range] { height:34px }
+  /* The columns are retold here, not merely narrowed. At this width the on column has to
+     be at least as wide as the 44px switch, the last column at least as wide as the longest
+     one-word thing a button there can say - same as the group, for a room inside a group -
+     and the level column wide enough for a bar a thumb can hold; the names and the addresses
+     give that room, because a long word in a column breaks across lines here already and
+     never pushes a neighbour out of the card the way a control does. And the
+     two buttons of a row - test, and stop while a test is playing - stand one under the
+     other rather than side by side, which is the same accident the card was fenced
+     against once already. */
+  #outputstbl th:nth-child(1) { width:17% }
+  #outputstbl th:nth-child(2) { width:10% }
+  #outputstbl th:nth-child(3) { width:14% }
+  #outputstbl th:nth-child(4) { width:19% }
+  #outputstbl th:nth-child(5) { width:20% }
+  #outputstbl th:nth-child(6) { width:20% }
+  #outputstbl input[type=range] { width:100%; min-width:0 }
+  #outputstbl td > .tag, #outputstbl td > .why, #outputstbl tr.roomrow td > .tag {
+   display:block; margin-top:3px }
+  #outputstbl .why { font-size:11.5px }
+  #outputstbl .roomnote { display:none }
+  /* The Sound card's two selects were the widest thing in the card, because a select is as
+     wide as the longest name it offers. Here they are told to share the card between them,
+     with the day's name and the levels button given only what those words need: a name that
+     is cut short in a box is still a name you can open the box and read. */
+  #soundtbl th:nth-child(1) { width:16% }
+  #soundtbl th:nth-child(2) { width:14% }
+  #soundtbl th:nth-child(3) { width:35% }
+  #soundtbl th:nth-child(4) { width:35% }
+  #soundtbl tr.lvrow .lvline { display:flex; flex-wrap:wrap; align-items:center; gap:3px 8px }
+  #soundtbl tr.lvrow input[type=range] { width:auto; flex:1 1 90px; min-width:90px }
+  #soundtbl tr.lvrow .lvname { min-width:0 }
+  #soundtbl tr.lvrow .tag, #soundtbl tr.lvrow button { flex:0 0 auto }
+  /* The recordings card holds the page's other switches, and its drawing column was told
+     an eleventh of the card: room enough for the 38px switch it was drawn around, not for
+     the 44px target. The name column and the Event column give a little to it, because a
+     name breaks across lines and a button has an honest width, and both are already told to
+     stay inside this card. The Event column is the widest thing in the row now that the
+     words column is gone: a dropdown, and two buttons standing one under the other. The
+     size is given room of its own as well. A size is two words with a space between them,
+     and the only other place it can break is inside the number: three digits at this page's
+     own 14px are about 24px across, and a cell keeps 8px of its column for itself, so below
+     a thirteenth of a phone the reading comes out 84 / 2 KB, which is nobody's size. */
+  #libtbl th:nth-child(1) { width:24% }
+  #libtbl th:nth-child(2) { width:13% }
+  #libtbl th:nth-child(3) { width:19% }
+  #libtbl th:nth-child(4) { width:44% }
+  /* The eighth of a column a cell keeps for itself on the right is what puts a 44px switch
+     over the edge of a narrow column: the switch is that column's whole content, so on a
+     phone the edge is given back and the switch stands in the middle of the column it
+     belongs to. The outputs' on column is wide enough already, and is lined up the same
+     way, so the switches down a column of rows read as a column. */
+  #outputstbl td:nth-child(4), #libtbl td:nth-child(3) { padding-right:0; text-align:center }
+  #outputstbl th:nth-child(4), #libtbl th:nth-child(3) { text-align:center }
+  /* The Speakers card on a phone is three columns of somebody else's words - the name on the
+     speaker, one unbroken address, the maker's own phrase for the thing - in front of one
+     column of buttons, and on a phone that is one column too many. The address gives most of
+     its width away to the buttons, because an address read across three lines still says which
+     box it is, while a button that fell off the card says nothing at all. */
+  #foundtbl th:nth-child(1) { width:18% }
+  #foundtbl th:nth-child(2) { width:18% }
+  #foundtbl th:nth-child(3) { width:16% }
+  #foundtbl th:nth-child(4) { width:17% }
+  #foundtbl th:nth-child(5) { width:31%; text-align:left }
+  /* A call's playlist is the longest words in the Events card, and on a phone the card
+     is one column of the page: the name of the day is in the strip above the table and not in
+     a column at all, so the first column only has to be wide enough for a clock and the eight
+     pixels a cell keeps back - which is why a fifth of the card is what it gets. The event
+     keeps its name, and the two lists break where they have to rather than leaning the table
+     over the border they are drawn inside. The two arrows are 44px wide here like every other
+     thing a finger aims at. */
+  #uptbl th:nth-child(1) { width:18% }
+  #uptbl th:nth-child(2) { width:38% }
+  #uptbl th:nth-child(3) { width:22% }
+  #uptbl th:nth-child(4) { width:22% }
+  #upprev, #upnext { min-width:44px; padding:8px 7px }
+  /* The answers to a search are words off somebody else's map, and a place name has no
+     opinion about where it ends: the label keeps the biggest share of the card because it is
+     the only part that says which place this is, and the numbers and the note break where
+     they have to. */
+  #hitstbl td:nth-child(1) { width:32% }
+  #hitstbl td:nth-child(2) { width:16% }
+  #hitstbl td:nth-child(3) { width:13% }
+  #hitstbl td:nth-child(4) { width:39% }
+  /* The last promise is the one that holds however narrow the window gets, and it is about
+     buttons rather than columns: a control has a width it cannot go under, where a word can be
+     broken somewhere, so buttons standing side by side in one cell are what push a table out
+     of the card around it. Under this width the buttons in a row stand one under the other and
+     fill the column they are in, and a button therefore cannot be wider than a column that was
+     told its width - which is the whole shape of the accident this card keeps having. The
+     switches are left out of it: they were just told their own 44px, and the columns holding
+     them were told to be wider than that on purpose. */
+  #outputstbl td > button:not(.switch), #libtbl td > button:not(.switch),
+  #foundtbl td > button, #hitstbl td > button { display:block; width:100%; margin-top:4px;
+   padding:8px 7px }
+  /* And here the fine print folds: one gold line to tap, with every word of the
+     explanation still underneath it, just out of the scroll until asked for. */
+  details.finefold > summary { display:block; color:var(--gold); cursor:pointer;
+   list-style:none; margin-top:8px }
+  details.finefold > summary:before { content:"▸ " }
+  details.finefold[open] > summary:before { content:"▾ " }
+ }
 </style></head><body>
 <header>
  <svg class="star" viewBox="0 0 32 32" aria-hidden="true">
@@ -174,11 +424,18 @@ PAGE = """<!doctype html>
 <div id="next"></div>
 <div id="notices"></div>
 <main>
- <section><h2>Timetable</h2><div id="days"></div></section>
- <section><h2>Next events</h2><table><thead><tr><th>when</th><th>event</th><th>speakers</th><th>media</th></tr></thead><tbody id="upcoming"></tbody></table></section>
+ <section><h2>Events</h2>
+  <div class="daynav"><button id="upprev" aria-label="the day before">&larr;</button><span id="upday"></span><button id="upnext" aria-label="the day after">&rarr;</button><button id="upalldays">all the days</button></div>
+  <table id="uptbl"><thead><tr><th>when</th><th>event</th><th>speakers</th><th>media</th></tr></thead><tbody id="upcoming"></tbody></table>
+  <details class="finefold" open><summary>more info</summary>
+ <div class="fine">This is the timetable, one day at a time, and it opens on today. The arrows, or the left and right keys of a keyboard as long as nothing is being typed, walk through the days that have been planned; every day is the same list with nothing taken out of it, and a day's own occasions ride beside its name.</div>
+ </details>
+ </section>
  <section class="wide"><h2>Outputs</h2><table id="outputstbl"><thead><tr><th>name</th><th>kind</th><th>target</th><th>on</th><th>level</th><th></th></tr></thead><tbody id="outputs"></tbody></table>
+  <details class="finefold" open><summary>more info</summary>
   <div class="fine">A speaker muezzin has to find on the network gets the recording a few seconds before the time it belongs to, so the first note is already in the air when that time arrives; the number in brackets is that head start. A profile sets it per speaker with lead_seconds, and 0 means exactly on the minute. Everywhere else on this page the times shown are the computed ones.</div>
-  <div class="fine">The level is what muezzin asks a speaker for the moment it starts playing, so a test comes out at the same loudness as an adhan instead of at whatever the room happened to be left at. It is muezzin's to ask only of a speaker it casts to: the level of the computer running this program, or of a box on the LAN, belongs to whoever is sitting at that machine, and this page never touches it. A speaker with nothing written in the profile is asked for 50%. A row whose target is a speaker group has no slider: a group is several speakers, each left at whatever level the Google Home app set it to, and nothing outside that app moves them together - so a level written for a group stays unused until the output points at one speaker.</div>
+  <div class="fine">The level is what muezzin asks a speaker for the moment it starts playing, so a test comes out at the same loudness as an adhan instead of at whatever the room happened to be left at. It is muezzin's to ask only of a speaker it casts to: the level of the computer running this program, or of a box on the LAN, belongs to whoever is sitting at that machine, and this page never touches it. A speaker with nothing written in the profile is asked for 50%. A row whose target is a speaker group is several rooms wearing one name, and a group has no level of its own that anybody hears: the number written there is what every room inside it is asked for while a call is playing, and each room goes back to wherever its owner had left it the moment the call ends. Rooms at levels of their own - the kitchen at 50% while the study stays at 40% - get a slider of their own on the line under the group's row, which writes one members: line per room into the profile; a room with no line of its own is asked for the group's number. One prayer can want different numbers from the rest of the day, and that goes under the prayer rather than here: see the levels line in the Sound card.</div>
+  </details>
   <div class="row"><select id="media"></select><span class="tag" id="mediaurl"></span></div>
  </section>
  <section class="wide"><h2>Where</h2>
@@ -190,7 +447,12 @@ PAGE = """<!doctype html>
   <div class="row"><input id="place" type="text" size="26" placeholder="the street, and the number on it">
    <label>postal code <input id="zip" type="text" size="8"></label>
    <button id="findit">find it</button></div>
-  <div id="found"></div>
+  <!-- This answer list has to be named for itself. The Speakers card further down the
+   page is #found, and a page asks for a name by taking the first element carrying it:
+   two things wearing one name meant the scan ran, the tag beside it said a newer time,
+   and the table of speakers never changed. -->
+  <div id="hits"></div>
+  <details class="finefold" open><summary>more info</summary>
   <div class="fine">Checking numbers happens on this machine, against the town centres
    muezzin carries, and asks nobody anything. Finding a place by its words sends what you
    typed to <span id="geocoder"></span> - once, and only because you pressed find-it; it is
@@ -208,25 +470,29 @@ PAGE = """<!doctype html>
    the answer is a street rather than a door, press look there and then click the door you
    live at: the click is the house number, and a mark a kilometre off moves a prayer time
    by under a second.</div>
+  </details>
   <div id="map"></div>
  </section>
  <section><h2>Method</h2>
   <div class="row"><select id="preset"></select><select id="asr"></select><button id="applymethod">apply method</button></div>
   <div class="fine" id="overrides"></div>
+  <details class="finefold" open><summary>more info</summary>
   <div class="fine">That list is every method muezzin ships with, in two groups by where
    the night is taken to end. The Sunni methods end it at sunrise; the Ja'fari ones end
    it at Fajr, which is why the second group's midnight sits earlier in the evening. The
    page is not arguing about it, it is only telling you which numbers moved. If the
    figures you follow are not in the list, write them under <code>method:</code> in the
    profile - they stay put when you change the name here.</div>
+  </details>
   <div class="row"><span class="tag">Hijri date</span><button id="hijminus">&minus;1</button><span id="hijridays">0</span><button id="hijplus">+1</button></div>
   <div class="fine">Arithmetic cannot see the moon, so this is where you tell it what you saw.</div>
  </section>
  <section class="wide"><h2>Sound</h2>
-  <table><thead><tr><th>time</th><th></th><th>every day</th><th>Friday</th></tr></thead><tbody id="sound"></tbody></table>
+  <table id="soundtbl"><thead><tr><th>time</th><th></th><th>every day</th><th>Friday</th></tr></thead><tbody id="sound"></tbody></table>
   <div class="row"><button id="applysound">apply these clips</button><span class="tag" id="soundsay">nothing changed</span></div>
   <div class="row"><input type="file" id="file" accept=".mp3,.m4a,.wav,.ogg,.oga,.flac,.aac,.opus,audio/*"><button id="upload">add this recording</button><span class="tag" id="uploadsay"></span></div>
   <div class="row"><select id="preview"></select><button id="hear">play it here</button><button id="hush" disabled>pause</button><button id="halt" disabled>stop</button><input id="seek" type="range" min="0" max="0" step="1" value="0" disabled aria-label="how far into it you are"><span class="tag" id="hearsay">nothing playing</span></div>
+  <details class="finefold" open><summary>more info</summary>
   <div class="fine">That plays in this browser, out of the computer this page is open on, at the level
    that computer is already set to. There is no volume control here on purpose: the level on a computer
    belongs to whoever is sitting at it. The bar is not a level either - it is a place inside the
@@ -238,29 +504,41 @@ PAGE = """<!doctype html>
    puts a new recording there. Nothing overwrites a recording that is playing, so two recordings of
    the same adhans need two names. These boxes choose what a prayer starts with; the Recordings card
    below adds a recording to the end of a prayer's list, which is where a dua after the adhan goes.</div>
+  <div class="fine">The line under each clip says what that prayer asks its speakers for. Most prayers
+    have nothing of their own to say and read <b>levels: as usual</b>, which is the number in the Outputs
+    card. Press it and the rooms this prayer plays through open in a line of their own underneath, one
+    slider each, and only the rooms you move are written into the profile: a prayer that leaves a room
+    alone leaves that room's line out, so waking the kitchen for Fajr and nothing else is one line under
+    Fajr and none under the rest. A room inside a group is asked for its number over a connection of its
+    own while the call plays, and handed back to wherever its owner left it the moment the call ends; a
+    number written here outranks the one the Outputs card holds, which is the reason the line is here and
+    not there.</div>
+  </details>
  </section>
  <section class="wide"><h2>Recordings in the folder</h2>
   <div class="row"><span class="tag" id="libdir"></span></div>
-  <table id="libtbl"><thead><tr><th>name</th><th>size</th><th>played by</th><th>in the drawing</th><th>put it on an event</th></tr></thead><tbody id="library"></tbody></table>
+  <table id="libtbl"><thead><tr><th>name</th><th>size</th><th>Random</th><th>Event</th></tr></thead><tbody id="library"></tbody></table>
+  <details class="finefold" open><summary>more info</summary>
   <div class="fine">Every row is a file in <code>media_dir</code>, and that folder is the whole library:
-   there is no second list of recordings to keep in step with it, so a recording that is not in this table
-   is not in the profile either. The clip boxes in the Sound card choose which recording a prayer
-   <i>starts</i> with; <b>add to</b> here puts one at the <i>end</i> of that event's playlist, which is how
-   a prayer plays the adhan and then a dua. The <b>played by</b> column is also the reason a recording
-   refuses to be deleted: an event still naming it would fire at its time into a file that is no longer
-   there, which is the one failure this program exists to avoid.</div>
-  <div class="fine">The switch in the <b>in the drawing</b> column is only about events that say
-   <code>random: N</code>: off keeps the recording out of that pick and writes its name under
-   <code>library: exclude:</code>, while every playlist that names it by hand goes on playing it. A name in
-   the hold list whose file has gone still shows up here, with the absence said, so that it can be let go.
-   Deleting is the one thing on this page with no undo, so that button asks twice before it does anything.</div>
+   there is no second list of recordings to keep in step with it. <b>Event</b> puts the recording at the
+   <i>end</i> of an event's playlist, after the clip the Sound card chose to start that event with, which is
+   how a prayer plays the adhan and then a dua; taking it back off an event is a line in the profile, in
+   the card below. <b>delete</b> refuses while an event still names the file and says which one was in
+   the way, because the call would fire at its minute into a file that is no longer there. <b>Random</b> is whether the drawing may pick this recording for an event that
+   says <code>random: N</code>: off writes its name under <code>library: exclude:</code>, and every playlist
+   that names it by hand goes on playing it. A name that is held back but whose file has gone still shows up
+   here, with the absence said, so the hold can be let go. Deleting has no undo, so that button asks twice.
+   The README says how each of these lands in the profile.</div>
+  </details>
  </section>
  <section class="wide"><h2>Speakers on the network</h2>
   <div class="row"><button id="scan">look again</button><span class="tag" id="scansay">not looked yet</span></div>
-  <table><thead><tr><th>name</th><th>what</th><th>where</th><th>members</th><th></th></tr></thead><tbody id="found"></tbody></table>
+  <table id="foundtbl"><thead><tr><th>name</th><th>what</th><th>where</th><th>members</th><th></th></tr></thead><tbody id="found"></tbody></table>
+  <details class="finefold" open><summary>more info</summary>
   <div class="fine">A group's members are read back from the speakers themselves: the group record
    out on the network only names the one speaker in charge of it. A speaker that will not answer
    leaves the members unknown, which is not the same as nobody being in it.</div>
+  </details>
  </section>
  <section class="wide"><h2>Profile <span class="tag" id="cfgpath"></span></h2>
   <textarea id="yaml" spellcheck="false"></textarea>
@@ -271,13 +549,27 @@ PAGE = """<!doctype html>
 </main>
 <footer>
  <div id="credit"></div>
+ <details class="finefold" open><summary>more info</summary>
  <div class="fine">The Hijri date is tabular arithmetic, so it can sit a day either side of a
   moon sighting; <code>hijri_offset</code> in your profile lines it up with the calendar you
   follow. The day markers are decoration on the calendar, not a ruling about when anything is.</div>
+ </details>
 </footer>
+<!-- The lamp the script turns on when an ask has been in the air long enough to wonder
+     about. It never says which ask it is, because the page says that in the message line
+     once the ask is answered; its whole job is answering "is anything happening?". -->
+<div id="busy" role="status" hidden><span class="spin" aria-hidden="true"></span><span>still working</span></div>
 <script>
 let st=null;
 const $=s=>document.querySelector(s);
+// The explanations under each card are written open in the markup and fold under one
+// gold line where the window is phone-width: under that width it is the words, not the
+// tables, that make a thumb scroll the page. A rotation or a resize refolds all of
+// them at once, and a wide window shows the summary line nowhere at all.
+const MQN=matchMedia('(max-width:620px)');
+function foldFines(){ for(const d of document.querySelectorAll('details.finefold')) d.open=!MQN.matches; }
+foldFines();
+MQN.addEventListener('change',foldFines);
 // Speaker names come from the network, so every one of them is escaped on its way
 // into the page - apostrophes included, because "Sara's Nest" is a perfectly
 // ordinary thing to call a speaker and a quote is exactly what closes an attribute.
@@ -294,11 +586,25 @@ const AR={fajr:'الفجر',sunrise:'الشروق',dhuhr:'الظهر',asr:'ال�
 // point is to see the difference.
 const ORDER=['fajr','sunrise','dhuhr','asr','sunset','maghrib','isha','midnight',
  'true_night','shurf'];
+let waiting=0, lamp=null;
+// Every promise this page makes to the daemon goes through the one door below, so one
+// counter knows how many are still out there. The lamp is lit by a timer rather than by
+// the request itself: most asks come back in tens of milliseconds and never show it at all,
+// and only a wait long enough to wonder about - a look at the LAN, a profile being
+// rewritten, a recording handed to a speaker - does. It goes out when the last one is
+// answered, not the first, because two asks in the air are one wait to a person watching.
+function begun(){ if(waiting++||lamp) return;
+ lamp=setTimeout(()=>{ lamp=null; const b=$('#busy'); if(b) b.hidden=false; },350); }
+function ended(){ if(--waiting>0) return; waiting=0;
+ if(lamp){ clearTimeout(lamp); lamp=null; } const b=$('#busy'); if(b) b.hidden=true; }
 async function api(path,body){
- const r=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null});
- const j=await r.json().catch(()=>({error:'bad response'}));
- if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
- return j;
+ begun();
+ try{
+  const r=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null});
+  const j=await r.json().catch(()=>({error:'bad response'}));
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  return j;
+ } finally { ended(); }
 }
 function say(t,kind){ const m=$('#msg'); m.textContent=t; m.className=kind||''; }
 // The YAML box is the one place where you might be mid-edit, and a 60 second
@@ -311,6 +617,68 @@ function syncYaml(){
  ta.value=st.config_text;
  $('#cfgpath').textContent=path;
 }
+// This card is the timetable: two days of every prayer is fourteen lines, and the two questions anybody asks of this
+// card are "what happens next" and "what about tomorrow". So the list the daemon sends stays
+// whole and the card shows one day of it: the strip above the table says which day, the two
+// arrows walk it forwards and back, and every day is the same rows with nothing taken out.
+// The day's name is said once in that strip instead of once on every line, which is what
+// makes the first column a clock, and the occasions of a day ride beside its name there.
+// The card opens on the day the household is standing in. Which day is showing then lives in
+// a variable rather than coming from the clock on the wall, because this page redraws itself
+// every few seconds and a card that jumped back to today in the middle of somebody reading
+// tomorrow is worse than the wall it replaced; the refresh button is what starts over.
+let upday=null, upall=false;
+function upDays(){
+ const order=[], by={};
+ st.upcoming.forEach(e=>{ if(!by[e.date]){ by[e.date]=[]; order.push(e.date); } by[e.date].push(e); });
+ return {order, by};
+}
+// The day the daemon calls today comes from the day list and not from the browser: the calls
+// are made in the profile's timezone, and a browser reports whatever the phone was set to.
+function upNow(){ return (st.days&&st.days[0]&&st.days[0].date)||''; }
+function upToday(order){
+ // Open on today, not on the first line of the list: the list can start a day back, because a
+ // call that runs past midnight belongs to the evening that started it. And at eleven at night
+ // today has nothing left in it, so the answer is the next day that has anything at all.
+ const d=upNow();
+ for(const day of order) if(day>=d) return day;
+ return order[order.length-1];
+}
+function upMarks(date){
+ const day=(st.days||[]).filter(x=>x.date===date)[0]||{};
+ return (day.marks||[]).map(m=>` <span class="mark ${esc(m.kind)}">${esc(m.name)}${m.ar?` <span class="ar">${esc(m.ar)}</span>`:''}</span>`).join('');
+}
+function upGo(n){
+ if(upall) return;                 // every day is on the page already; the arrows, and the keys, rest
+ const order=upDays().order;
+ if(!order.length) return;
+ let i=order.indexOf(upday);
+ if(i<0) i=order.indexOf(upToday(order)); // the day being shown has gone away: start from today
+ i+=n;
+ if(i<0 || i>=order.length) return; // the first day and the last day are the ends; nothing wraps
+ upday=order[i];
+ renderUp();
+}
+function renderUp(){
+ const {order, by}=upDays();
+ const prev=$('#upprev'), next=$('#upnext'), word=$('#upday'), all=$('#upalldays');
+ if(!order.length){ prev.disabled=next.disabled=true; word.textContent='';
+  $('#upcoming').innerHTML='<tr><td colspan=4>nothing scheduled in the next two days</td></tr>'; return; }
+ if(upday===null || !by[upday]) upday=upToday(order);  // opening on today, or a reload that moved the shown day out of the list
+ const i=order.indexOf(upday), rows=by[upday];
+ // Every day at once is the whole list, so there is no day left to walk to: the arrows sit
+ // out that view rather than moving a word nobody is looking at.
+ prev.disabled=upall||i===0; next.disabled=upall||i===order.length-1;
+ all.textContent=upall?'just this day':'all the days';
+ // "%a %d %b %H:%M" is the shape the daemon puts in `when`: the last five characters are the
+ // clock, and everything before them is the day, which the strip above the table says once,
+ // with that day's occasions after it - the same pills the day headers used to carry.
+ word.innerHTML=upall
+  ? esc('all of it, from '+st.upcoming[0].when.slice(0,-6)+' to '+st.upcoming[st.upcoming.length-1].when.slice(0,-6))
+  : esc(rows[0].when.slice(0,-6))+(upday===upNow()?' (today)':'')+upMarks(upday);
+ const shown=upall?st.upcoming:rows;
+ $('#upcoming').innerHTML=shown.map(e=>`<tr><td>${esc(upall?e.when:e.when.slice(-5))}</td><td>${esc(e.name)}<span class="tag">${esc(e.at)}${e.offset_min?` ${e.offset_min>0?'+':''}${e.offset_min}m`:''}</span></td><td>${esc(e.targets.join(', '))||'(none enabled)'}</td><td>${esc(e.media.concat(e.random?[e.random+' at random']:[]).join(' + '))}</td></tr>`).join('');
+}
 function render(){
  const nx=st.upcoming[0]||null;
  $('#top').textContent=`${st.method.label} · ${st.location.latitude.toFixed(2)}, ${st.location.longitude.toFixed(2)} · ${st.location.timezone} · asr ${st.method.asr} · ${st.method.midnight} midnight · ${st.now}`+(st.read_only?' · read-only':'');
@@ -322,32 +690,50 @@ function render(){
  // A brand new install sees this page long before it sees a log file, so the two
  // things that make a quiet muezzin are said here as well as in the daemon's log.
  $('#notices').innerHTML=(st.notices||[]).map(n=>`<div class="notice">${esc(n)}</div>`).join('');
- $('#days').innerHTML=st.days.map((d,i)=>
-  `<div class="day${i===0?' today':''}"><div class="dayhead"><h2>${esc(d.weekday)} ${esc(d.date)}</h2>`
-  +` <span class="hij">${esc(d.hijri)}</span> <span class="ar">${esc(d.hijri_ar)}</span>`
-  +(d.marks||[]).map(m=>` <span class="mark ${esc(m.kind)}">${esc(m.name)}${m.ar?` <span class="ar">${esc(m.ar)}</span>`:''}</span>`).join('')
-  +`</div><table>${ORDER.filter(k=>k in d.times).map(k=>[k,d.times[k]]).map(([k,v])=>
-    `<tr class="${nx&&nx.at===k&&nx.date===d.date?'now':''}"><td class="pl">${esc(NAME[k]||k)}</td>`
-    +`<td class="ar">${esc(AR[k]||'')}</td><td class="t">${esc(v)}</td></tr>`).join('')}</table></div>`).join('');
- $('#upcoming').innerHTML=st.upcoming.map(e=>`<tr><td>${esc(e.when)}</td><td>${esc(e.name)}<span class="tag">${esc(e.at)}${e.offset_min?` ${e.offset_min>0?'+':''}${e.offset_min}m`:''}</span></td><td>${esc(e.targets.join(', '))||'(none enabled)'}</td><td>${esc(e.media.concat(e.random?[e.random+' at random']:[]).join(' + '))}</td></tr>`).join('')||'<tr><td colspan=4>nothing scheduled in the next two days</td></tr>';
+ renderUp();
  // A test is a recording that is about to come out of a real speaker, so the row that
  // sent one grows a stop button while it is going: 40 seconds into a recitation
  // nobody wanted should not have to be listened to to the end, and a speaker left
  // holding a stream that will not end should be let go. The daemon takes one test at a
  // time, which is why one name is enough to remember.
  let testing=null;
- $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td>${o.takes_volume&&o.target_kind=='group'?'<span class="unknown">a group: not ours</span>':o.takes_volume?`<input type="range" min="0" max="1" step="0.05" data-level="${esc(o.name)}" value="${o.volume==null?0.5:o.volume}" aria-label="how loud to ask ${esc(o.name)} for"> <span class="tag">${o.volume==null?'not set':Math.round(o.volume*100)+'%'}</span>`:'<span class="unknown">not ours to ask</span>'}</td><td><button data-test="${esc(o.name)}">test</button><button data-stop="${esc(o.name)}"${o.name===testing?'':' hidden'}>stop</button></td></tr>`).join('');
+ // Under a group's row, one row per room inside it, in the same columns as the group's own
+ // row: a room's slider lands under the group's slider, because it is the same kind of
+ // number, and the button that takes that room's line out of the profile sits in the last
+ // column with a row's other buttons. They used to be one long line, which ran past the
+ // edge of the card: a name, a slider and a number is a row, and a row is what a table is
+ // for. A room with a level of its own shows that number; a room without one shows the
+ // group's number, because that is what it will be asked for. What each room goes back to
+ // is not shown, and not because it is secret: it is nowhere written, because the daemon
+ // reads it off the speaker when the call starts and hands it back when the call ends.
+ const roomrow=o=>(o.rooms||[]).map(r=>`<tr class="roomrow"><td class="roomname">${esc(r.name)}</td><td class="why">${r.seen?'':'<span class="unknown">no speaker by that name out there</span>'}</td><td></td><td></td><td><input type="range" min="0" max="1" step="0.05" data-room="${esc(o.name)}" data-room-name="${esc(r.name)}" value="${r.volume==null?(o.volume==null?0.5:o.volume):r.volume}" aria-label="how loud to ask ${esc(r.name)}, inside ${esc(o.name)}, to come out at"> <span class="tag">${r.volume==null?'same as the group':Math.round(r.volume*100)+'%'}</span></td><td>${r.volume==null?'':`<button data-room-clear="${esc(o.name)}" data-room-name="${esc(r.name)}">same as the group</button>`}</td></tr>`).join('');
+ $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td>${o.takes_volume?`<input type="range" min="0" max="1" step="0.05" data-level="${esc(o.name)}" value="${o.volume==null?0.5:o.volume}" aria-label="how loud to ask ${esc(o.name)} for"> <span class="tag">${o.volume==null?'not set':Math.round(o.volume*100)+'%'}</span>${o.target_kind=='group'?' <span class="unknown roomnote">every room inside, each back after</span>'+(o.rooms_known?'':' <span class="unknown why">no speaker would say which rooms are inside</span>'):''}`:'<span class="unknown why">not ours to ask</span>'}</td><td><button data-test="${esc(o.name)}">test</button><button data-stop="${esc(o.name)}"${o.name===testing?'':' hidden'}>stop</button></td></tr>${o.target_kind=='group'?roomrow(o):''}`).join('');
  // A slider for a level exists only where the daemon said it may: the state's takes_volume
  // comes from the backend class, so a computer - the one running this page, or a box on the
- // LAN - has no level to move, only words saying whose it is. The other half of the rule is
- // target_kind, which is what the last scan of the network called that name: a speaker group
- // is several speakers with several levels and no level of its own, and nothing outside the
- // Google Home app moves them together, so a group's row says so instead of offering a slider.
+ // LAN - has no level to move, only words saying whose it is. target_kind is what the last
+ // scan of the network called that name, and a group's row spells out what its number does.
+ // Measured on a real LAN, a level aimed at a group's own receiver moves a number inside it
+ // that the speakers behind it ignore, so muezzin asks every room inside over a connection of
+ // that room's own and hands each one back to its own level when the call ends.
  document.querySelectorAll('[data-level]').forEach(s=>s.onchange=()=>{ const out=s.dataset.level,
   level=Number(s.value), pct=Math.round(level*100); let vol=null;
   s.closest('td').querySelector('.tag').textContent=pct+'%';
   act(async()=>{ vol=await api('/api/output/volume',{name:out,volume:level}); },
    ()=>say(out+' will come out at '+pct+'% of its own scale, a test included','ok')); });
+ // A room's slider writes one members: line under the group's output: that room is asked for
+ // that number while a call plays, over a connection of its own, and goes back to wherever its
+ // owner had left it the moment the call ends. Leaving the room - taking its line out - is the
+ // only way it follows the group's number again, because there is no level that means "as it
+ // was": what it was at is a fact about the room, not a choice the profile can make in advance.
+ document.querySelectorAll('[data-room]').forEach(s=>s.onchange=()=>{ const out=s.dataset.room,
+  room=s.dataset.roomName, level=Number(s.value), pct=Math.round(level*100);
+  s.parentNode.querySelector('.tag').textContent=pct+'%';
+  act(async()=>{ await api('/api/output/room',{name:out,speaker:room,volume:level}); },
+   ()=>say(room+' inside '+out+' will come out at '+pct+'% while a call plays, and back to its own level afterwards','ok')); });
+ document.querySelectorAll('[data-room-clear]').forEach(b=>b.onclick=()=>{ const out=b.dataset.roomClear,
+  room=b.dataset.roomName;
+  act(async()=>{ await api('/api/output/room',{name:out,speaker:room,volume:''}); },
+   ()=>say(room+' has no level of its own again, so it is asked for what '+out+' is asked for','ok')); });
  // Only an output's switch carries data-name. A recording row uses data-hold for the
  // same look, because "let the random drawing pick this" is a different ask and needs
  // its own handler - one selector, one meaning.
@@ -386,7 +772,10 @@ function render(){
  renderMethod();renderSound();renderLibrary();renderFound();renderWhere();
  syncYaml();
  $('#save').disabled=$('#reload').disabled=st.read_only;
- document.querySelectorAll('.switch,[data-test],[data-stop],.rename,[data-level],[data-hold],[data-put],[data-put-go],[data-rm]').forEach(b=>b.disabled=st.read_only);
+ // The drawer's own button is not in this list, because opening it asks for nothing: a page
+// that cannot write should still be able to say what a prayer will be asked for, and the
+// sliders inside it are disabled the moment it is open.
+document.querySelectorAll('.switch,[data-test],[data-stop],.rename,[data-level],[data-room],[data-room-clear],[data-lv-set],[data-lv-clear],[data-hold],[data-put],[data-put-go],[data-rm]').forEach(b=>b.disabled=st.read_only);
  // Checking numbers and finding a place stay live on a read-only panel: looking
  // changes nothing. Only the buttons that write a line into the profile go dark.
  ['#preset','#asr','#applymethod','#hijminus','#hijplus','#applysound','#upload','#file','#writewhere'].forEach(s=>{ $(s).disabled=st.read_only; });
@@ -419,8 +808,14 @@ function clipFor(at,friday){
  const rows=(st.events||[]).filter(e=>e.at===at&&!!(e.days&&e.days.length)===friday);
  return rows[0]||null;
 }
+// Picks waiting for apply live here, not only in the boxes: a redraw puts them back where
+// they were, so the levels drawer can open over a box that is dirty instead of the whole
+// card refusing to change until the picks are applied. The profile does not know them yet,
+// which is why renderSound alone would show the old picks.
+let pend={};
 function clipSelect(at,friday){
- const ev=clipFor(at,friday), cur=ev&&ev.media&&ev.media.length?ev.media[0]:'';
+ const ev=clipFor(at,friday), pk=at+':'+(friday?1:0),
+  cur=pk in pend?pend[pk]:(ev&&ev.media&&ev.media.length?ev.media[0]:'');
  const files=(st.media_files||[]).slice();
  if(cur&&files.indexOf(cur)<0) files.unshift(cur);
  return `<select data-at="${at}" data-friday="${friday?1:0}">`
@@ -428,24 +823,112 @@ function clipSelect(at,friday){
   +`</select>`+((ev&&ev.media&&ev.media.length>1)?` <span class="tag">${ev.media.length} clips</span>`:'')
   +((ev&&ev.offset_min)?` <span class="tag">${ev.offset_min>0?'+':''}${ev.offset_min}m</span>`:'');
 }
+ // What a prayer asks its speakers for lives in a drawer rather than a column, because most
+ // prayers have nothing of their own to say: the summary on the row is one line however many
+ // rooms the house has, and the sliders appear only for the prayer somebody is looking at.
+ // The rooms come from the panel, which knows which outputs this prayer reaches and what the
+ // last scan said was inside them, so no speaker name is ever typed into a box here.
+function lvKey(at,friday){ return at+':'+(friday?1:0); }
+function lvSum(ev){
+ const moved=(ev.levels||[]).filter(r=>r.written!=null);
+ if(moved.length>2) return moved.length+' rooms tuned';
+ // The word "speaker" is in these names because it is what the speaker calls itself on the
+ // network, and a summary is the one place on this page where that word is only in the way.
+ return moved.map(r=>esc(r.name.replace(/ speaker$/i,'')+' '+Math.round(r.written*100)+'%')).join(' ');
+}
+function lvChip(ev,at,friday,open){
+ if(!ev) return '';
+ // A prayer with no rooms of its own still has a number of its own if somebody wrote one
+ // under it by hand, and the summary says which of the two it is running on.
+ const said=lvSum(ev)||(ev.volume==null?'as usual':'every room '+Math.round(ev.volume*100)+'%');
+ return `<button class="lv" data-lv="${lvKey(at,friday)}" aria-expanded="${open===lvKey(at,friday)}"`
+  +`>levels: ${said}</button>`;
+}
+// The figure beside a slider is what the speaker will be asked for at this prayer, and the
+// figure in the second chip is what it would be asked for with nothing written here: the
+// panel works both out with the same rules the backend plays by, so a person moves a slider
+// knowing which of the house's numbers it covers. A name the scan cannot see stays on the
+// line rather than vanishing, because a line nobody can undo has to be edited out of the
+// file, and the file has no refusals in it.
+function lvRow(ev,at,friday){
+ const lv=ev.levels||[], lvk=lvKey(at,friday);
+ if(!lv.length) return `<tr class="lvrow"><td colspan=4><div class="lvline"><span class="unknown">`
+  +`nothing this prayer plays through is a speaker muezzin casts to, so there is no level for it to ask: `
+  +`the level of a computer belongs to whoever is sitting at it</span></div></td></tr>`;
+ return `<tr class="lvrow"><td colspan=4>`+lv.map(r=>
+  `<div class="lvline"><span class="lvname">${esc(r.name)}</span>`
+  +(r.output?'':' <span class="unknown">not a speaker this prayer plays through</span>')
+  +(r.seen?'':' <span class="unknown">no speaker by that name out there</span>')
+  +`<input type="range" min="0" max="1" step="0.05" data-lv-set="${lvk}" data-lv-name="${esc(r.name)}"`
+  +` data-lv-group="${r.group?1:0}"`
+  +` value="${r.written==null?r.tonight:r.written}" aria-label="how loud to ask ${esc(r.name)} for at ${esc(at)}">`
+  +` <span class="tag">${r.written==null?'as usual':Math.round(r.written*100)+'%'}</span>`
+  +` <span class="tag asked">${Math.round(r.tonight*100)+'% at this call'}</span>`
+  +(r.written==null?'':` <button data-lv-clear="${lvk}" data-lv-name="${esc(r.name)}">same as usual</button>`)
+  +`</div>`).join('')+`</td></tr>`;
+}
 function renderSound(){
  const box=$('#sound');
- if(box.dataset.dirty==='1'){ $('#soundsay').textContent='your picks are waiting for apply'; return; }
+ // A box with picks waiting for apply is rebuilt like any other: the picks come back out
+ // of pend above, and a levels drawer that opened on an old drawing is a drawer that lies.
  const times=(st.days&&st.days[0]&&st.days[0].times)||{};
- box.innerHTML=ORDER.filter(k=>k in times).map(k=>
-  `<tr><td>${esc(NAME[k]||k)}</td><td class="ar">${esc(AR[k]||'')}</td>`
-  +`<td>${clipSelect(k,false)}</td><td>${clipSelect(k,true)}</td></tr>`).join('')
+ const open=box.dataset.open||'';
+ box.innerHTML=ORDER.filter(k=>k in times).map(k=>{
+  const day=clipFor(k,false), fri=clipFor(k,true);
+  let row=`<tr><td>${esc(NAME[k]||k)}</td><td class="ar">${esc(AR[k]||'')}</td>`
+   +`<td>${clipSelect(k,false)}${lvChip(day,k,false,open)}</td>`
+   +`<td>${clipSelect(k,true)}${lvChip(fri,k,true,open)}</td></tr>`;
+  if(open===lvKey(k,false)&&day) row+=lvRow(day,k,false);
+  else if(open===lvKey(k,true)&&fri) row+=lvRow(fri,k,true);
+  return row; }).join('')
   ||'<tr><td colspan=4>no times to put clips on</td></tr>';
  document.querySelectorAll('[data-at]').forEach(s=>s.onchange=()=>{
-  box.dataset.dirty='1'; $('#soundsay').textContent='your picks are waiting for apply';
+  box.dataset.dirty='1'; pend[s.dataset.at+':'+(s.dataset.friday==='1'?1:0)]=s.value;
+  $('#soundsay').textContent='your picks are waiting for apply';
   if(st.read_only) s.disabled=true;
  });
- $('#soundsay').textContent='nothing changed';
+  // A prayer's own levels are a drawer: pressed open under the prayer they belong to, holding
+  // only the rooms that prayer plays through. Which one is open is kept on the table element
+  // itself, because that element outlives every redraw of its rows and a drawer that closed
+  // itself on the next poll would shut in someone's face while their hand was on a slider.
+  document.querySelectorAll('[data-lv]').forEach(b=>b.onclick=()=>{
+   const k=b.dataset.lv;
+   box.dataset.open=box.dataset.open===k?'':k;
+   renderSound(); });
+  // One slider writes one line under this prayer, and only for the rooms touched: the rest go
+  // on following the Outputs card, which is why tuning one prayer adds one line to the
+  // profile rather than a paragraph. What happens afterwards is not the same two ways round,
+  // and the sentence says which way: a room of a group is borrowed for the length of the call
+  // and handed back over a connection of its own, while a speaker the profile points at
+  // directly keeps the level it was asked for, the way its own number on the Outputs card
+  // always has.
+  document.querySelectorAll('[data-lv-set]').forEach(s=>s.onchange=()=>{
+   const at=s.dataset.lvSet.split(':')[0], fri=s.dataset.lvSet.split(':')[1]==='1',
+    room=s.dataset.lvName, level=Number(s.value), pct=Math.round(level*100);
+   const ends=s.dataset.lvGroup==='1' ? ' and back to its own level when the call ends'
+    : ' and it keeps that level after the call, the way a speaker of its own always does';
+   s.parentNode.querySelector('.tag').textContent=pct+'%';
+   s.parentNode.querySelector('.tag.asked').textContent=pct+'% at this call';
+   act(async()=>{ await api('/api/event/room',{at,friday:fri,speaker:room,volume:level}); },
+    ()=>say(room+' will come out at '+pct+'% for '+at+' alone,'+ends,'ok')); });
+  // Taking the line out is the only way back, for the same reason it is with a room on the
+  // Outputs card: where a speaker was left is a fact about the speaker, not a number this
+  // profile could write down in advance.
+  document.querySelectorAll('[data-lv-clear]').forEach(b=>b.onclick=()=>{
+   const at=b.dataset.lvClear.split(':')[0], fri=b.dataset.lvClear.split(':')[1]==='1',
+    room=b.dataset.lvName;
+   act(async()=>{ await api('/api/event/room',{at,friday:fri,speaker:room,volume:''}); },
+    ()=>say(room+' has no level for '+at+' of its own again, so it is asked for what the Outputs card asks','ok')); });
+ $('#soundsay').textContent=box.dataset.dirty==='1'?'your picks are waiting for apply':'nothing changed';
 }
 function renderLibrary(){
  // The folder is the library, so this is a listing of what is on the disk rather than
- // a list of choices: each row says how big the recording is, which events hold its
- // name, and whether the random drawing may pick it. The names are what matters, not
+ // a list of choices: each row says how big the recording is, whether the random drawing
+ // may pick it, and which event it can be put on. Which events already hold its name is not said
+ // over again in a column of its own: putting a recording on an event happens in this row and
+ // taking it back off is a line in the profile, in the card below this one, and a delete that
+ // would leave one behind is refused by the daemon,
+ // which answers with the event that was in the way. The names are what matters, not
  // the paths - the daemon only ever reads one level deep in media_dir - so a row is
  // addressed by its name and the profile is written by that name too. Sizes are
  // rounded up, because a recording that reads 0 KB is a recording nobody trusts.
@@ -453,7 +936,6 @@ function renderLibrary(){
  const lib=st.media_library||[];
  const size=b=>b==null?'?':b>=1048576?(b/1048576).toFixed(1)+' MB':Math.max(1,Math.round(b/1024))+' KB';
  const rows=lib.map(f=>{
-  const who=f.named_by.length?f.named_by.map(esc).join(', '):'<span class="unknown">nothing plays it</span>';
   const on=`<button class="switch" data-hold="${esc(f.name)}" aria-checked="${f.excluded?'false':'true'}"`
    +` aria-label="let the drawing pick ${esc(f.name)}"></button>`;
   // A held-back name whose file has gone has nothing to play, add or delete: there is
@@ -461,9 +943,9 @@ function renderLibrary(){
   const put=f.missing?'<span class="unknown">the file is gone from the folder</span>'
    :`<select data-put="${esc(f.name)}">${(st.events||[]).map(e=>`<option>${esc(e.name)}</option>`).join('')||'<option value="">(no events yet)</option>'}</select>`
    +`<button data-put-go="${esc(f.name)}">add to</button><button data-rm="${esc(f.name)}">delete</button>`;
-  return `<tr><td>${esc(f.name)}</td><td>${size(f.bytes)}</td><td>${who}</td><td>${on}</td><td>${put}</td></tr>`;
+  return `<tr><td>${esc(f.name)}</td><td>${size(f.bytes)}</td><td>${on}</td><td>${put}</td></tr>`;
  }).join('');
- box.innerHTML=rows||`<tr><td colspan=5>nothing in ${esc(st.media_dir)} yet</td></tr>`;
+ box.innerHTML=rows||`<tr><td colspan=4>nothing in ${esc(st.media_dir)} yet</td></tr>`;
  $('#libdir').textContent=lib.length+(lib.length===1?' recording in ':' recordings in ')+st.media_dir;
  // aria-checked is "in the drawing", so a switch that is on and gets pressed is being
  // switched off: the ask is to hold it back.
@@ -615,7 +1097,10 @@ async function look(f){
  showWhere(); drawMap();
 }
 function showFound(){
- const box=$('#found');
+ // #hits, not #found: that name belongs to the speaker table below the map, and the
+ // first element carrying a name is the one a page hands the write to. Sharing it drew
+ // these rows over the geocoder's own box and left the speaker card alone.
+ const box=$('#hits');
  if(!FH.length){
   // The answer belongs under the box the words were typed into. A banner at the top of a
   // long page is easy to miss, and a list that stays empty reads as a page that did
@@ -637,7 +1122,7 @@ function showFound(){
   if(TA)$('#tryagain').onclick=()=>{ $('#place').value=TA; $('#findit').click(); };
   return;
  }
- let h='<table><tbody>';
+ let h='<table id="hitstbl"><tbody>';
  FH.forEach((f,i)=>{
   h+='<tr><td>'+esc(f.label)+'</td><td class="members">'+f.latitude+', '+f.longitude
    +'</td><td class="members">'+esc(f.note)+'</td><td><button data-look="'+i
@@ -752,7 +1237,7 @@ async function load(){ st=await api('/api/state'); if(!SC&&st.scan_at) SC=await 
  else if(!SC&&st.outputs.some(o=>o.takes_volume)) api('/api/speakers').then(r=>{ if(!r.scanning){ SC=r; renderFound(); render(); } });
  render(); }
 $('#yaml').addEventListener('input',()=>{ $('#yaml').dataset.dirty='1'; });
-$('#refresh').onclick=()=>act(load);
+$('#refresh').onclick=()=>act(()=>{ upday=null; });
 $('#save').onclick=()=>act(()=>api('/api/config',{text:$('#yaml').value}),()=>{ $('#yaml').dataset.dirty=''; say('saved and reloaded','ok'); });
 $('#reload').onclick=()=>act(()=>api('/api/reload'),()=>{ $('#yaml').dataset.dirty=''; say('reloaded from disk','ok'); });
 $('#applymethod').onclick=()=>act(async()=>{ const j=await applyMethod(); note=j.still_overridden||[]; },
@@ -760,8 +1245,24 @@ $('#applymethod').onclick=()=>act(async()=>{ const j=await applyMethod(); note=j
                    :'method written; the timetable on this page is the new one','ok'));
 $('#hijminus').onclick=()=>act(()=>api('/api/hijri',{days:st.hijri_offset-1}),()=>say('the Hijri date on this page moved','ok'));
 $('#hijplus').onclick=()=>act(()=>api('/api/hijri',{days:st.hijri_offset+1}),()=>say('the Hijri date on this page moved','ok'));
+// The day the Events card is showing is local to this page: nothing is fetched and
+// nothing is written, so these three stay live when the panel is read-only. The keyboard's
+// own left and right walk the same way, but not while the cursor is inside something you
+// type into - the YAML box, a speaker's name, a dropdown of an event - because an arrow key
+// in one of those belongs to that control and not to this card.
+$('#upprev').onclick=()=>upGo(-1);
+$('#upnext').onclick=()=>upGo(1);
+$('#upalldays').onclick=()=>{ upall=!upall; renderUp(); };
+document.addEventListener('keydown',e=>{
+ if(e.altKey||e.ctrlKey||e.metaKey) return;
+ const tag=e.target&&e.target.tagName;
+ if(tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA') return;
+ const k=e.key;
+ if(k==='ArrowLeft') upGo(-1);
+ else if(k==='ArrowRight') upGo(1);
+});
 $('#applysound').onclick=()=>act(async()=>{ sent=await applySound(); },
- ()=>{ $('#sound').dataset.dirty=''; say(sent?('wrote '+sent+' clip'+(sent>1?'s':'')+': the daemon reloaded with them')
+ ()=>{ $('#sound').dataset.dirty=''; pend={}; say(sent?('wrote '+sent+' clip'+(sent>1?'s':'')+': the daemon reloaded with them')
                                        :'nothing needed writing','ok'); });
 // Where the house is. The three buttons are deliberately separate: checking the
 // numbers is a look, finding a place is a question to somebody further away, and
