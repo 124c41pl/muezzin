@@ -532,3 +532,45 @@ def test_a_map_written_on_one_line_is_refused_rather_than_unpicked():
     with pytest.raises(ValueError) as exc:
         ye.edit_entry_map(flow, "outputs", 0, "members", "Kitchen speaker", 0.6)
     assert "one per line" in str(exc.value)
+
+
+def test_dropping_a_field_takes_only_that_line_when_it_is_a_scalar():
+    """`random: 0` is not how the file says "no drawing": the line comes out. The note
+    at the end of it was written about that number, so it has nothing left to be about."""
+    text = ('events:\n  - name: fajr-adhan\n    at: fajr\n'
+            '    media: [fajr.mp3]\n    random: 2  # a different one every morning\n'
+            '    levels:\n      Kitchen speaker: 0.4\n')
+    new = ye.drop_field(text, "events", 0, "random")
+    assert "random" not in new
+    assert "different one every morning" not in new, "the note went with its number"
+    assert "media: [fajr.mp3]" in new, "the line above the one being taken is nobody's business"
+    assert "Kitchen speaker: 0.4" in new, "and the field below it stands on its own"
+
+
+def test_dropping_a_field_takes_the_block_written_under_it():
+    """A `media:` written one file per line owns the lines under it; a block with no
+    field above it is not a block, it is a leftover the loader reads as a syntax error."""
+    text = ('events:\n  - name: maghrib-dua\n    at: maghrib\n    media:\n'
+            '      - one.mp3\n      - two.mp3\n    targets: [outbox]\n')
+    new = ye.drop_field(text, "events", 0, "media")
+    assert "media" not in new and "one.mp3" not in new and "two.mp3" not in new
+    assert "targets: [outbox]" in new
+
+
+def test_a_comment_on_a_line_of_its_own_survives_the_field_it_sits_under():
+    """Somebody wrote that note, and it reads just as true one line lower: deleting a
+    field is not permission to delete what a person annotated around it."""
+    text = ('events:\n  - name: maghrib-dua\n    at: maghrib\n'
+            '    random: 3\n    # the kids picked these, keep the note\n'
+            '    levels:\n      Kitchen speaker: 0.4\n')
+    new = ye.drop_field(text, "events", 0, "random")
+    assert "random" not in new
+    assert "# the kids picked these" in new, "the note outlives the line it followed"
+    assert "Kitchen speaker: 0.4" in new, "and nothing above or below shifted"
+
+
+def test_dropping_a_field_that_is_not_there_changes_nothing():
+    """The web layer calls this after an edit that may or may not have just written the
+    field; a second pass over a file that no longer holds it must be a no-op."""
+    text = 'events:\n  - name: fajr-adhan\n    at: fajr\n    media: [fajr.mp3]\n'
+    assert ye.drop_field(text, "events", 0, "random") == text

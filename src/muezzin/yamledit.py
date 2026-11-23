@@ -697,6 +697,45 @@ def delete_entry(text, key, index):
         end += 1
     return "\n".join(lines[:start] + lines[end:])
 
+
+def drop_field(text, key, index, field):
+    """Take one field's line out of one entry, and whatever was written under it.
+
+    This is how "no drawing" and "no clip" leave the file: `random: 0` and
+    `media: []` are lines that mean nothing to the loader, and a line that means
+    nothing is noise the next person has to decode. The field's own line goes, and
+    so does its block - the indented lines under a `media:` written one per line -
+    because a block with no field above it is not a block, it is a leftover. A note
+    at the end of the line being taken out goes with it, because it had nothing else
+    it was written about; a comment on a line of its own belongs to the person who
+    wrote it and stays where it was.
+    """
+    rows = entries(text, key)
+    if not 0 <= index < len(rows):
+        raise IndexError("no such entry")
+    row = rows[index]
+    column = _key_indent(row["text"])
+    out = row["text"].split("\n")
+    hit = next((i for i, line in enumerate(out) if _at(line, field, column)), None)
+    if hit is None:
+        return text
+    gone = {hit}
+    j = hit + 1
+    while j < len(out):
+        body = out[j].strip()
+        if not body or body.startswith("#"):
+            j += 1
+            continue
+        col = len(out[j]) - len(out[j].lstrip(" \t"))
+        if col <= column:
+            break
+        gone.add(j)
+        j += 1
+    out = [line for i, line in enumerate(out) if i not in gone]
+    lines = _split(text)
+    return "\n".join(lines[:row["start"]] + out + lines[row["end"]:])
+
+
 def _at(line, field, column):
     """The field name must start at `column`, not at any indent."""
     m = re.match(r"^(?P<pre>[ \t]*(?:-[ \t]+)?)" + _kpat(field) + r":(\s|$)", line)
