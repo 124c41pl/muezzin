@@ -2,8 +2,12 @@
 on rather than a stack trace."""
 from __future__ import annotations
 
+import errno
+import socket
+
 import pytest
 
+from muezzin import cli, net, web
 from muezzin.cli import STARTER, _fmt, main, panel_address, starter_warnings
 from muezzin.config import load_profile
 
@@ -223,3 +227,175 @@ def test_the_log_line_names_an_address_a_phone_can_reach():
     second = inside.split("\n", 1)[1]
     assert "8020" in second and "your network" in second, "the port to dial from elsewhere"
     assert "container" in second, second
+
+
+# ---- ports from the environment ---------------------------------------------
+#
+# The reason these exist is the second container. An image arrives with its
+# arguments already written, so a person who already has muezzin on 8020 and wants
+# a second one on the same machine has one knob left: the environment. What the
+# tests below pin down is which of the two ways to say a port wins, and what a
+# wrong one costs - because both answers are invisible until somebody's page is on
+# a port they never chose.
+
+def _starter(tmp_path):
+    path = tmp_path / "muezzin.yaml"
+    assert main(["init", "-c", str(path)]) == 0
+    return path
+
+
+def test_the_environment_moves_the_page_when_the_flag_names_no_number(tmp_path, monkeypatch):
+    """`--web` bare means "the page runs, you pick the port", and the container's
+    default command says exactly that. So MUEZZIN_WEB_PORT is the whole change
+    needed to run a second daemon beside the first."""
+    path = _starter(tmp_path)
+    seen = {}
+    monkeypatch.setattr(cli, "cmd_daemon", lambda *a, **k: seen.update(web=a[1]) or 0)
+    monkeypatch.setenv("MUEZZIN_WEB_PORT", "8080")
+    assert main(["daemon", "-c", str(path), "--web"]) == 0
+    assert seen["web"] == 8080, "the container could not move off a port its neighbour has"
+
+
+def test_a_port_said_out_loud_on_the_command_line_beats_the_environment(tmp_path, monkeypatch):
+    """The other way round would be a compose file whose own `command:` is quietly
+    overruled by a variable inherited from a shell profile or a CI runner."""
+    path = _starter(tmp_path)
+    seen = {}
+    monkeypatch.setattr(cli, "cmd_daemon", lambda *a, **k: seen.update(web=a[1]) or 0)
+    monkeypatch.setenv("MUEZZIN_WEB_PORT", "8080")
+    assert main(["daemon", "-c", str(path), "--web", "9000"]) == 0
+    assert seen["web"] == 9000, "an argument the person typed lost to a variable they did not"
+
+
+def test_the_environment_names_a_port_but_never_opens_the_page(tmp_path, monkeypatch):
+    """A variable chooses a number; the flag decides whether there is a page at all.
+    The page has no login, so a variable set somewhere upstream must not be able to
+    start one inside a container that was asked only to play."""
+    path = _starter(tmp_path)
+    seen = {}
+    monkeypatch.setattr(cli, "cmd_daemon", lambda *a, **k: seen.update(web=a[1]) or 0)
+    monkeypatch.setenv("MUEZZIN_WEB_PORT", "8080")
+    assert main(["daemon", "-c", str(path)]) == 0
+    assert seen["web"] is None, "an unauthenticated page appeared out of an environment variable"
+
+
+def test_zero_in_the_variable_means_a_free_port_not_the_default(tmp_path, monkeypatch):
+    """0 is an answer, not an absence, and it is the answer for whoever would rather
+    not keep a port ledger for the two daemons on one machine. A parser that tested
+    the variable for truthiness would quietly answer 8020 instead."""
+    path = _starter(tmp_path)
+    seen = {}
+    monkeypatch.setattr(cli, "cmd_daemon", lambda *a, **k: seen.update(web=a[1]) or 0)
+    monkeypatch.setattr(cli, "cmd_web", lambda *a, **k: seen.update(port=a[1]) or 0)
+    monkeypatch.setenv("MUEZZIN_WEB_PORT", "0")
+    assert main(["daemon", "-c", str(path), "--web"]) == 0
+    assert seen["web"] == 0, "the variable said take a free port; the parser said 8020"
+    assert main(["web", "-c", str(path)]) == 0
+    assert seen["port"] == 0
+
+
+def test_the_page_only_command_takes_its_port_from_the_environment(tmp_path, monkeypatch):
+    """`muezzin web` carries a default rather than a flag, so the variable has to be
+    read where that default is built."""
+    path = _starter(tmp_path)
+    seen = {}
+    monkeypatch.setattr(cli, "cmd_web", lambda *a, **k: seen.update(port=a[1]) or 0)
+    monkeypatch.setenv("MUEZZIN_WEB_PORT", "8080")
+    assert main(["web", "-c", str(path)]) == 0
+    assert seen["port"] == 8080
+
+
+def test_two_boxes_on_one_machine_each_get_their_own_port(tmp_path, monkeypatch):
+    """Boxes announce the port they answer on, so a moved port is not a lost
+    speaker: discovery finds it either way. What has to differ is the port, and the
+    name, and both are per-container choices."""
+    seen = {}
+    monkeypatch.setattr(cli, "cmd_box", lambda *a, **k: seen.update(port=a[1]) or 0)
+    monkeypatch.delenv("MUEZZIN_BOX_PORT", raising=False)
+    assert main(["box", "--name", "attic-box"]) == 0
+    assert seen["port"] == 8090, "the ordinary default, so nothing changes for one box"
+    monkeypatch.setenv("MUEZZIN_BOX_PORT", "8123")
+    assert main(["box", "--name", "hall-box"]) == 0
+    assert seen["port"] == 8123
+
+
+def test_a_port_that_is_not_a_port_names_the_variable_it_came_out_of(tmp_path, capsys, monkeypatch):
+    """Found at the socket this mistake is an OSError about an address family, with
+    nothing in it naming what was typed; the value came from a box on a keyboard
+    somewhere, so the message has to say so."""
+    path = _starter(tmp_path)
+    for wrong in ("eighty", "70000", "80.5"):
+        monkeypatch.setenv("MUEZZIN_WEB_PORT", wrong)
+        assert main(["times", "-c", str(path)]) == 2, wrong
+        err = capsys.readouterr().err
+        assert "MUEZZIN_WEB_PORT" in err and wrong in err, err
+        assert "Traceback" not in err, err
+
+
+# ---- the port somebody else already has ---------------------------------------
+
+def _fake_clash(code: int) -> OSError:
+    exc = OSError(f"a clash, as the operating system would report it (errno {code})")
+    exc.errno = code
+    return exc
+
+
+@pytest.mark.parametrize("code", [errno.EADDRINUSE, errno.EACCES])
+def test_a_port_this_machine_cannot_use_names_the_knob_that_moves_it(capsys, code):
+    """"[Errno 98] Address already in use" is a true sentence that tells a person
+    running a second muezzin nothing they can act on: this program has two ports,
+    and neither of them is named in the operating system's message."""
+    assert cli._port_busy(_fake_clash(code), "the control panel", 8020,
+                          "MUEZZIN_WEB_PORT", "`--port <port>`") == 2
+    err = capsys.readouterr().err
+    assert "the control panel could not start on port 8020" in err, err
+    assert "MUEZZIN_WEB_PORT" in err and "--port" in err, "the two places to say another port"
+    assert "0" in err, "and the answer for whoever does not want a port ledger"
+    if code == errno.EACCES:
+        assert "1024" in err, "a privileged port needs a different sentence than a taken one"
+
+
+def test_a_startup_error_that_is_not_a_port_clash_keeps_its_traceback():
+    """A media folder that went missing is an OSError too, and dressing it up as a
+    port problem would send a person to change a port that was never the trouble."""
+    missing = FileNotFoundError(2, "No such file or directory")
+    with pytest.raises(FileNotFoundError):
+        cli._port_busy(missing, "the media server", 8010, "MUEZZIN_HTTP_PORT", "`http_port:`")
+
+
+def test_the_second_container_on_a_machine_is_told_what_it_clashed_into(tmp_path, capsys,
+                                                                       monkeypatch):
+    """The real thing: hold a port, then ask muezzin's own servers for it.
+
+    Checked through the panel rather than the scheduler because `daemon` would
+    otherwise sit in run_forever. A platform whose sockets let the second bind
+    through anyway has a different problem to solve, and the test above is what
+    pins the wording, so this one says so out loud instead of failing.
+    """
+    held = socket.socket()
+    held.bind(("0.0.0.0", 0))
+    held.listen(1)
+    port = held.getsockname()[1]
+    try:
+        probe = net.LANServer(("0.0.0.0", port), lambda *a: None)
+    except OSError:
+        probe = None
+    else:
+        probe.server_close()
+        pytest.skip("this platform let a second server bind a listening port")
+    finally:
+        held.close()
+
+    held = socket.socket()
+    held.bind(("0.0.0.0", port))
+    held.listen(1)
+    path = _starter(tmp_path)
+    monkeypatch.setenv("MUEZZIN_HTTP_PORT", "0")       # so the clash is the page's
+    monkeypatch.setattr(web.WebPanel, "serve_forever", lambda self: None)
+    try:
+        assert main(["web", "-c", str(path), "--port", str(port)]) == 2
+    finally:
+        held.close()
+    err = capsys.readouterr().err
+    assert "control panel" in err and "MUEZZIN_WEB_PORT" in err, err
+    assert "Traceback" not in err, "two containers on one machine is a normal day, not a crash"

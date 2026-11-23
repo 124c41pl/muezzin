@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import errno
 import logging
 import os
 import sys
@@ -24,6 +25,51 @@ def _host_arg(value: str) -> str:
     if not valid_host(value):
         raise argparse.ArgumentTypeError(f"{value!r} is not a plain hostname or IP address")
     return value
+
+
+def _env_port(name: str) -> int | None:
+    """A port named in the environment, or None when this run has no opinion.
+
+    This exists for containers: an image ships the command line, so the person
+    starting a second container on a machine that already runs one has nothing to
+    edit but the environment. Reading it here, and refusing a value that is not a
+    port here, is the whole point: found later that value is an OSError about an
+    address family, or a page sitting on a port nobody meant to open, in both cases
+    with nothing in the message naming what was typed.
+    """
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return None
+    wrong = (f"{name} is not a port: {raw!r}. Name a number between 0 and 65535; "
+             "0 means pick a free one.")
+    try:
+        port = int(raw)
+    except ValueError:
+        raise ValueError(wrong) from None
+    if not 0 <= port < 65536:
+        raise ValueError(wrong)
+    return port
+
+
+def _port_busy(exc: OSError, what: str, port: int, env_name: str, where: str) -> int:
+    """A port that was already spoken for, said in the terms the fix is written in.
+
+    This is what the second muezzin on a machine runs into, and the operating
+    system's own sentence - "[Errno 98] Address already in use" - knows nothing
+    about this program having two ports, let alone where each one is named. Anything
+    that is not this mistake keeps the traceback it had: a media folder that went
+    missing should not be dressed up as a port problem.
+    """
+    if getattr(exc, "errno", None) not in (errno.EADDRINUSE, errno.EACCES):
+        raise exc
+    reason = ("that port is already in use on this machine"
+              if exc.errno == errno.EADDRINUSE else
+              "this machine would not let us listen there - ports under 1024 need privileges")
+    print(f"{what} could not start on port {port}: {reason}.\n"
+          f"      Name another one - {env_name} in the environment, or {where} for this run -\n"
+          f"      or 0, and a free port is picked for you.", file=sys.stderr)
+    return 2
+
 
 EXAMPLE = """\
 # muezzin profile - everything here is data; nothing needs a code change.
@@ -603,6 +649,8 @@ def cmd_box(name: str, port: int, player: str | None, allow_hosts: tuple[str, ..
     print(f"muezzin box {name!r} on port {port} (player: {box.player_name}); Ctrl-C to stop")
     try:
         box.run_forever()
+    except OSError as exc:
+        return _port_busy(exc, f"the box {name!r}", port, "MUEZZIN_BOX_PORT", "`--port <port>`")
     except KeyboardInterrupt:
         print("stopping")
     finally:
@@ -722,14 +770,26 @@ def cmd_daemon(config_path: Path, web_port=None, read_only: bool = False,
     from .scheduler import Runner
 
     profile = load_profile(config_path)
-    runner = Runner(profile)
+    try:
+        runner = Runner(profile)      # the media server binds its port in here
+    except OSError as exc:
+        return _port_busy(exc, "the media server", profile.http_port, "MUEZZIN_HTTP_PORT",
+                          "`http_port:` in the profile")
     panel = None
     if web_port is not None:
         from .web import WebPanel
 
         panel = WebPanel(runner, port=web_port, allow_edit=not read_only,
                          allow_hosts=allow_hosts)
-        panel.start()
+        try:
+            panel.start()
+        except OSError as exc:
+            # The media server is already holding its port, and a daemon that walks
+            # away without letting go of it leaves the next one failing on a port
+            # nobody can see anyone using.
+            runner.shutdown()
+            return _port_busy(exc, "the control panel", web_port, "MUEZZIN_WEB_PORT",
+                              "`--web <port>`")
     print(f"muezzin {__version__}: {profile.location.timezone} / {profile.params.label}; "
           f"outputs: {', '.join(o.name for o in profile.enabled_outputs())}")
     for note in starter_warnings(profile):
@@ -765,9 +825,17 @@ def cmd_web(config_path: Path, port: int, read_only: bool,
     from .web import WebPanel
 
     profile = load_profile(config_path)
-    runner = Runner(profile)
+    try:
+        runner = Runner(profile)
+    except OSError as exc:
+        return _port_busy(exc, "the media server", profile.http_port, "MUEZZIN_HTTP_PORT",
+                          "`http_port:` in the profile")
     panel = WebPanel(runner, port=port, allow_edit=not read_only, allow_hosts=allow_hosts)
-    panel.start()
+    try:
+        panel.start()
+    except OSError as exc:
+        runner.shutdown()
+        return _port_busy(exc, "the control panel", port, "MUEZZIN_WEB_PORT", "`--port <port>`")
     host = runner.media.host_ip if runner.media else "127.0.0.1"
     print(f"muezzin {__version__}: {profile.params.label} at http://{host}:{panel.port}"
           f"{' (read-only)' if read_only else ''}")
@@ -789,6 +857,21 @@ def main(argv=None) -> int:
                     help="debug logging: shows every media URL a speaker fetched, "
                          "which is how you tell a firewall problem from a dead speaker")
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    # A port may be named in the environment, which is the only knob a container
+    # has when the image already chose the arguments it runs with. The variables
+    # change which number a port gets, never whether the page runs at all: an
+    # unauthenticated page turning up because a variable was set in somebody's
+    # shell profile is not the sort of thing to discover by accident.
+    try:
+        web_env = _env_port("MUEZZIN_WEB_PORT")
+        box_env = _env_port("MUEZZIN_BOX_PORT")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    # The three parsers below compare these against None rather than trusting them:
+    # 0 is an answer, not an absence. It means "take a free port", which is the other
+    # way a second muezzin on this machine avoids the first one's numbers.
 
     def add_config(p):
         p.add_argument("-c", "--config", type=Path, default=Path("muezzin.yaml"))
@@ -843,8 +926,10 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("daemon", help="run the scheduler until stopped")
     add_config(p)
-    p.add_argument("--web", nargs="?", type=int, const=8020, default=None, metavar="PORT",
-                   help="also serve the browser control panel (bare --web means port 8020)")
+    p.add_argument("--web", nargs="?", type=int, const=8020 if web_env is None else web_env,
+                   default=None, metavar="PORT",
+                   help="also serve the browser control panel; a bare --web means port "
+                        "8020, or MUEZZIN_WEB_PORT when that is set")
     p.add_argument("--read-only", action="store_true",
                    help="the web panel may show state but not save config or play test files")
     p.add_argument("--allow-host", action="append", type=_host_arg, default=[], metavar="NAME",
@@ -853,7 +938,8 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("web", help="serve the control panel only, without the scheduler")
     add_config(p)
-    p.add_argument("--port", type=int, default=8020)
+    p.add_argument("--port", type=int, default=8020 if web_env is None else web_env,
+                   help="the port to answer on: 8020, or MUEZZIN_WEB_PORT if that is set")
     p.add_argument("--read-only", action="store_true")
     p.add_argument("--allow-host", action="append", type=_host_arg, default=[], metavar="NAME",
                    help="extra name the panel answers to, if you reach it by a hostname; "
@@ -861,7 +947,9 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("box", help="run the speaker agent on a Pi or a second machine")
     p.add_argument("--name", default="muezzin-box", help="name to advertise on the LAN")
-    p.add_argument("--port", type=int, default=8090)
+    p.add_argument("--port", type=int, default=8090 if box_env is None else box_env,
+                   help="the port this box answers on: 8090, or MUEZZIN_BOX_PORT if set. "
+                        "Two boxes on one machine need different ports and different names")
     p.add_argument("--player", default=None,
                    help="command that plays one file (default: what this machine already has)")
     p.add_argument("--allow-host", action="append", type=_host_arg, default=[], metavar="ADDRESS",
