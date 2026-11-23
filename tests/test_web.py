@@ -110,6 +110,22 @@ def test_the_page_script_needs_no_backslashes(panel):
     assert "\\" not in script, "a backslash in the page is Python's, not JavaScript's"
 
 
+def test_the_sound_card_holds_a_drawing_box_for_every_prayer_row(panel):
+    """`random: N` has to be writable from the panel, or the drawing the
+    Recordings card goes on about stays a file edit. The script renders a
+    drawing dropdown beside every clip box, weekday and Friday alike, and one
+    save per row carries both picks, so a poll that redraws the card cannot
+    drop what somebody just picked."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert "function drawSelect(at,friday){" in html
+    assert "data-draw=" in html
+    assert "${clipSelect(k,false)}${drawSelect(k,false)}" in html
+    assert "${clipSelect(k,true)}${drawSelect(k,true)}" in html
+    assert "(no drawing)" in html
+    assert "'head'" in html and "'draw'" in html, "both boxes speak in one apply"
+
+
 def test_state_shows_times_events_and_outputs(panel):
     web, _, _ = panel
     status, st = call(web.port, "/api/state")
@@ -688,6 +704,82 @@ def test_audio_must_be_audio_and_inside_the_media_dir(panel):
     assert status == 400 and "teatime" in reply["error"]
     text = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
     assert text.count("at: fajr") == 1, "a refused request must not touch the file at all"
+
+
+def test_a_prayer_can_be_put_on_drawing_from_the_folder(panel):
+    web, _, tmp_path = panel
+    status, reply = call(web.port, "/api/audio",
+                         {"at": "fajr", "media": ["dua.mp3"], "random": 2})
+    assert status == 200, reply
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "random: 2" in on_disk, "the number lands in the profile, not just in memory"
+    _, st = call(web.port, "/api/state")
+    fajr = next(e for e in st["events"] if e["name"] == "fajr-adhan")
+    assert fajr["random"] == 2 and fajr["media"] == ["dua.mp3"], "named first, drawn after"
+    played = next(e for e in web.runner.profile.events if e.name == "fajr-adhan")
+    assert played.random == 2, "the running daemon reloads with the number in place"
+
+
+def test_a_drawing_number_out_of_range_is_refused_before_it_reaches_the_file(panel):
+    web, _, tmp_path = panel
+    status, reply = call(web.port, "/api/audio", {"at": "fajr", "random": 99})
+    assert status == 400 and "50" in reply["error"], "the ceiling is said with the number"
+    status, reply = call(web.port, "/api/audio", {"at": "fajr", "random": "two"})
+    assert status == 400 and "two" in reply["error"]
+    status, reply = call(web.port, "/api/audio", {"at": "fajr", "random": -1})
+    assert status == 400
+    text = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "random" not in text, "a refused request must not touch the file at all"
+
+
+def test_the_drawing_can_be_turned_off_without_a_word_about_the_clip(panel):
+    web, _, tmp_path = panel
+    call(web.port, "/api/audio", {"at": "fajr", "media": ["dua.mp3"], "random": 3})
+    status, reply = call(web.port, "/api/audio", {"at": "fajr", "random": 0})
+    assert status == 200, reply
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "random" not in on_disk, "off writes no line rather than a zero to wonder at"
+    _, st = call(web.port, "/api/state")
+    fajr = next(e for e in st["events"] if e["name"] == "fajr-adhan")
+    assert fajr["random"] == 0 and fajr["media"] == ["dua.mp3"], \
+        "a request about the drawing alone leaves the clip exactly as it was"
+
+
+def test_taking_the_named_clip_off_a_drawing_prayer_keeps_the_drawing(panel):
+    web, _, tmp_path = panel
+    call(web.port, "/api/audio", {"at": "fajr", "media": ["dua.mp3"], "random": 2})
+    status, reply = call(web.port, "/api/audio", {"at": "fajr", "media": []})
+    assert status == 200 and reply.get("updated_event") == "fajr-adhan", \
+        "an entry that still has something to play is not an entry to delete"
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    block = re.search(r"name: fajr-adhan.*?(?=\n  - name:|\Z)", on_disk, re.S)
+    assert block and "media:" not in block.group(0) and "random: 2" in block.group(0), \
+        "the media line goes and the drawing stays, in the text as well as in memory"
+    _, st = call(web.port, "/api/state")
+    fajr = next(e for e in st["events"] if e["name"] == "fajr-adhan")
+    assert fajr["media"] == [] and fajr["random"] == 2
+
+
+def test_a_drawing_for_a_prayer_with_no_event_writes_an_event_that_only_draws(panel):
+    web, _, tmp_path = panel
+    status, reply = call(web.port, "/api/audio", {"at": "sunrise", "random": 1})
+    assert status == 200 and reply["added_event"] == "sunrise-adhan"
+    on_disk = (tmp_path / "muezzin.yaml").read_text(encoding="utf-8")
+    assert "random: 1" in on_disk
+    _, st = call(web.port, "/api/state")
+    sun = next(e for e in st["events"] if e["at"] == "sunrise")
+    assert sun["media"] == [] and sun["random"] == 1, \
+        "a prayer that draws and names nothing is a whole plan, not an empty event"
+
+
+def test_the_last_thing_to_play_leaves_the_entry_behind_after_it(panel):
+    web, _, tmp_path = panel
+    call(web.port, "/api/audio", {"at": "sunrise", "random": 1})
+    status, reply = call(web.port, "/api/audio", {"at": "sunrise", "media": [], "random": 0})
+    assert status == 200 and reply["removed_event"] == "sunrise-adhan", \
+        "named clips and drawings gone at once is nothing to play, and the entry goes"
+    _, st = call(web.port, "/api/state")
+    assert "sunrise-adhan" not in [e["name"] for e in st["events"]]
 
 
 def test_a_recording_uploads_if_the_bytes_agree_with_the_name(panel):
