@@ -185,7 +185,7 @@ noise, so you find out now rather than at 5 am whether the wiring is right.
 That folder is the library: what is in it is what there is to hear, and there is no
 second list of anything to keep in step with it. An event can name its recordings, or
 ask that folder for some of them at the moment it fires — `random: 2` in the YAML, or the
-second dropdown on each row of the panel's Sound card, and
+**(random from the library)** choice in each row of the panel's Sound card, and
 the two that go out are two of whatever is in there that day. The draw is made once for
 the event, so a house with three speakers hears one sequence rather than three, and the
 log says which ones went out. `library: exclude:` keeps a recording out of the drawing
@@ -346,6 +346,66 @@ provide — the measured numbers, and the two things a container is bad at here,
 in `docs/HOW-IT-WORKS.md`. On a real Linux machine, host networking is one line
 and works. If you would rather the page only show things, add `--read-only` to the
 arguments; the bottom of `docker-compose.yml` has that shape ready to uncomment.
+
+**Ports.** There are two, and they are set in two different places. The page's port
+is an argument: `--web 8080` on the daemon, `--port 8080` on the bare `web` command.
+The media port — the one a speaker pulls the recording from — is a profile field,
+`http_port: 8010`, and the page never changes it, so you edit it in
+`./config/muezzin.yaml`. Both listen on `0.0.0.0`.
+
+With `network_mode: host` there is nothing to map: a `ports:` line is ignored, and
+the port on the machine is simply the port the program was told to use. So moving
+the page off 8020 means changing the arguments, not adding a mapping:
+
+```yaml
+services:
+  muezzin:
+    network_mode: host
+    command: ["daemon", "-c", "/app/config/muezzin.yaml", "--web", "8080"]
+```
+
+To pick a host port that has nothing to do with the one inside the container —
+because 8020 is taken on that machine, or because you are on Docker Desktop, where
+host networking does not reach the LAN anyway — drop `network_mode: host` and
+publish it instead:
+
+```yaml
+services:
+  muezzin:
+    image: ghcr.io/124c41pl/muezzin:0.1.5
+    ports:
+      - "8080:8020"                  # the port you dial here -> the page's port there
+      - "127.0.0.1:8011:8010"        # only for something on this same machine
+    volumes:
+      - ./config:/app/config
+      - ./media:/app/media
+    command: ["daemon", "-c", "/app/config/muezzin.yaml", "--web", "8020",
+              "--allow-host", "192.168.0.5"]
+```
+
+Two things follow from publishing rather than using host networking, and both of
+them bite on the first try.
+
+The page answers to *names*, not to ports: `localhost`, its own address, and any
+name you named with `--allow-host` (repeat it per address, or use a name like
+`azan.local` if you serve the page under one). Behind Docker's NAT the container's
+own address is `172.17.x.x`, so a browser dialling `http://192.168.0.5:8080` is
+asking for a name that container does not recognise, and the answer is 403. That is
+the DNS-rebinding guard described in `SECURITY.md` working as intended, not a broken
+mapping: `localhost:8080` on that machine needs no flag at all, and from anywhere
+else, the address you actually type is the one to put in `--allow-host`. The port
+number itself is not part of that check, so remapping it is free.
+
+Speakers stop working, and publishing `8011:8010` cannot fix it, because the URL
+handed to a speaker is built from the container's own address —
+`http://172.17.x.x:8010/fajr.mp3` — and your speaker has no route there. A published
+media port only ever helps something on that same machine. So this shape is the
+timetable, the page and a `kind: file` output; driving a speaker is the
+host-networking shape above.
+
+One last thing worth the eight characters: the page has no login, so a bare
+`"8080:8020"` hands port 8080 on that machine's LAN address to everyone on the LAN,
+while `"127.0.0.1:8080:8020"` answers only on that machine.
 
 **Any other machine** can be a speaker too: a second PC, an old laptop, a Mac in
 the hall cupboard. Run `muezzin box --name attic-box` on it and it shows up in

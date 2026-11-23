@@ -525,10 +525,11 @@ drawn at the moment it fires rather than decided when the profile is read, so th
 Friday asr sounds different next week and adding a file to the folder is the only way
 to tell the draw what it contains. Named `media:` files still play first when an event
 has both, which is how you keep the same opening and change what follows it.
-The panel can write that line too: the Sound card gives each prayer a dropdown beside
-its clip box for how many to draw, and the Recordings card's **Random** switch is the
-`exclude:` list below. The profile stays the file to read and version; these are just
-two ways of writing the same thing in it.
+The panel can write that line too: each row's clip box on the Sound card offers
+**(random from the library)**, which names no clip and writes `random: 1`, and the
+Recordings card's **Random** switch is the `exclude:` list below. A prayer that wants
+several drawings at once keeps its number in the hand-written profile. The profile
+stays the file to read and version; these are just two ways of writing the same thing in it.
 
 The drawing is made once per event and every speaker of that event is sent the same
 files. Made per speaker, a house with two of them would hear two different sequences
@@ -989,6 +990,14 @@ and mDNS announcements do not cross a bridge network. The alternative in the
 checked-in file — a commented `muezzin-lookup-only` service with a `ports:`
 mapping — is what you want if you only need the timetable, the page and a `file`
 output, because then there is nothing to discover.
+
+That variant carries `--allow-host` for a reason that only shows up once a port is
+published: the page checks the name in the request against `localhost`, its own
+address and the names it was told, and behind Docker's NAT its own address is
+`172.17.0.2` while the browser is naming the machine you dialled. Without the flag
+that request is a 403 from the rebinding guard, and the mapping looks broken. The
+port is stripped before the comparison, so any host port you like works; see
+"Ports" under "Other machines" in the README for both shapes.
 
 ### Pulling the image instead of building it
 
