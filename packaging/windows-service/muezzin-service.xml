@@ -1,0 +1,74 @@
+<!--
+  WinSW service definition for muezzin. This file is the whole service: WinSW
+  renames itself to muezzin-service.exe, sits beside it, and this XML says what
+  boots with the machine.
+
+  Why WinSW and not a pywin32 service class: the daemon is a foreground
+  process that does not trap SIGTERM (docs/HOW-IT-WORKS.md says so out loud),
+  so a service wrapper that speaks the SCM protocol "properly" would be
+  pretending to have a graceful stop the program does not have. WinSW's model
+  — start a process, restart it when it dies, Kill on uninstall — is the same
+  honesty the container entrypoint already keeps, and start-on-boot, recovery
+  and event-log integration come free. Revisit only if we ever add a real
+  shutdown handler to the daemon.
+
+  Everything paths-related points at %ProgramData%\muezzin, not at the install
+  folder, because the exe is disposable and the profile is not: an upgrade
+  replaces the exe next to this file and the household's schedule and audio do
+  not move. That is the same split as the container's ./config and ./media
+  mounts, and it is the decision here that is hardest to change later, so it
+  lives in a comment where the next person can argue with it.
+
+  pc_speakers is expected NOT to work under this shape: a service runs in
+  Session 0 and winmm there is unreliable. Cast, lan_box and file are what
+  this is for; packaging/windows-service/README.md keeps that promise in one
+  place.
+-->
+<service>
+  <id>muezzin</id>
+  <name>muezzin (adhan daemon)</name>
+  <description>Plays the adhan on your own speakers on the times your own calculation says. Page on :8020, media on :8010.</description>
+
+  <!-- The frozen app. Same exe, same arguments as typing it in a console. -->
+  <executable>%BASE%\muezzin.exe</executable>
+  <arguments>daemon -c "%ProgramData%\muezzin\muezzin.yaml" --web</arguments>
+
+  <!-- Where relative things land if the profile leaves them relative: tiles
+       live beside the profile by design, out_dir is the one a kind: file
+       output may write. Pinning cwd means a stray relative path goes under
+       ProgramData, not under System32, which is what the service defaults to. -->
+  <workingdirectory>%ProgramData%\muezzin</workingdirectory>
+
+  <!-- The environment is the second way to name a port, exactly as in the
+       image (README, "Ports"): the bare web flag on the arguments line above
+       means these have something to fill in, and a number typed on the
+       command line would still outrank them. -->
+  <env name="MUEZZIN_WEB_PORT" value="8020"/>
+  <env name="MUEZZIN_HTTP_PORT" value="8010"/>
+  <env name="TZ" value="America/New_York"/>
+
+  <startmode>Automatic</startmode>
+
+  <!-- The daemon is meant to be forever: a prayer it misses is a prayer
+       nobody hears. Restart it, and if it dies in a loop, back off rather
+       than spam the event log. -->
+  <resetfailure>1 hour</resetfailure>
+  <failure>
+    <action>restart</action>
+    <delay>10 seconds</delay>
+  </failure>
+  <failure>
+    <action>restart</action>
+    <delay>60 seconds</delay>
+  </failure>
+
+  <!-- WinSW's own log rotation; stdout/stderr of the daemon land here, which
+       is the console output you would have watched by hand. -->
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+
+  <stopexecutable>taskkill.exe</stopexecutable>
+  <stoparguments>/PID {PID} /T /F</stoparguments>
+</service>

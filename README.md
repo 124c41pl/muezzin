@@ -520,6 +520,10 @@ the device list, along with the player it picked for itself.
   discovery will not work.
 * The daemon is a foreground process. There is no Windows service installer or
   tray icon yet; a Task Scheduler entry or `systemd` unit is what people use.
+  A working shape for the Windows one is being tried in
+  `packaging/windows-service/` — frozen exe plus WinSW, same folders — but it
+  is a proof of concept, not a shipping installer, and `pc_speakers` under a
+  service is an open question there.
 * No Alexa, and no Bluetooth-target backend.
 * The page has no login and binds the LAN interface, so it belongs on a network
   you trust; `--read-only` removes its ability to write or make noise. It can

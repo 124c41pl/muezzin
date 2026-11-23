@@ -27,6 +27,12 @@ _livecast.yaml
 _box.yaml
 _smoke.yaml
 
+# the Windows-service PoC's build transcript. pyinstaller's working folder and
+# dist\ are already covered by "build/" and "dist/" above, and WinSW-x64.exe by
+# "*.exe" below; what is left is the log of one build on one machine, with that
+# machine's paths in it, which belongs to nobody's commit.
+packaging/windows-service/build-log.txt
+
 # the old name, in case a config file still carries it
 azankit.yaml
 
