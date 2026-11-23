@@ -6,7 +6,7 @@ Start the container with this folder empty and it writes one here itself, pointe
 at the `./media` folder that `docker-compose.yml` mounts. By hand, the same thing
 is:
 
-    docker run --rm -v "%cd%\config:/app/config" muezzin:0.1.5 init -c /app/config/muezzin.yaml --media-dir /app/media
+    docker run --rm -v "%cd%\config:/app/config" muezzin:0.1.6 init -c /app/config/muezzin.yaml --media-dir /app/media
 
 On Linux or macOS, replace `%cd%` with `$PWD`. Then point it at your house. The page
 does all three of those jobs: a **Where** section where numbers can be checked against

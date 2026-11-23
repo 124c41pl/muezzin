@@ -321,11 +321,11 @@ does not see on a Pi are in `docs/HOW-IT-WORKS.md`.
 thing from this repo:
 
 ```bash
-docker pull ghcr.io/124c41pl/muezzin:0.1.5
+docker pull ghcr.io/124c41pl/muezzin:0.1.6
 mkdir -p config media
 docker run -d --name muezzin --network host \
   -v "$PWD/config:/app/config" -v "$PWD/media:/app/media" \
-  ghcr.io/124c41pl/muezzin:0.1.5
+  ghcr.io/124c41pl/muezzin:0.1.6
 docker logs muezzin        # it prints where the page answers
 ```
 
@@ -389,7 +389,7 @@ service twice, each with its own folders and its own pair of ports:
 ```yaml
 services:
   study:
-    image: ghcr.io/124c41pl/muezzin:0.1.5
+    image: ghcr.io/124c41pl/muezzin:0.1.6
     network_mode: host
     volumes:
       - ./study/config:/app/config
@@ -400,7 +400,7 @@ services:
       MUEZZIN_HTTP_PORT: "8010"
     command: ["daemon", "-c", "/app/config/muezzin.yaml", "--web"]
   hall:
-    image: ghcr.io/124c41pl/muezzin:0.1.5
+    image: ghcr.io/124c41pl/muezzin:0.1.6
     network_mode: host
     volumes:
       - ./hall/config:/app/config
@@ -427,7 +427,7 @@ publish it instead:
 ```yaml
 services:
   muezzin:
-    image: ghcr.io/124c41pl/muezzin:0.1.5
+    image: ghcr.io/124c41pl/muezzin:0.1.6
     ports:
       - "8080:8020"                  # the port you dial here -> the page's port there
       - "127.0.0.1:8011:8010"        # only for something on this same machine

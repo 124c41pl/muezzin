@@ -21,7 +21,7 @@
 services:
   muezzin:
     build: .
-    image: muezzin:0.1.5
+    image: muezzin:0.1.6
     network_mode: host            # required for speaker discovery
     volumes:
       - ./config:/app/config      # your muezzin.yaml lives here
@@ -62,7 +62,7 @@ services:
   # comparison, which is what makes remapping free.
   #
   # muezzin-lookup-only:
-  #   image: muezzin:0.1.5            # or ghcr.io/124c41pl/muezzin:0.1.5, no build
+  #   image: muezzin:0.1.6            # or ghcr.io/124c41pl/muezzin:0.1.6, no build
   #   ports:
   #     - "8080:8020"
   #   volumes:
