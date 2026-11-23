@@ -504,10 +504,11 @@ PAGE = """<!doctype html>
    puts a new recording there. Nothing overwrites a recording that is playing, so two recordings of
    the same adhans need two names. These boxes choose what a prayer starts with; the Recordings card
    below adds a recording to the end of a prayer's list, which is where a dua after the adhan goes.
-   The second box on each row is the drawing: it says how many recordings the prayer asks the folder
-   for at the moment it fires, which writes <code>random: N</code> under the event, and (no drawing)
-   takes that line back out. A named clip plays before anything drawn, and the Recordings card's
-   <b>Random</b> switch says which recordings the drawing may reach.</div>
+   One of the choices is <b>(random from the library)</b>: the prayer names nothing and asks the
+   folder for a recording at the moment it fires, which writes <code>random: 1</code> under the
+   event, and the pool is the whole folder except what the Recordings card's <b>Random</b> switch
+   holds back. Picking a named clip instead takes the drawing out; wanting several drawings at
+   once is the one thing still written in the profile by hand - <code>random: 2</code> and so on.</div>
   <div class="fine">The line under each clip says what that prayer asks its speakers for. Most prayers
     have nothing of their own to say and read <b>levels: as usual</b>, which is the number in the Outputs
     card. Press it and the rooms this prayer plays through open in a line of their own underneath, one
@@ -817,35 +818,25 @@ function clipFor(at,friday){
 // card refusing to change until the picks are applied. The profile does not know them yet,
 // which is why renderSound alone would show the old picks.
 let pend={};
-// How many to draw waits for apply in here, not in pend: pend holds clip names, and a
-// count is not a clip name. The same redraw argument covers it - a levels drawer
-// opening must not quietly drop a drawing somebody just picked.
-let drawp={};
+// The clip box offers three kinds of thing, and one of them is the drawing: no
+// named recording at all, and the prayer asks the folder for one as it fires,
+// which writes `random: 1` under the event. The pool is the whole media_dir,
+// holding back only what the Recordings card says not to touch, so there is
+// nothing else to choose - which is why this is one more option in the box
+// rather than a second box of counts beside it. Picking a named clip instead
+// takes the drawing out; a prayer that wants several drawings keeps the count
+// as a line to write in the profile by hand, and a row already sitting on such
+// a number is shown as drawing and keeps its number when the draw is picked
+// again.
 function clipSelect(at,friday){
  const ev=clipFor(at,friday), pk=at+':'+(friday?1:0),
-  cur=pk in pend?pend[pk]:(ev&&ev.media&&ev.media.length?ev.media[0]:'');
+  cur=pk in pend?pend[pk]:((ev&&ev.media&&ev.media.length)?ev.media[0]:((ev&&ev.random>0)?'random':''));
  const files=(st.media_files||[]).slice();
- if(cur&&files.indexOf(cur)<0) files.unshift(cur);
+ if(cur&&cur!=='random'&&files.indexOf(cur)<0) files.unshift(cur);
  return `<select data-at="${at}" data-friday="${friday?1:0}">`
-  +[''].concat(files).map(f=>`<option value="${esc(f)}"${f===cur?' selected':''}>${esc(f||'(no clip)')}</option>`).join('')
+  +[''].concat(files).concat(['random']).map(f=>`<option value="${esc(f)}"${f===cur?' selected':''}>${esc(f===''?'(no clip)':f==='random'?'(random from the library)':f)}</option>`).join('')
   +`</select>`+((ev&&ev.media&&ev.media.length>1)?` <span class="tag">${ev.media.length} clips</span>`:'')
   +((ev&&ev.offset_min)?` <span class="tag">${ev.offset_min>0?'+':''}${ev.offset_min}m</span>`:'');
-}
-// How many recordings this prayer asks the library for, picked as it fires. This is
-// the dropdown beside the clip box that writes `random: N` into the profile, so a
-// household can put Fajr on a different recording every morning without anybody
-// learning YAML. (no drawing) removes the line rather than writing a zero: a line
-// that changes nothing is a line the next reader has to wonder about. Named clips
-// still play first, whatever the number says; a count written into the profile by
-// hand is put in the list too, so the row can be moved off it without a file edit.
-function drawSelect(at,friday){
- const ev=clipFor(at,friday), pk=at+':'+(friday?1:0),
-  cur=pk in drawp?drawp[pk]:String((ev&&ev.random)||0);
- const opts=['0','1','2','3','4','5','6','7','8','9','10'];
- if(opts.indexOf(cur)<0) opts.push(cur);
- return ` <select data-draw="${at}" data-friday="${friday?1:0}" title="drawn from the folder at random as it fires">`
-  +opts.map(n=>`<option value="${n}"${n===cur?' selected':''}>${n==='0'?'(no drawing)':n+' at random'}</option>`).join('')
-  +`</select>`;
 }
  // What a prayer asks its speakers for lives in a drawer rather than a column, because most
  // prayers have nothing of their own to say: the summary on the row is one line however many
@@ -900,19 +891,14 @@ function renderSound(){
  box.innerHTML=ORDER.filter(k=>k in times).map(k=>{
   const day=clipFor(k,false), fri=clipFor(k,true);
   let row=`<tr><td>${esc(NAME[k]||k)}</td><td class="ar">${esc(AR[k]||'')}</td>`
-   +`<td>${clipSelect(k,false)}${drawSelect(k,false)}${lvChip(day,k,false,open)}</td>`
-   +`<td>${clipSelect(k,true)}${drawSelect(k,true)}${lvChip(fri,k,true,open)}</td></tr>`;
+   +`<td>${clipSelect(k,false)}${lvChip(day,k,false,open)}</td>`
+   +`<td>${clipSelect(k,true)}${lvChip(fri,k,true,open)}</td></tr>`;
   if(open===lvKey(k,false)&&day) row+=lvRow(day,k,false);
   else if(open===lvKey(k,true)&&fri) row+=lvRow(fri,k,true);
   return row; }).join('')
   ||'<tr><td colspan=4>no times to put clips on</td></tr>';
  document.querySelectorAll('[data-at]').forEach(s=>s.onchange=()=>{
   box.dataset.dirty='1'; pend[s.dataset.at+':'+(s.dataset.friday==='1'?1:0)]=s.value;
-  $('#soundsay').textContent='your picks are waiting for apply';
-  if(st.read_only) s.disabled=true;
- });
- document.querySelectorAll('[data-draw]').forEach(s=>s.onchange=()=>{
-  box.dataset.dirty='1'; drawp[s.dataset.at+':'+(s.dataset.friday==='1'?1:0)]=s.value;
   $('#soundsay').textContent='your picks are waiting for apply';
   if(st.read_only) s.disabled=true;
  });
@@ -1027,36 +1013,35 @@ function renderFound(){
 }
 function act2call(path,body){ act(()=>api(path,body),async()=>{ SC=await api('/api/speakers'); renderFound(); }); }
 async function applySound(){
- // The clip box and the drawing box sit side by side on one row, and one row is
- // one save: a change to either is collected here and sent together, so moving
- // the head clip and the number at once reloads the profile once, not twice.
- const rows={};
- const note=(s,kind)=>{
-  const k=s.dataset.at+':'+(s.dataset.friday==='1'?1:0);
-  if(!(k in rows)) rows[k]={at:s.dataset.at,friday:s.dataset.friday==='1'};
-  rows[k][kind]=s.value;
- };
- document.querySelectorAll('[data-at]').forEach(s=>note(s,'head'));
- document.querySelectorAll('[data-draw]').forEach(s=>note(s,'draw'));
+ // One box per row now, so one row is one save; and the box says which of the
+ // three things the prayer starts with, so moving between them can touch both
+ // lines of the entry: picking the draw speaks about media and about drawing,
+ // picking a clip usually speaks only about media.
+ const picks=[...document.querySelectorAll('[data-at]')];
  let sent=0;
- for(const k in rows){
-  const p=rows[k], at=p.at, friday=p.friday;
-  const ev=clipFor(at,friday), all=(ev&&ev.media)||[], have=all[0]||'';
+ for(const s of picks){
+  const at=s.dataset.at, friday=s.dataset.friday==='1';
+  const ev=clipFor(at,friday), all=(ev&&ev.media)||[],
+   have=all[0]||((ev&&ev.random>0)?'random':'');
+  if(s.value===have) continue;
   const body={at,friday};
-  let moved=false;
-  if('head' in p&&p.head!==have){
-   // The box decides what the prayer starts with. Whatever sits after it in the playlist
-   // was put there underneath - by the Recordings card, or by hand in the profile - so
-   // changing the head must not quietly drop the dua somebody placed after it: the tail
-   // goes back with the new head. Choosing (no clip) takes the head away and leaves the
-   // rest, and on a prayer that also draws it leaves the drawing - the panel says which
-   // boxes spoke by leaving the quiet ones out of the sentence.
-   body.media=p.head?[p.head].concat(all.slice(1)):all.slice(1);
-   moved=true;
+  if(s.value==='random'){
+   // The draw takes the named head away and leaves whatever sits after it: the
+   // tail was put there underneath, by the Recordings card or by hand, and the
+   // box only ever spoke about the front. A row already drawing keeps its own
+   // number - the count is a line for the profile by hand, and visiting the
+   // drawing from the box is no business of ours.
+   body.media=all.slice(1);
+   if(!(ev&&ev.random>0)) body.random=1;
+  } else {
+   // The box decides what the prayer starts with, so changing the head keeps the
+   // tail: dropping the adhan for another recording must not quietly delete the
+   // dua somebody placed after it. Picking a name where the row was drawing is
+   // the box saying which recording, so the drawing goes with the old choice;
+   // a named clip chosen in a row that hand-wrote both leaves the count alone.
+   body.media=s.value?[s.value].concat(all.slice(1)):all.slice(1);
+   if(have==='random') body.random=0;
   }
-  const drawn=String((ev&&ev.random)||0);
-  if('draw' in p&&p.draw!==drawn){ body.random=Number(p.draw); moved=true; }
-  if(!moved) continue;
   await api('/api/audio',body);
   sent++;
  }

@@ -110,20 +110,21 @@ def test_the_page_script_needs_no_backslashes(panel):
     assert "\\" not in script, "a backslash in the page is Python's, not JavaScript's"
 
 
-def test_the_sound_card_holds_a_drawing_box_for_every_prayer_row(panel):
-    """`random: N` has to be writable from the panel, or the drawing the
-    Recordings card goes on about stays a file edit. The script renders a
-    drawing dropdown beside every clip box, weekday and Friday alike, and one
-    save per row carries both picks, so a poll that redraws the card cannot
-    drop what somebody just picked."""
+def test_the_sound_card_offers_the_random_of_the_library_in_the_clip_box(panel):
+    """`random: N` has to be reachable from the panel, or the drawing the
+    Recordings card goes on about stays a file edit. But random means the
+    whole library, so there is one choice to offer and it belongs in the
+    clip box rather than in a second box of counts: the script puts it in
+    every weekday and Friday row, and taking it back out is part of the
+    same apply that picks a clip."""
     web, _, _ = panel
     _, html = call(web.port, "/", raw=True)
-    assert "function drawSelect(at,friday){" in html
-    assert "data-draw=" in html
-    assert "${clipSelect(k,false)}${drawSelect(k,false)}" in html
-    assert "${clipSelect(k,true)}${drawSelect(k,true)}" in html
-    assert "(no drawing)" in html
-    assert "'head'" in html and "'draw'" in html, "both boxes speak in one apply"
+    assert "(random from the library)" in html
+    assert "concat(['random'])" in html, "the draw is one of the clip box's choices"
+    assert "data-draw" not in html and "drawSelect" not in html, \
+        "one box per row: the drawing lives in the clip box, not beside it"
+    assert "body.random=1" in html and "body.random=0" in html, \
+        "picking the draw writes the line, picking a named clip takes it out"
 
 
 def test_state_shows_times_events_and_outputs(panel):
