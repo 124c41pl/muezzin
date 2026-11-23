@@ -184,7 +184,8 @@ noise, so you find out now rather than at 5 am whether the wiring is right.
 
 That folder is the library: what is in it is what there is to hear, and there is no
 second list of anything to keep in step with it. An event can name its recordings, or
-ask that folder for some of them at the moment it fires — `random: 2` in the YAML, and
+ask that folder for some of them at the moment it fires — `random: 2` in the YAML, or the
+second dropdown on each row of the panel's Sound card, and
 the two that go out are two of whatever is in there that day. The draw is made once for
 the event, so a house with three speakers hears one sequence rather than three, and the
 log says which ones went out. `library: exclude:` keeps a recording out of the drawing

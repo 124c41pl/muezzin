@@ -525,6 +525,10 @@ drawn at the moment it fires rather than decided when the profile is read, so th
 Friday asr sounds different next week and adding a file to the folder is the only way
 to tell the draw what it contains. Named `media:` files still play first when an event
 has both, which is how you keep the same opening and change what follows it.
+The panel can write that line too: the Sound card gives each prayer a dropdown beside
+its clip box for how many to draw, and the Recordings card's **Random** switch is the
+`exclude:` list below. The profile stays the file to read and version; these are just
+two ways of writing the same thing in it.
 
 The drawing is made once per event and every speaker of that event is sent the same
 files. Made per speaker, a house with two of them would hear two different sequences
