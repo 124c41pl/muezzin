@@ -51,10 +51,20 @@ fine — an earlier note here blamed the sandbox for a missing WinSW, which was
 wrong: the `releases/latest` URL 404s, and the versioned asset does not. The
 `.iss` compiles clean with no warnings.
 
+`muezzin init -c <path>` was run with the frozen exe, because a first install
+has to answer it: exit 0 writing the profile and the `media` folder, exit 1 the
+second time rather than rewriting it. And `muezzin daemon -c <a file that does
+not exist>` exits 2. That second one is why the setup runs `init` for itself
+before registering the service: pointed at nothing, the daemon leaves at once,
+and under WinSW "leaves at once" reads as a crash — restart at 10 seconds,
+restart at 60, and a browser aimed at a port nobody answers on with nothing in
+the log to say why. A household that is being built from the page instead of
+from a copied profile is the common case, not the exception.
+
 Not run here: the wizard itself, and therefore the install/start/stop cycle, the
-boot start, the migration, the upgrade-over-an-existing-service path and the
-firewall rules. Those are Part C of `docs/UAT-CHECKLIST.md`, on the machine that
-will host the service.
+boot start, the migration, the first-profile step, the upgrade-over-an-existing-
+service path and the firewall rules. Those are Part C of `docs/UAT-CHECKLIST.md`,
+on the machine that will host the service.
 
 Two traps the first builds fell into and kept, written where they happened:
 analysing `cli.py` as the entry breaks the package's relative imports at start,
@@ -71,9 +81,9 @@ at its first INFO line.
 * **Whether LocalSystem can see the LAN is measured, not assumed.** The
   installer offers a page that names a service account, because a service
   running as LocalSystem may not reach the interfaces or the firewall profile
-  Cast discovery needs. Row C6 is where native `devices` and service `devices`
+  Cast discovery needs. Row C7 is where native `devices` and service `devices`
   get compared on the same machine at the same minute.
-* **An upgrade replaces files a running service is holding open.** The script
+* **An upgrade replaces files a running service is holding open.** The setup
   stops and unregisters the old service before copying, then re-registers
   (WinSW refuses to register a name that is already taken). If that stop ever
   fails, Windows offers to close the offending process — an honest prompt, not

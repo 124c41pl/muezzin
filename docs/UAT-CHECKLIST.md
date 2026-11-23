@@ -93,18 +93,20 @@ them makes the service look broken when nothing is broken.
 |---|---|---|---|
 | C1 | Double-click | Licence, folder, and at most one UAC prompt; the wizard never asks for a terminal | |
 | C2 | Layout | `%ProgramFiles%\muezzin\` holds exe, wrapper and service definition; `%ProgramData%\muezzin\` holds `media\` and `out\`; a service named `muezzin`, Automatic, registered | |
-| C3 | Page from another device | `http://<this machine>:8020` answers across the LAN — the one thing Part A could not show | |
-| C4 | Migration | A `muezzin.yaml` in the checkout or beside the setup file is offered, copied, and left where it was; when `%ProgramData%\muezzin\muezzin.yaml` already exists, the page is not shown at all | |
-| C5 | Never overwrite | Re-running the setup leaves the existing profile byte-identical (hash it before and after) | |
-| C6 | `devices` as a service | Compare with B1 on the same machine in the same minute. If the console finds speakers and the service finds none, that is the LocalSystem question: retry with the service-account page filled in and record which of the two worked | |
-| C7 | Firewall | `netsh advfirewall firewall show rule name="muezzin panel"` and `...media` exist, `profile=Private`, pointing at the installed exe | |
-| C8 | Reboot | The machine comes back, the service comes up by itself, the next event fires unattended, and `muezzin.out.log` in the install folder shows it | |
-| C9 | Upgrade | Run a newer setup over an installed one: old service stopped and unregistered, files replaced, service registered and started, no "file in use" fight, `%ProgramData%` untouched | |
-| C10 | Uninstall | Service gone and both firewall rules gone; `%ProgramData%\muezzin` still there, with the message saying so | |
+| C3 | A household from nothing | Install with no profile anywhere: the setup writes a starter to `%ProgramData%\muezzin\muezzin.yaml` (the same first act as the container's entrypoint), the service **stays running**, and the page's "write it" lands in that file. Without that starter the daemon exits on a missing profile and the service just restarts forever | |
+| C4 | Page from another device | `http://<this machine>:8020` answers across the LAN — the one thing Part A could not show | |
+| C5 | Migration | A `muezzin.yaml` in the checkout or beside the setup file is offered, copied, and left where it was; when `%ProgramData%\muezzin\muezzin.yaml` already exists, the page is not shown at all | |
+| C6 | Never overwrite | Re-running the setup leaves the existing profile byte-identical (hash it before and after) | |
+| C7 | `devices` as a service | Compare with B1 on the same machine in the same minute. If the console finds speakers and the service finds none, that is the LocalSystem question: retry with the service-account page filled in and record which of the two worked | |
+| C8 | Firewall | `netsh advfirewall firewall show rule name="muezzin panel"` and `...media` exist, `profile=Private`, pointing at the installed exe | |
+| C9 | Reboot | The machine comes back, the service comes up by itself, the next event fires unattended, and `muezzin.out.log` in the install folder shows it | |
+| C10 | Upgrade | Run a newer setup over an installed one: old service stopped and unregistered, files replaced, service registered and started, no "file in use" fight, `%ProgramData%` untouched | |
+| C11 | Uninstall | Service gone and both firewall rules gone; `%ProgramData%\muezzin` still there, with the message saying so | |
 
-C6 and C9 are the two rows this branch cannot answer on its own: one is a fact
+C7 and C10 are the two rows this branch cannot answer on its own: one is a fact
 about your LAN, the other is a fact about upgrading something you already
-trust.
+trust. C3 is the row that a fresh install either passes or wastes your evening
+on.
 
 ## Filing results
 

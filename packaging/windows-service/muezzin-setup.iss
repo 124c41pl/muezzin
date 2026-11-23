@@ -199,7 +199,7 @@ begin
   // Which account the service runs as, for the people whose Cast discovery
   // needs one. The default - leave both fields empty - is LocalSystem, the
   // Windows default, and it is the first thing to measure against UAT row
-  // C6: a service is not a logged-in user, and whether LocalSystem's
+  // C7: a service is not a logged-in user, and whether LocalSystem's
   // interfaces and firewall profile reach the LAN is a fact to be observed
   // on the machine, not a claim this installer makes.
   upgradeNote := '';
@@ -411,7 +411,7 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   resultCode: Integer;
-  user: String;
+  user, profilePath: String;
 begin
   // An upgrade replaces files that a running service is holding open, and the
   // wrapper refuses to register a service name that is already registered. So
@@ -435,6 +435,24 @@ begin
   // it should meet the household's folders before it meets the timetable.
   MigrateConfig();
   MigrateMedia();
+
+  // Then a household that is starting from nothing gets its profile. This is
+  // not decoration: the panel writes a location into an existing YAML and says
+  // "run muezzin init" when there is none, and a daemon pointed at a profile
+  // that is not there exits at once - which under a service is a restart loop
+  // and a browser aimed at a port nobody answers on. Same first act as the
+  // container's entrypoint, before the service is registered. init exits 1
+  // rather than rewriting a profile that already exists, which is the promise
+  // this installer makes everywhere else, so it is called unconditionally.
+  profilePath := ExpandConstant('{commonappdata}\muezzin\muezzin.yaml');
+  if not Exec(ExpandConstant('{app}\muezzin.exe'), 'init -c "' + profilePath + '"',
+              '', SW_HIDE, ewWaitUntilTerminated, resultCode) then
+    Log('muezzin: could not run muezzin init for a first profile')
+  else if resultCode = 0 then
+    Log('muezzin: wrote a starter profile at ' + profilePath +
+        ' - the page finishes it, and no later install rewrites it')
+  else
+    Log('muezzin: a profile is already there; init left it alone');
 
   user := '';
   if LogonPage <> nil then
