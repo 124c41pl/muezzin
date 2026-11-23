@@ -1,7 +1,8 @@
 # UAT checklist
 
-Two halves, because on Docker Desktop on Windows the container and a native run
-cover different things. The measured reason is in `docs/HOW-IT-WORKS.md`
+Three halves, because on Docker Desktop on Windows the container, a native run
+and the installed service cover different things. The measured reason is in
+`docs/HOW-IT-WORKS.md`
 ("Running in a container"): with Docker Desktop on this machine the speaker scan
 found 6 devices natively and 0 from a container, bridge network **and**
 `--network host` alike, because the container sits in a VM and mDNS never leaves
@@ -63,9 +64,8 @@ Not applicable in Part A — expected, not failures:
 ## Part B — native Windows run (audio-delivery UAT)
 
 Same image does not apply here: this half runs the checkout, because it is the
-half that touches sound. Future note: once the service installer lands
-(`packaging/windows-service/`), the same rows run against the service instead of
-a console window.
+half that touches sound, in a console in your own session. The same rows against
+the installed service are Part C.
 
 | # | Check | Expected | Pass |
 |---|---|---|---|
@@ -78,8 +78,33 @@ a console window.
 | B7 | Reboot | With whatever keep-alive you use, the daemon is back and the next event fires unattended | |
 | B8 | Same profile as Part A | The YAML written in the container loads natively with no edits | |
 
-B8 is the one that proves the deployment story: the container and the native
-run, and later the Windows service, are the same program over the same folders.
+B8 is the one that proves the deployment story: the container, the console run,
+and the service in Part C are the same program over the same folders.
+
+## Part C — the installed service (installer UAT)
+
+Built per `packaging/windows-service/README.md`; the file under test is
+`dist\muezzin-<version>-setup.exe`, and every row starts at a double-click. No
+PowerShell, no `pip`, no Python on the machine. **Stop any console daemon first**
+— the service wants :8020 and :8010 for itself, and a daemon already holding
+them makes the service look broken when nothing is broken.
+
+| # | Check | Expected | Pass |
+|---|---|---|---|
+| C1 | Double-click | Licence, folder, and at most one UAC prompt; the wizard never asks for a terminal | |
+| C2 | Layout | `%ProgramFiles%\muezzin\` holds exe, wrapper and service definition; `%ProgramData%\muezzin\` holds `media\` and `out\`; a service named `muezzin`, Automatic, registered | |
+| C3 | Page from another device | `http://<this machine>:8020` answers across the LAN — the one thing Part A could not show | |
+| C4 | Migration | A `muezzin.yaml` in the checkout or beside the setup file is offered, copied, and left where it was; when `%ProgramData%\muezzin\muezzin.yaml` already exists, the page is not shown at all | |
+| C5 | Never overwrite | Re-running the setup leaves the existing profile byte-identical (hash it before and after) | |
+| C6 | `devices` as a service | Compare with B1 on the same machine in the same minute. If the console finds speakers and the service finds none, that is the LocalSystem question: retry with the service-account page filled in and record which of the two worked | |
+| C7 | Firewall | `netsh advfirewall firewall show rule name="muezzin panel"` and `...media` exist, `profile=Private`, pointing at the installed exe | |
+| C8 | Reboot | The machine comes back, the service comes up by itself, the next event fires unattended, and `muezzin.out.log` in the install folder shows it | |
+| C9 | Upgrade | Run a newer setup over an installed one: old service stopped and unregistered, files replaced, service registered and started, no "file in use" fight, `%ProgramData%` untouched | |
+| C10 | Uninstall | Service gone and both firewall rules gone; `%ProgramData%\muezzin` still there, with the message saying so | |
+
+C6 and C9 are the two rows this branch cannot answer on its own: one is a fact
+about your LAN, the other is a fact about upgrading something you already
+trust.
 
 ## Filing results
 

@@ -518,12 +518,13 @@ the device list, along with the player it picked for itself.
 * On macOS the firewall asks whether Python may receive incoming connections the
   first time you run a daemon or a box. Say allow, or the page will not answer and
   discovery will not work.
-* The daemon is a foreground process. There is no Windows service installer or
-  tray icon yet; a Task Scheduler entry or `systemd` unit is what people use.
-  A working shape for the Windows one is being tried in
-  `packaging/windows-service/` — frozen exe plus WinSW, same folders — but it
-  is a proof of concept, not a shipping installer, and `pc_speakers` under a
-  service is an open question there.
+* The daemon is a foreground process. There is no tray icon, and no published
+  installer yet; a Task Scheduler entry or `systemd` unit is what people use
+  today. The Windows shape is being finished in `packaging/windows-service/` —
+  frozen exe plus WinSW behind a double-click installer, over the same folders,
+  not shipped yet. It is not a way to make this machine's own speakers play on
+  a schedule, and that is a decision: a service has no desktop session to make
+  sound in, and the outputs it exists to reach are network ones.
 * No Alexa, and no Bluetooth-target backend.
 * The page has no login and binds the LAN interface, so it belongs on a network
   you trust; `--read-only` removes its ability to write or make noise. It can

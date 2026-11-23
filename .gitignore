@@ -32,6 +32,12 @@ _smoke.yaml
 # "*.exe" below; what is left is the log of one build on one machine, with that
 # machine's paths in it, which belongs to nobody's commit.
 packaging/windows-service/build-log.txt
+# the payload folder build.ps1 fills right before the installer compresses it:
+# the exe, the service wrapper, the service definition. Two of the three are
+# binaries this script downloads or builds, so the folder is a detail of one
+# build on one machine, and the only file in it that is not reproducible is a
+# copy of a file already in this repository.
+packaging/windows-service/stage/
 
 # the old name, in case a config file still carries it
 azankit.yaml

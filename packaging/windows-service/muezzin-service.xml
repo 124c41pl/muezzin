@@ -19,10 +19,11 @@
   mounts, and it is the decision here that is hardest to change later, so it
   lives in a comment where the next person can argue with it.
 
-  pc_speakers is expected NOT to work under this shape: a service runs in
-  Session 0 and winmm there is unreliable. Cast, lan_box and file are what
-  this is for; packaging/windows-service/README.md keeps that promise in one
-  place.
+  Making this machine's own speakers play on a schedule is not what this shape
+  is for, and that is a decision, not an open question: a service runs in
+  Session 0, and the point of hosting muezzin as a service is that the sound
+  goes somewhere else — google_cast, lan_box, file. `pc_speakers` stays what it
+  has always been, the output you use from a console in your own session.
 -->
 <service>
   <id>muezzin</id>
@@ -45,8 +46,12 @@
        command line would still outrank them. -->
   <env name="MUEZZIN_WEB_PORT" value="8020"/>
   <env name="MUEZZIN_HTTP_PORT" value="8010"/>
-  <env name="TZ" value="America/New_York"/>
 
+  <!-- No TZ line. The profile already names the zone the times are computed
+       for, and TZ only ever moves the defaults a process starts with: pinning
+       one city in a file that ships to every household would be wrong for
+       every household but one. Left unset, the service inherits the machine's
+       zone, which is what a console run does. -->
   <startmode>Automatic</startmode>
 
   <!-- The daemon is meant to be forever: a prayer it misses is a prayer
