@@ -7,6 +7,7 @@ without waiting for an upstream release.
 """
 from __future__ import annotations
 
+import os
 import random
 import re
 from dataclasses import dataclass, field
@@ -160,7 +161,7 @@ class Profile:
     outputs: list[OutputConfig]
     events: list[EventConfig]
     library_exclude: list[str] = field(default_factory=list)
-    http_port: int = 8010            # serves media to Cast devices
+    http_port: int = 8010            # media port; MUEZZIN_HTTP_PORT overrides it
     hijri_offset: int = 0            # shift the displayed Hijri date to match your moon
     attribution: Optional[str] = None  # whose name the page shows in its credit line
     map_tiles: str = "osm"           # off, or osm: let the page show a map made by others
@@ -259,6 +260,27 @@ def _member_levels(path, label, raw_members) -> dict:
                              "Google Home app writes it.")
         levels[str(who)] = value
     return levels
+
+
+def _port(value, label: str) -> int:
+    """A port number, with the error naming where the value came from: this file,
+    or the variable that overrode it.
+
+    Checked here because the alternative is worse for whoever reads it. A port that
+    is not a number, found later, is a socket error about an address family or an
+    "invalid literal for int()" traceback from inside the media server; a port out
+    of range is a server that binds something nobody meant to open. Either way the
+    message names a socket, not the word that was typed.
+    """
+    try:
+        port = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} must be a port number between 0 and 65535, got {value!r}. "
+                         "0 means pick a free port.") from None
+    if not 0 <= port < 65536:
+        raise ValueError(f"{label} must be between 0 and 65535, got {port}. "
+                         "0 means pick a free port.")
+    return port
 
 
 def load_profile(path) -> Profile:
@@ -507,10 +529,18 @@ def load_profile(path) -> Profile:
         raise ValueError(f"{path}: hijri_offset must be between -3 and 3, got {offset}. "
                          "It shifts the Hijri date the page shows, not the prayer times.")
 
-    http_port = int(raw.get("http_port", 8010))
-    if not 0 <= http_port < 65536:
-        raise ValueError(f"{path}: http_port must be between 0 and 65535, got {http_port}. "
-                         "0 means pick a free port.")
+    # The media port belongs to the profile, because which port this household's
+    # recordings are served over is part of its setup. MUEZZIN_HTTP_PORT says
+    # otherwise for this one run, and it wins: a container image carries the
+    # profile it is about to read, so whoever starts a second muezzin on a machine
+    # that already runs one has no file to edit before the bind happens, and the
+    # second daemon would otherwise fail on the port the first one is holding.
+    # `0` still means "take a free one", which is the answer when several
+    # containers share a machine and nobody wants to keep a port ledger.
+    http_port = _port(raw.get("http_port", 8010), f"{path}: http_port")
+    env_http = (os.environ.get("MUEZZIN_HTTP_PORT") or "").strip()
+    if env_http:
+        http_port = _port(env_http, "MUEZZIN_HTTP_PORT")
 
     # The position diagram on the page is arithmetic and always available. Map tiles are
     # a different kind of thing: they come from somebody else's machine. So the knob is

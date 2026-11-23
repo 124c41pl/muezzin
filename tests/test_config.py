@@ -477,3 +477,48 @@ def test_the_map_is_on_from_the_first_run_and_one_line_puts_it_back(tmp_path):
         with pytest.raises(ValueError, match="one of off, osm"):
             load_profile(write(tmp_path, variant(junk)))
 
+
+# ---- the media port, and the second container ---------------------------------
+
+def test_the_media_port_is_the_profiles_own(tmp_path, monkeypatch):
+    monkeypatch.delenv("MUEZZIN_HTTP_PORT", raising=False)
+    assert load_profile(write(tmp_path, BASE)).http_port == 8010
+    p = load_profile(write(tmp_path, BASE + "http_port: 8015\n"))
+    assert p.http_port == 8015, "which port this household serves its recordings over is its own business"
+
+
+def test_the_environment_moves_the_media_port_off_one_already_taken(tmp_path, monkeypatch):
+    """A container image carries the profile it is about to read, so on a machine
+    that already runs a muezzin there is no file to edit before the bind: the
+    operator says the port once, next to the image name, and the second daemon
+    starts instead of failing on the address the first one is holding. The variable
+    therefore outranks the file, and the file is left alone - the page's own edits
+    still round-trip the text it holds."""
+    monkeypatch.setenv("MUEZZIN_HTTP_PORT", "8015")
+    p = load_profile(write(tmp_path, BASE + "http_port: 8010\n"))
+    assert p.http_port == 8015
+
+
+def test_a_media_port_of_zero_means_take_a_free_one(tmp_path, monkeypatch):
+    """The other answer to two servers on one machine, for whoever would rather not
+    keep a port ledger at all: the speaker is handed the port that was picked."""
+    monkeypatch.setenv("MUEZZIN_HTTP_PORT", "0")
+    assert load_profile(write(tmp_path, BASE)).http_port == 0
+
+
+def test_a_bad_media_port_names_where_the_value_came_from(tmp_path, monkeypatch):
+    """The file and the variable are two different places to look, and a message
+    that says only "http_port" sends a person to a YAML file that says nothing of
+    the kind. A value that is not a number at all gets the same sentence rather
+    than a traceback out of int()."""
+    with pytest.raises(ValueError, match=r"http_port must be a port number.*eighty"):
+        load_profile(write(tmp_path, BASE + "http_port: eighty\n"))
+    with pytest.raises(ValueError, match=r"muezzin\.yaml: http_port"):
+        load_profile(write(tmp_path, BASE + "http_port: 70000\n"))
+    monkeypatch.setenv("MUEZZIN_HTTP_PORT", "eighty")
+    with pytest.raises(ValueError, match="MUEZZIN_HTTP_PORT must be a port number"):
+        load_profile(write(tmp_path, BASE))
+    monkeypatch.setenv("MUEZZIN_HTTP_PORT", "70000")
+    with pytest.raises(ValueError, match="MUEZZIN_HTTP_PORT must be between 0 and 65535"):
+        load_profile(write(tmp_path, BASE))
+
