@@ -320,11 +320,11 @@ does not see on a Pi are in `docs/HOW-IT-WORKS.md`.
 thing from this repo:
 
 ```bash
-docker pull ghcr.io/124c41pl/muezzin:0.1.4
+docker pull ghcr.io/124c41pl/muezzin:0.1.5
 mkdir -p config media
 docker run -d --name muezzin --network host \
   -v "$PWD/config:/app/config" -v "$PWD/media:/app/media" \
-  ghcr.io/124c41pl/muezzin:0.1.4
+  ghcr.io/124c41pl/muezzin:0.1.5
 docker logs muezzin        # it prints where the page answers
 ```
 
