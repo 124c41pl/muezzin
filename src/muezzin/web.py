@@ -33,8 +33,8 @@ import yaml
 
 from . import __version__, calc, fileserve, geocode, hijri, localplay, net, yamledit
 from .backends import KINDS, call_level, lead_for, scan_speakers
-from .config import (AUDIO_SUFFIXES, STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE,
-                     load_profile, uses_starter_location, valid_host)
+from .config import (AUDIO_SUFFIXES, MAX_RANDOM_PICKS, STARTER_LATITUDE, STARTER_LONGITUDE,
+                     STARTER_TIMEZONE, load_profile, uses_starter_location, valid_host)
 from .page import PAGE
 from .scheduler import PRAYER_KEYS, Runner, clock_hours, upcoming
 
@@ -912,31 +912,78 @@ class WebPanel:
         return None
 
     def set_audio(self, payload: dict) -> dict:
-        """Which clip plays for which prayer, including a Friday-only variant.
+        """Which clip plays for which prayer, including a Friday-only variant, and
+        how many recordings that prayer draws from the library as it fires.
 
         Empty `media` removes the entry rather than writing an entry with nothing
         to play: the loader rejects an event with no media, so "no clip" and "an
-        event with no files" are not the same statement.
+        event with no files" are not the same statement. The exception is a prayer
+        that draws: an event with `random: 2` and no named files is a whole plan,
+        so taking its named clip away takes the `media:` line out and leaves the
+        drawing, and the entry stays.
+
+        `media` being in the payload at all is the statement. The page leaves it
+        out when it is only changing how many to draw, so a drawing change cannot
+        be misread as "this prayer plays nothing"; `random` being absent likewise
+        means "leave the drawing alone".
         """
         at = str(payload.get("at") or "").strip().lower()
         if at not in PRAYER_KEYS:
             raise ValueError(f"{at or 'nothing'} is not one of {', '.join(PRAYER_KEYS)}")
         friday = bool(payload.get("friday"))
+        named = "media" in payload
         media = [str(m) for m in (payload.get("media") or [])]
-        for item in media:
-            if Path(item).suffix.lower() not in AUDIO_SUFFIXES:
-                raise ValueError(f"{item} is not audio this daemon can play "
-                                 f"({', '.join(sorted(AUDIO_SUFFIXES))})")
-        self._inside_media_dir(media)
+        if named:
+            for item in media:
+                if Path(item).suffix.lower() not in AUDIO_SUFFIXES:
+                    raise ValueError(f"{item} is not audio this daemon can play "
+                                     f"({', '.join(sorted(AUDIO_SUFFIXES))})")
+            self._inside_media_dir(media)
+        # The count is checked here rather than left for the loader because the page
+        # asked for it by number, and a refusal that names the ceiling is shorter than
+        # one that says the file no longer loads. 0 is "stop drawing", which writes
+        # no line at all rather than a zero the loader would ignore anyway.
+        draws = None
+        raw = payload.get("random")
+        if raw not in (None, ""):
+            try:
+                draws = int(str(raw))
+            except ValueError:
+                raise ValueError(f"{raw!r} is not a number of recordings to draw from the "
+                                 "library") from None
+            if not 0 <= draws <= MAX_RANDOM_PICKS:
+                raise ValueError(f"{draws} is not a number of recordings between 0 and "
+                                 f"{MAX_RANDOM_PICKS}. This is how many to pick out of the "
+                                 "library, not how much to play; the library is what it is, "
+                                 "so a big number here is a typo rather than a long afternoon.")
         with self._editing() as text:
             row = self._event_row(yamledit.entries(text, "events"), at, friday)
-            if not media:
+            held = 0
+            if row is not None:
+                try:
+                    held = int(yamledit.entry_scalar(row, "random") or 0)
+                except ValueError:
+                    held = 0
+            keep = draws if draws is not None else held
+            # Only an asserted-empty `media:` can take an entry away: a payload that
+            # says nothing about named clips is only talking about the drawing, and
+            # deleting somebody's prayer because a dropdown moved is not what a
+            # dropdown does. A new entry needs something to play, named or drawn.
+            if not (media or (draws and draws > 0)) and (not named or not keep):
                 if row is None:
                     return {"at": at, "friday": friday, "unchanged": True}
-                saved = self.save_config(yamledit.delete_entry(text, "events", row["index"]))
-                saved["removed_event"] = row["name"]
-                return saved
-            fields: dict = {"media": media}
+                if named and not keep:
+                    saved = self.save_config(yamledit.delete_entry(text, "events",
+                                                                   row["index"]))
+                    saved["removed_event"] = row["name"]
+                    saved["at"] = at
+                    saved["friday"] = friday
+                    return saved
+            fields: dict = {}
+            if media:
+                fields["media"] = media
+            if draws and draws > 0:
+                fields["random"] = draws
             for knob in ("offset_min", "volume"):
                 if payload.get(knob) not in (None, ""):
                     fields[knob] = float(payload[knob]) if knob == "volume" else int(payload[knob])
@@ -954,7 +1001,12 @@ class WebPanel:
                 saved = self.save_config(new)
                 saved["added_event"] = name
             else:
-                saved = self.save_config(yamledit.edit_entry(text, "events", row["index"], fields))
+                edit = yamledit.edit_entry(text, "events", row["index"], fields)
+                if named and not media:
+                    edit = yamledit.drop_field(edit, "events", row["index"], "media")
+                if draws == 0:
+                    edit = yamledit.drop_field(edit, "events", row["index"], "random")
+                saved = self.save_config(edit)
                 saved["updated_event"] = row["name"]
         saved["at"] = at
         saved["friday"] = friday
