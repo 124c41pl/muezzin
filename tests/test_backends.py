@@ -177,7 +177,7 @@ def test_a_speaker_the_helper_wrote_off_still_gets_the_audio(monkeypatch, tmp_pa
     b = study()
     b.poll_seconds = 0.01
     b.max_play_seconds = 2.0
-    b.media_server = SimpleNamespace(url_for=lambda p: "http://192.0.2.10:8010/" + p.name)
+    b.media_server = SimpleNamespace(url_for=lambda p, peer=None: "http://192.0.2.10:8010/" + p.name)
     b.play([clip])
     assert [c[0] for c in sent[:2]] == ["volume", "media"], sent
     assert sent[0][1] == backends.DEFAULT_CAST_VOLUME, "a speaker is the one thing a level applies to"
@@ -192,6 +192,63 @@ def test_a_speaker_that_never_says_playing_is_reported_as_unproven(caplog):
     study()._check_finished("Study speaker", Path("fajr.wav"), status("IDLE"), started=False)
     assert "never reported playing fajr.wav" in caplog.text
     assert "did not finish" not in caplog.text
+
+
+def test_a_silent_speaker_is_told_which_address_it_was_handed(caplog):
+    """The hardest silence to read is the one where every part of this machine is
+    happy: the speaker was found, connected to, given the file and left alone. The
+    one fact that decides whether a room made a noise is the address in the URL it
+    was handed, so the line has to carry it - a person reading the log at 5 am is
+    going to ask the speaker's network about that address and nothing else."""
+    b = study()
+    b._handed = ("Study speaker", "http://100.64.100.6:8010/fajr.wav")
+    b._check_finished("Study speaker", Path("fajr.wav"), status("IDLE"), started=False)
+    assert "told to fetch http://100.64.100.6:8010/fajr.wav" in caplog.text, caplog.text
+
+
+def test_a_speaker_is_handed_an_address_it_can_reach(tmp_path, monkeypatch):
+    """Measured on a household machine, not a fixture: the daemon named the speaker,
+    set four rooms' levels, launched the media app, and the house stayed silent while
+    the log read like a delivered adhan. The URL had been http://100.64.100.6:8010 -
+    the address of a mesh VPN adapter, because that adapter owns the default route
+    and the old question was "which address do I reach the internet from". A Google
+    Home on the wifi has no route into that network. The same trick, asked about the
+    speaker instead of the internet, answers the question that matters - and a device
+    this machine cannot route to at all still gets the old, general answer."""
+    from muezzin import media as media_module
+
+    asked = []
+
+    class FakeSocket:
+        """The UDP trick, played back: connecting a datagram socket sends nothing,
+        it only asks the routing table which source address it would answer from."""
+        def connect(self, addr):
+            asked.append(addr[0])
+            if addr[0] == "192.0.2.7":
+                raise OSError("no route to that network from here")
+            self.source = "192.168.0.8" if addr[0].startswith("192.168.") else "100.64.100.6"
+
+        def getsockname(self):
+            return (self.source, 0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(backends.socket, "socket", lambda family, kind: FakeSocket())
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    clip = media_dir / "adhan.mp3"
+    clip.write_bytes(b"ID3")
+    server = media_module.MediaServer(media_dir, port=8010)
+
+    assert server.url_for(clip, "192.168.0.44").startswith("http://192.168.0.8:8010/"), \
+        "a speaker on the wifi is given the address that is on the wifi"
+    assert asked == ["192.168.0.44"], "asked about the device, not about the internet"
+    assert server.url_for(clip, "192.0.2.7").startswith("http://100.64.100.6:8010/"), \
+        "no route to a device is not a reason to hand it nothing at all"
+    assert asked[-1] == "8.8.8.8", "the fallback is the question this code always asked"
+    assert server.url_for(clip).startswith("http://100.64.100.6:8010/"), \
+        "with no device in mind there is nothing newer to ask"
 
 
 
@@ -433,7 +490,7 @@ def cast_group(monkeypatch, rooms, group=None, members=None, volume=0.4, claims=
                                  volume=volume, members=members or {}))
     b.poll_seconds = 0.01
     b.max_play_seconds = 2.0
-    b.media_server = SimpleNamespace(url_for=lambda p: "http://192.0.2.10:8010/" + p.name)
+    b.media_server = SimpleNamespace(url_for=lambda p, peer=None: "http://192.0.2.10:8010/" + p.name)
     b.group_receiver = group          # so a test can put something in the middle of the play
     return b
 
@@ -783,7 +840,7 @@ def test_a_prayer_can_name_the_one_speaker_it_plays_through(tmp_path, monkeypatc
                                  volume=0.2))
     b.poll_seconds = 0.01
     b.max_play_seconds = 2.0
-    b.media_server = SimpleNamespace(url_for=lambda p: "http://192.0.2.10:8010/" + p.name)
+    b.media_server = SimpleNamespace(url_for=lambda p, peer=None: "http://192.0.2.10:8010/" + p.name)
     b.play([clip(tmp_path)], None, {"Study speaker": 0.75})
     assert asked[0] == 0.75, "the prayer's number is the number this speaker is asked for"
     assert asked[1] == "media", "and the adhan still goes out"

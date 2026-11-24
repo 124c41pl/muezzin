@@ -76,6 +76,8 @@ class MediaServer:
         self.port = port
         self._ip: str | None = None
         self._ip_at = 0.0
+        # the same question asked per device, and answered just as freshly
+        self._peers: dict[str, tuple[str, float]] = {}
         self._httpd = None
         self._thread = None
 
@@ -94,7 +96,25 @@ class MediaServer:
                 self._ip, self._ip_at = ip, time.time()
         return self._ip
 
-    def url_for(self, path: Path) -> str:
+    def host_ip_for(self, peer: str | None) -> str:
+        """The address to hand one particular device.
+
+        This machine's default-route address is the wrong answer wherever another
+        network also leads out of it, and that is now ordinary: a mesh VPN adapter
+        on the same box takes the default route, so the address every speaker is
+        handed belongs to a network the speaker has no route back into. The device
+        is asked instead - which of my addresses does this machine use to reach
+        you - and its answer is the URL that device can fetch.
+        """
+        if not peer:
+            return self.host_ip
+        now = time.time()
+        hit = self._peers.get(peer)
+        if hit is None or now - hit[1] > 300:
+            self._peers[peer] = (local_ip(peer), now)
+        return self._peers[peer][0]
+
+    def url_for(self, path: Path, peer: str | None = None) -> str:
         path = Path(path)
         try:
             rel = path.resolve().relative_to(self.media_dir.resolve())
@@ -102,7 +122,7 @@ class MediaServer:
             raise ValueError(f"{path} is not inside the media dir {self.media_dir}; "
                              f"Cast devices can only be given files from media_dir")
         from urllib.parse import quote
-        return f"http://{self.host_ip}:{self.port}/{quote(str(rel).replace(chr(92), '/'))}"
+        return f"http://{self.host_ip_for(peer)}:{self.port}/{quote(str(rel).replace(chr(92), '/'))}"
 
     def start(self) -> None:
         if self._httpd:
@@ -114,7 +134,9 @@ class MediaServer:
         self._thread = threading.Thread(target=self._httpd.serve_forever,
                                         name="muezzin-media", daemon=True)
         self._thread.start()
-        log.info("media server serving %s at http://%s:%s", self.media_dir, self.host_ip, self.port)
+        log.info("media server serving %s on port %s; a device is handed the address of this "
+                 "machine that reaches its network, which is not always %s",
+                 self.media_dir, self.port, self.host_ip)
 
     def stop(self) -> None:
         if self._httpd:

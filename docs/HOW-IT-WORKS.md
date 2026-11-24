@@ -651,6 +651,23 @@ URL handed to a speaker names whichever port the server actually got. That means
   that port** — this is the most common reason a speaker connects and stays
   silent. Run `muezzin -v daemon` and look for `media http: "GET /fajr.mp3 ...
   200"`; a request that never arrives is a firewall or VLAN problem, not muezzin.
+  The Windows installer's rules are scoped to the local subnet (`remoteip=localsubnet`,
+  any profile) rather than to the *Private* profile, because a home network is
+  routinely filed as Public by Windows — measured on the machine this was first
+  installed on, both adapters were Public — and a Private-only rule there strands
+  every speaker with nothing wrong anywhere in the setup.
+* the **address in that URL is one the speaker has to be able to route to**, which
+  on a machine with more than one adapter is not automatic. A box with a mesh VPN
+  (Tailscale, ZeroTier) or a WSL virtual switch attached holds several local
+  addresses, and the one that owns the default route is usually the VPN's: a
+  speaker was measured being handed `http://100.64.100.6:8010/...`, a
+  carrier-grade-NAT address no Google Home on the wifi can reach, while the
+  Ethernet adapter on the speakers' own network sat idle at `192.168.0.8`. So the
+  address is chosen per device, by asking the routing table which of this machine's
+  addresses it would answer *that speaker* from, falling back to the general answer
+  when there is no route to it at all. A speaker that never reported playing is
+  logged with the URL it was handed, which makes the check one line: is that
+  address on the speakers' network?
 * long recordings never pass through the daemon, so a 20-minute surah is fine.
 * mDNS must not be blocked. Windows treats a network as *public* by default and
   blocks it; Nest Minis also answer mDNS inconsistently, which is why muezzin

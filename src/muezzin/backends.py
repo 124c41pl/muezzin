@@ -100,11 +100,17 @@ class Backend(abc.ABC):
         pass
 
     # helpers ---------------------------------------------------------------
-    def _url_for(self, path: Path) -> str:
+    def _url_for(self, path: Path, peer: str | None = None) -> str:
+        """The URL to hand this device, on the network it can actually reach.
+
+        `peer` is the device's own address or host name: whoever is going to
+        fetch the file, which is the only thing that decides which of this
+        machine's addresses is any use to it.
+        """
         if self.media_server is None:
             raise BackendError(f"{self.cfg.name}: {self.kind} needs a media URL but no media server "
                                f"is running (set http_port in the profile)")
-        return self.media_server.url_for(path)
+        return self.media_server.url_for(path, peer)
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +484,11 @@ class CastBackend(Backend):
         self._live = []
         self._asked = False
         self._live_lock = threading.Lock()
+        # The last file this output was handed a URL for, and the address it was
+        # meant for. Kept so a speaker that never made a sound can be told what it
+        # was asked to fetch, which is the one thing worth reading at 5 am: the
+        # address in that URL is either reachable from the speaker or it is not.
+        self._handed: tuple[str, str] | None = None
         # Whether the thing said about a group's level has been said yet: it is not news
         # five times a day, and a person reading the log wants it once, not a copy per event.
         self._group_level_said = False
@@ -930,12 +941,19 @@ class CastBackend(Backend):
                 if not dev["group"]:
                     cast.set_volume(self._call_level(dev["name"], volume, members))
                 try:
+                    # The address in this URL is the one this machine reaches *this*
+                    # device through, not the one it reaches the internet through: on a
+                    # box that also has a mesh VPN adapter the second address belongs to
+                    # a network the speaker has no route back into, and the file is
+                    # fetched from nowhere while the log says it was delivered.
+                    url = self._url_for(path, dev["address"])
+                    self._handed = (dev["name"], url)
                     # BUFFERED, not the library default of LIVE: these are finite
                     # files. Asked to play one as a live stream, a Nest sits on the
                     # last second of the adhan and then reports an error instead of
                     # saying it finished, which is exactly the difference between a
                     # delivered adhan and a silent speaker.
-                    mc.play_media(self._url_for(path), _content_type(path),
+                    mc.play_media(url, _content_type(path),
                                   stream_type="BUFFERED")
                     mc.block_until_active(timeout=15)
                     # The device reports its own state; poll it instead of guessing the
@@ -1074,6 +1092,11 @@ class CastBackend(Backend):
         """
         state = getattr(status, "player_state", None)
         reason = getattr(status, "idle_reason", None)
+        # The address the speaker was told the file lives at, when this call knows it.
+        # A receiver that could not fetch a URL is reporting a routing fact, and the one
+        # thing worth doing with that is looking at the address - so say which it was
+        # rather than sending a household off to guess at it.
+        fetch = f"; it was told to fetch {self._handed[1]}" if self._handed else ""
         if state == "PLAYING":
             raise BackendError(
                 f"{self.cfg.name}: {path.name} was still playing on {name!r} after "
@@ -1081,7 +1104,8 @@ class CastBackend(Backend):
         if reason == "ERROR":
             raise BackendError(
                 f"{self.cfg.name}: {name!r} could not finish {path.name}; the speaker reported an "
-                f"error (check that {self.cfg.name}'s media URL is reachable from the speaker)")
+                f"error (check that {self.cfg.name}'s media URL is reachable from the speaker)"
+                + fetch)
         if reason and reason != "FINISHED":
             if self._asked:
                 # The house asked for this one to stop, so a speaker that came back
@@ -1114,8 +1138,8 @@ class CastBackend(Backend):
             # silent, and the receiver cannot tell us which. Saying "played" would
             # be a guess, so name what is actually unknown.
             log.warning("%s: %r never reported playing %s; if the speaker stayed silent, check "
-                        "that its media URL is reachable from the speaker",
-                        self.cfg.name, name, path.name)
+                        "that its media URL is reachable from the speaker%s",
+                        self.cfg.name, name, path.name, fetch)
 
 
 class LanBoxBackend(Backend):
@@ -1149,7 +1173,9 @@ class LanBoxBackend(Backend):
                 continue
             if self.media_server is not None:
                 # Preferred: the box pulls the file, so a long recording costs nothing here.
-                payload = {"urls": [self._url_for(path)]}
+                # The URL is the address this machine reaches that box through, which is
+                # the address the box can reach back on.
+                payload = {"urls": [self._url_for(path, host)]}
             else:
                 # Fallback: send the bytes inline, so the box needs no route back to this machine.
                 payload = {"files": {path.name: base64.b64encode(path.read_bytes()).decode()}}
@@ -1245,13 +1271,34 @@ def _content_type(path: Path) -> str:
             ".flac": "audio/flac"}.get(path.suffix.lower(), "application/octet-stream")
 
 
-def local_ip() -> str:
-    """Best-guess LAN address for the media server URL."""
+def local_ip(peer: str | None = None) -> str:
+    """Best-guess LAN address for the media server URL.
+
+    A UDP socket that is connected sends nothing: asking it which source address
+    it would answer from is the routing table giving its own verdict, which beats
+    walking the interfaces and guessing from their names.
+
+    With `peer`, the question becomes the one that matters. "Which address do I
+    use to reach the internet" and "which address can the speaker reach me on" are
+    different questions on any machine with more than one network, and a home
+    server increasingly has one: a mesh VPN like Tailscale sits on the machine
+    too, and where the wider world goes out of, that is the address the routing
+    table picks. A Google Home on the wifi has no route to that address, so it is
+    handed a URL it cannot fetch and sits perfectly silent while everything on
+    this machine says the file was delivered. Asking the same trick about the
+    speaker's own address answers the question the speaker is actually asking.
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        s.connect(("8.8.8.8", 80))
+        s.connect((peer or "8.8.8.8", 80))
         return s.getsockname()[0]
     except OSError:
+        if peer:
+            # No route to that device from here at all - a speaker on a network
+            # this machine cannot see, or a name that will not resolve. The
+            # address for the wider world is the next-best guess, and it is what
+            # this function meant before anybody had a mesh adapter.
+            return local_ip()
         return "127.0.0.1"
     finally:
         s.close()

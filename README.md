@@ -565,6 +565,16 @@ the device list, along with the player it picked for itself.
   speaker with a stale idea of a recording needs in order to stop. The preview in the
   page is served the same way, which is why the bar beside it can be dragged: the
   piece that was asked for is the piece that comes back.
+* The address in the URL a Cast speaker is handed is chosen per speaker out of this
+  machine's own adapters, rather than taken from whichever one owns the default
+  route: on a machine with a mesh VPN (Tailscale, ZeroTier) or a WSL virtual switch
+  attached, the default-route address belongs to the VPN and nothing on the wifi can
+  route back to it. When a speaker never reported playing, the log line carries the
+  URL it was handed, so the check on a silent house is one line — is that address on
+  the speakers' network? A Windows install opens both ports to the local subnet on
+  any firewall profile for the same kind of reason: a home network is routinely
+  filed as *Public* by Windows, and a Private-only rule there leaves every speaker
+  unreachable with nothing wrong anywhere else.
 * One adhan at a time per box; overlapping events queue.
 * Network speakers are handed the recording a few seconds before the time, because
   finding a speaker and getting it to start takes seconds and can only be measured
