@@ -201,6 +201,42 @@ muezzin …`, then `Deleting file: …\muezzin.exe`, the folder gone,
 LocalSystem service in session 0 — there the sweep catches the process on its
 no-reported-path branch, which no probe on this account could produce.
 
+What then kept the install folder alive was not a process at all. On 2026-11-24 at
+13:19 an uninstall took both exes and left `%ProgramFiles%\muezzin` holding
+`muezzin-service.err.log` (18,323 bytes), `.out.log` and `.wrapper.log`: the
+wrapper still had them open while it was going away, and Inno only deletes what
+its manifest lists, which never included those three — they are the wrapper's,
+written beside the exe while the service runs. `ClearWrapperLogs` now runs at
+`usUninstall`, after the process sweep. It names up to eighteen files
+(`wrapper`/`err`/`out`, each with `.1` through `.5`, which is the ceiling
+`keepFiles 5` in the service definition allows), and waits for the *file* rather
+than the process — nine tries, 750 ms apart — because by then the wrapper is gone
+and only a handle is in the way. The shipping `[Code]` was sliced whole into a
+throwaway setup, its firewall calls and its process sweep stubbed out, and run
+against a folder holding five planted logs, in four cases. Nothing holding them:
+`deleted 4 log file(s) … needing 0 wait(s) of 750 ms`, folder gone; the fifth,
+`muezzin-service.err.log.1`, is numbered the way the sweep does not name and went
+through the `[UninstallDelete]` wildcard instead, which is why that line is a net
+and not a duplicate of the list. One log held and released after three seconds:
+`needing 4 wait(s) of 750 ms`, folder gone. One held the whole time: `1 of 4 log
+file(s) … would not delete in 9 tries`, folder left holding that one file, and the
+closing message names the same thing. A file in the folder that the installer did
+not put there: logs gone, folder kept, which is what `dirifempty` is there for.
+The household folder was hashed before and after and did not move.
+
+That probe also caught a defect of mine. A message box that `[Code]` opens during
+a *silent* uninstall is never answered, because nobody is looking at it, so the
+uninstaller never exits: it sits on its uninstall data, on its log file and on the
+app-ID mutex, and every later uninstall of the same app then refuses and quits
+with nothing done. Four probe runs lost all sixteen of their cases that way, while
+the deleting had in fact succeeded and the log said so — which is how it was found.
+The three closing notes now go through `ExplainUninstall`, which writes them to the
+log and shows them on screen only when `WizardSilent` says somebody is looking at a
+window; measured today, that answers true under `/VERYSILENT`. With it in, the
+uninstaller's second phase — a copy of itself called `_unins.tmp`, not `unins000`,
+which is why matching the process name alone misses it — was out of the way half a
+second after the first phase returned.
+
 Not run here: the wizard as a person experiences it (its pages were built and its
 steps ran, but nothing was clicked), and therefore the boot start, the migration
 and the service-account registration. The upgrade-over-an-existing-service path
@@ -216,7 +252,11 @@ is a runtime abort with no line number, not a compile error. One more is a word
 that does not exist: this version's `MsgBox` types are `mbInformation`,
 `mbConfirmation`, `mbError` and `mbCriticalError`, and `mbWarning` — the one a
 person reaches for by reflex — is "Unknown identifier", caught at compile time
-here only because the build script checks the compiler's exit code.
+here only because the build script checks the compiler's exit code. The same
+version's `[Code]` has `FindFirst` and `TFindRec` but none of the file-attribute
+constants: `faFile`, `faDirectory`, `faAnyAll` and the rest are all "Unknown
+identifier" too, one probe compiled per name, which is why `ClearWrapperLogs`
+enumerates the names it expects instead of searching the folder for them.
 
 Two more, both about the wrapper's spelling rather than Inno's, and both found by
 running or reading the pinned v2.12.0 rather than by trusting a memory of the

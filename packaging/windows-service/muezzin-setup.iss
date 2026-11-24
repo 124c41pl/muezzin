@@ -10,7 +10,7 @@
 ;
 ;   * the program goes to Program Files and is disposable; the profile, the
 ;     audio and the logs go to %ProgramData%\muezzin and are never touched by
-;     an install, an upgrade or an uninstall Ã¢â‚¬â€ same split as the container's
+;     an install, an upgrade or an uninstall — same split as the container's
 ;     ./config and ./media mounts;
 ;   * an existing profile is never overwritten, and a UAT profile found in a
 ;     checkout is offered for migration rather than silently copied;
@@ -25,7 +25,7 @@
 ;     only. That is a different boundary from a network profile, and it is the
 ;     measured reason for using it: on the machine this was built for, Windows
 ;     had filed both adapters as Public, so a Private-only rule let speakers be
-;     found, added and handed a URL they could not fetch Ã¢â‚¬â€ a silent house with
+;     found, added and handed a URL they could not fetch — a silent house with
 ;     nothing wrong in it. SECURITY.md is the threat model for anyone who puts
 ;     8020 on a network they do not control;
 ;   * pc_speakers is out of scope by design: this program is not meant to
@@ -34,14 +34,14 @@
 ;
 ; One note for whoever edits this next: comments belong outside the sections
 ; or on their own lines. The first version of this file carried a trailing
-; comment on a [Setup] line and Inno read it as part of the value Ã¢â‚¬â€
+; comment on a [Setup] line and Inno read it as part of the value —
 ; "PrivilegesRequired is invalid", at line 41, with nothing to say about the
 ; semicolon. Inno's own [Setup] section supports no inline comments at all.
 ;
 ; The second note, learned from a tester's screen rather than from the
 ; compiler: {app} does not exist until the folder page has been answered. A
-; [Code] call that expands it earlier Ã¢â‚¬â€ in InitializeWizard, which runs before
-; the first page is drawn Ã¢â‚¬â€ aborts the whole wizard with "Runtime error:
+; [Code] call that expands it earlier — in InitializeWizard, which runs before
+; the first page is drawn — aborts the whole wizard with "Runtime error:
 ; Internal error: An attempt was made to expand the 'app' constant before it
 ; was initialized", and the message names no line of this file. It was
 ; reproduced here in a three-line installer whose only job was to ask for
@@ -131,6 +131,7 @@ var
   LogonPage: TInputQueryWizardPage;
   MigrationPage: TInputOptionWizardPage;
   UninstallHeld: Integer;      // processes still holding {app} when the uninstall ran
+  UninstallLogsLeft: Integer;  // the service's own log files that would not delete
 
 function ConfigSource(): String;
 begin
@@ -238,6 +239,116 @@ begin
   Result := stillThere;
 end;
 
+function ClearWrapperLogs(const why: String): Integer;
+var
+  attempt, i, j, tries, total, survived: Integer;
+  appDir, path: String;
+  names, left, keep: TArrayOfString;
+begin
+  // Delete the log files the service writes beside itself, so the program folder
+  // can leave with the program.
+  //
+  // Measured on the machine this shipped to, 13:19 on 2026-11-24, from that
+  // machine's own wrapper log: the uninstaller asked the service to stop, the
+  // wrapper wrote "Service 'muezzin (adhan daemon) (muezzin)' stopped
+  // successfully" and then "was uninstalled successfully", and both exes did get
+  // deleted. The folder survived, holding muezzin-service.out.log,
+  // muezzin-service.err.log and muezzin-service.wrapper.log. Those are not the
+  // household's logs - those live in {commonappdata} and nothing here touches
+  // them - they are the console output WinSW keeps next to the service, and the
+  // wrapper had them open when Inno reached the folder, so the folder could not
+  // be removed. Row C11 of the UAT checklist asks whether the folder is gone, and
+  // a folder holding three files is not gone in any way that matters to the
+  // person checking it.
+  //
+  // What gets waited for is the file, not the process. SweepOwnProcesses has
+  // already spent about six seconds on the process by the time this runs, and a
+  // process that answered a stop politely can still leave a handle behind. Nine
+  // tries 750 ms apart spends about the same patience again on the files. A name
+  // that has gone missing between the listing and the attempt is not counted as a
+  // survivor: DeleteFile answers no to that as well, and only FileExists decides.
+  //
+  // The names are written out rather than searched for, because a search is not
+  // available. Inno 6.7.3 does have FindFirst and TFindRec in [Code], but it has
+  // none of the file-attribute constants its own documentation lists: faAnyAll,
+  // faArchive, faDirectory, faFile, faAny, faNormal, faHidden and faReadOnly all
+  // fail to compile with "Unknown identifier", measured here by compiling one
+  // file per name. So the list is bounded by the service definition's own roll
+  // policy - it keeps five rolled logs per stream, three streams, eighteen names.
+  //
+  // The other half of the coverage is the [UninstallDelete] line below, which
+  // names the same files with a wildcard and is not a duplicate of this list but
+  // the net under it: if WinSW numbers its rolled files the other way round, as
+  // .err.log.1 instead of .err.1.log, this list misses them and that line gets
+  // them. What this function adds over that line is the waiting.
+  //
+  // This runs on uninstall only. An upgrade keeps the logs, because the log of
+  // the build that just failed is the one thing a person wants while the next one
+  // is being installed.
+  appDir := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
+  tries := 9;
+  SetArrayLength(names, 18);
+  names[0] := 'muezzin-service.wrapper.log';
+  names[1] := 'muezzin-service.wrapper.1.log';
+  names[2] := 'muezzin-service.wrapper.2.log';
+  names[3] := 'muezzin-service.wrapper.3.log';
+  names[4] := 'muezzin-service.wrapper.4.log';
+  names[5] := 'muezzin-service.wrapper.5.log';
+  names[6] := 'muezzin-service.err.log';
+  names[7] := 'muezzin-service.err.1.log';
+  names[8] := 'muezzin-service.err.2.log';
+  names[9] := 'muezzin-service.err.3.log';
+  names[10] := 'muezzin-service.err.4.log';
+  names[11] := 'muezzin-service.err.5.log';
+  names[12] := 'muezzin-service.out.log';
+  names[13] := 'muezzin-service.out.1.log';
+  names[14] := 'muezzin-service.out.2.log';
+  names[15] := 'muezzin-service.out.3.log';
+  names[16] := 'muezzin-service.out.4.log';
+  names[17] := 'muezzin-service.out.5.log';
+  SetArrayLength(left, 0);
+  for i := 0 to GetArrayLength(names) - 1 do
+    if FileExists(appDir + '\' + names[i]) then
+    begin
+      SetArrayLength(left, GetArrayLength(left) + 1);
+      left[GetArrayLength(left) - 1] := names[i];
+    end;
+  total := GetArrayLength(left);
+  for attempt := 1 to tries do
+  begin
+    SetArrayLength(keep, GetArrayLength(left));
+    j := 0;
+    for i := 0 to GetArrayLength(left) - 1 do
+    begin
+      path := appDir + '\' + left[i];
+      if DeleteFile(path) then
+        Continue;
+      if FileExists(path) then
+      begin
+        keep[j] := left[i];
+        j := j + 1;
+      end;
+    end;
+    SetArrayLength(left, j);
+    for i := 0 to j - 1 do
+      left[i] := keep[i];
+    if j = 0 then
+      Break;
+    if attempt < tries then
+      Sleep(750);
+  end;
+  survived := GetArrayLength(left);
+  if total = 0 then
+    Log('muezzin: ' + why + ': no log files of the service were left in ' + appDir)
+  else if survived = 0 then
+    Log('muezzin: ' + why + ': deleted ' + IntToStr(total) + ' log file(s) the service had' +
+        ' been writing in ' + appDir + ', needing ' + IntToStr(attempt - 1) + ' wait(s) of 750 ms')
+  else
+    Log('muezzin: ' + why + ': ' + IntToStr(survived) + ' of ' + IntToStr(total) +
+        ' log file(s) in ' + appDir + ' would not delete in ' + IntToStr(tries) +
+        ' tries, so that folder will still be there afterwards');
+  Result := survived;
+end;
 function XmlEscape(const value: String): String;
 begin
   // An account name or password is going between XML tags, and & is the one
@@ -769,6 +880,26 @@ begin
         ' and run muezzin-service.exe status');
 end;
 
+// The uninstall closes with a few words for the person who ran it, and those
+// words are the reason this helper exists. Measured on 2026-11-24 while this
+// very routine was being probed: a message box that [Code] opens during a
+// silent uninstall is never answered, because nobody is looking at it, so the
+// uninstaller never exits. It sits on its uninstall data, on its log file and
+// on the app-ID mutex, and every later uninstall of the same app then refuses
+// and quits with nothing done - which is how four probe runs in a row lost all
+// of their cases while the files they were supposed to delete stayed put.
+// WizardSilent answers true for /SILENT and for /VERYSILENT alike; a probe
+// built today is the only way to know a thing like that about Inno. So the
+// words go to the log, which costs nothing and helps later when a folder has
+// to be chased down, and reach the screen only when there is a window for
+// them. All three notes say the same kind of thing, so they share one helper
+// and one icon; the scarier icon on the first was only ever a choice.
+procedure ExplainUninstall(const msg: String);
+begin
+  Log('muezzin: ' + msg);
+  if not WizardSilent then
+    MsgBox(msg, mbInformation, MB_OK);
+end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   resultCode: Integer;
@@ -783,6 +914,9 @@ begin
     // "stopped successfully" from the wrapper does not mean the process is
     // gone. The count is kept so the closing message can be honest about it.
     UninstallHeld := SweepOwnProcesses('uninstall');
+    // The service's own logs are then the last files in the folder, and while
+    // they are there the folder outlives the program: see ClearWrapperLogs.
+    UninstallLogsLeft := ClearWrapperLogs('uninstall');
     // The two rules the installer opened, by the names it opened them under.
     Exec('netsh', 'advfirewall firewall delete rule name="muezzin panel"', '', SW_HIDE, ewWaitUntilTerminated, resultCode);
     Exec('netsh', 'advfirewall firewall delete rule name="muezzin media"', '', SW_HIDE, ewWaitUntilTerminated, resultCode);
@@ -793,26 +927,44 @@ begin
       // Said out loud rather than left as a folder full of files nobody
       // remembers installing: the process was still there when this finished,
       // so some of the program probably is too.
-      MsgBox('muezzin is removed, but ' + IntToStr(UninstallHeld) +
-             ' muezzin process(es) were still running when this finished, so the program' +
-             ' files in ' + ExpandConstant('{app}') + ' may still be there. A restart,' +
-             ' then deleting that folder, finishes the job. Your profile, recordings and' +
-             ' logs are in ' + ExpandConstant('{commonappdata}\muezzin') +
-             ' either way, and deleting them is yours to decide.',
-             mbError, MB_OK)
+      ExplainUninstall('muezzin is removed, but ' + IntToStr(UninstallHeld) +
+                       ' muezzin process(es) were still running when this finished, so the program' +
+                       ' files in ' + ExpandConstant('{app}') + ' may still be there. A restart,' +
+                       ' then deleting that folder, finishes the job. Your profile, recordings and' +
+                       ' logs are in ' + ExpandConstant('{commonappdata}\muezzin') +
+                       ' either way, and deleting them is yours to decide.')
+    else if UninstallLogsLeft > 0 then
+      ExplainUninstall('muezzin is removed, but ' + IntToStr(UninstallLogsLeft) +
+                       ' log file(s) the service was still writing could not be deleted, so ' +
+                       ExpandConstant('{app}') + ' is still there. Nothing in it runs, and deleting' +
+                       ' the folder finishes the job. Your profile, recordings and logs are in ' +
+                       ExpandConstant('{commonappdata}\muezzin') + ' either way, and deleting them is' +
+                       ' yours to decide.')
     else
-      MsgBox('muezzin is removed. Your profile, recordings and logs are still in ' +
-             ExpandConstant('{commonappdata}\muezzin') + ' - deleting them is yours to decide.',
-             mbInformation, MB_OK);
+      ExplainUninstall('muezzin is removed. Your profile, recordings and logs are still in ' +
+                       ExpandConstant('{commonappdata}\muezzin') + ' - deleting them is yours to decide.');
   end;
 end;
 
+[UninstallDelete]
+; The service's console logs, which it writes beside its own exe rather than in
+; the household's folder. ClearWrapperLogs above waits for these files and
+; reports what would not go; this is the same list written where Inno can see it,
+; and it is the net under that list rather than a copy of it: the roll policy in
+; muezzin-service.xml may number a rolled file .err.1.log or .err.log.1, and the
+; two stars catch either. Then the folder, but only if nothing is left in it, so
+; that a file somebody else put there keeps the folder the way it should. Once
+; the logs are gone Inno would take the folder anyway - writing the line down is
+; what turns row C11 of the UAT checklist into something the file can be read
+; against.
+Type: files; Name: "{app}\muezzin-service*.log*"
+Type: dirifempty; Name: "{app}"
 [Run]
 ; The firewall, by exe path rather than port range: the rule travels with the
 ; one program that listens. The boundary is the local subnet rather than the
 ; Private profile, because a home network is routinely filed as Public by
-; Windows Ã¢â‚¬â€ measured on the first machine this shipped to, both adapters were
-; Public Ã¢â‚¬â€ and a Private-only rule there strands every speaker quietly: the
+; Windows — measured on the first machine this shipped to, both adapters were
+; Public — and a Private-only rule there strands every speaker quietly: the
 ; scan finds them, the page adds one, the daemon hands it a URL and the
 ; speaker cannot fetch it. remoteip=localsubnet keeps both ports closed to
 ; anything that is not on a network this machine is itself attached to. The
