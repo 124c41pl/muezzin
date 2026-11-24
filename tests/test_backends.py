@@ -622,6 +622,37 @@ def test_a_stop_ask_is_honored_while_the_group_says_buffering(tmp_path, monkeypa
     assert "went quiet in the middle" not in caplog.text, "a stop asked is not a speaker that fell silent"
 
 
+def test_an_ask_to_stop_that_arrives_before_anything_was_handed_over_is_not_lost(tmp_path, monkeypatch):
+    """Stop answers for the whole of a call, not just the part of it that has sound in it.
+
+    A person who pressed test and then changed their mind presses Stop while muezzin is
+    still making the connection: a couple of seconds on an awake speaker, up to
+    READY_SECONDS on one that has dozed off, and the page offers the button the moment the
+    ask goes out. An ask that found no media connection to hold used to be thrown away
+    along with the answer "nothing of ours was playing", and the recitation started a
+    moment later anyway - which is the shape of a stop button that appears to work
+    sometimes: it works when the file had already begun."""
+    from muezzin import localplay
+
+    kitchen = Room("Kitchen speaker", KITCHEN_UUID, 0.6)
+    group = GroupReceiver()
+    b = cast_group(monkeypatch, [kitchen], group=group, volume=0.4)
+    asked = []
+
+    def while_connecting(timeout=None):
+        asked.append(b.stop())      # the ask, arriving before there is a speaker to tell
+        return True
+
+    group.wait = while_connecting
+    with pytest.raises(localplay.Stopped):
+        b.play([clip(tmp_path)])
+    assert asked == [True], "the ask was thrown away, which is what made Stop unreliable"
+    mc = group.media_controller
+    assert mc.polls == 0, "not one recording was handed over to this speaker"
+    assert not mc.stopped, "and nothing was told to go quiet, because nothing had begun"
+    assert kitchen.levels == [0.4, 0.6], "a level borrowed on the way in is still handed back"
+
+
 def test_a_file_that_only_ever_says_buffering_gives_up_on_the_start_clock(tmp_path, monkeypatch, caplog):
     """BUFFERING is an allowance for a file that began and fell silent, not a head start
     for one that never began. A receiver that says BUFFERING from the first poll and never

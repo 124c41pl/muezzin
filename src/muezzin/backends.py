@@ -483,6 +483,15 @@ class CastBackend(Backend):
         # for the same file to end.
         self._live = []
         self._asked = False
+        # Whether a play call for this output is under way at all, including the stretch
+        # of it before there is a media connection to hold: finding the speaker on the
+        # network, the handshake, waiting for its first status, and moving the rooms'
+        # levels. That stretch is a couple of seconds on an awake speaker and up to
+        # READY_SECONDS on one that has dozed off, and it is exactly when a person who
+        # pressed test and then changed their mind presses Stop. An ask that lands in
+        # that window is kept, so the call comes back stopped instead of starting up
+        # anyway a second after being told not to.
+        self._setting_up = False
         self._live_lock = threading.Lock()
         # The last file this output was handed a URL for, and the address it was
         # meant for. Kept so a speaker that never made a sound can be told what it
@@ -520,13 +529,22 @@ class CastBackend(Backend):
         back on its own, and the ask is one message on a connection already open. An
         output that was not playing anything answers no, which is the reply to the
         question rather than a complaint about it.
+
+        A call that is still making its connection has no speaker to tell yet, but the
+        house asked about that call, so the ask is written down and the call breaks
+        before it hands anything over. Dropping it was the unreliable half of Stop:
+        pressed during the connect, it answered "nothing was playing of ours" and the
+        recitation started a moment later anyway.
         """
         with self._live_lock:
             live = list(self._live)
-            if live:
+            opening = self._setting_up
+            if live or opening:
                 self._asked = True
         if not live:
-            return False
+            # Nothing carrying sound, but a call of ours is in progress: answered yes,
+            # because what was asked for is happening.
+            return opening
         for mc in live:
             try:
                 mc.stop()
@@ -890,6 +908,15 @@ class CastBackend(Backend):
             self._levels_returned = False
             self._held = []
         try:
+            with self._live_lock:
+                # From this line the call is something the house can press Stop about,
+                # and an ask is remembered from here rather than from the moment a
+                # connection exists. It is cleared here and nowhere later: a Stop asked
+                # while this call is under way belongs to this call, and a Stop asked
+                # once a call has ended belongs to nothing, because by then there is
+                # nothing of ours playing to answer it.
+                self._asked = False
+                self._setting_up = True
             cast = pychromecast.get_chromecast_from_host(
                 (dev["address"], dev["port"], UUID(dev["id"]), dev["model"], dev["name"]))
             # `wait()` performs the handshake, but its verdict is not trusted.
@@ -919,15 +946,22 @@ class CastBackend(Backend):
                 group_held = self._borrow_group_level(cast, self._call_level(dev["name"], volume, members),
                                                       _norm_id(dev["id"]))
             mc = cast.media_controller
-            # Held for the length of the playback, because that is the only way an ask
-            # to stop can reach this speaker: the thread in front of these lines is
-            # blocked until the recording ends, and a person who pressed Stop is asking
-            # a different thread. Cleared in the finally below, which is also where a
-            # connection that failed part way is let go of.
+            # Held for the length of the playback, because that is the only way to tell
+            # this speaker to go quiet: the thread in front of these lines is blocked
+            # until the recording ends, and a person who pressed Stop is asking a
+            # different thread. Cleared in the finally below, which is also where a
+            # connection that failed part way is let go of. No ask is cleared here: one
+            # that arrived while the connection was being made is still standing, and the
+            # loop under this line is what answers it.
             with self._live_lock:
-                self._asked = False
                 self._live = [mc]
             for path in media:
+                if self._asked:
+                    # Asked to go quiet before a single recording was handed over. There
+                    # was no speaker to tell, which is why this break is the whole of the
+                    # answer to that ask; the line at the end of the call is what puts it
+                    # into words for the page that pressed the button.
+                    break
                 if not path.exists():
                     log.warning("missing media %s", path)
                     continue
@@ -1050,6 +1084,9 @@ class CastBackend(Backend):
         finally:
             with self._live_lock:
                 self._live = []
+                # The call is over, so it is no longer something an ask to stop can be
+                # aimed at, and no ask is left standing for the next call to pick up.
+                self._setting_up = False
             if cast is not None:
                 try:
                     cast.quit_app()

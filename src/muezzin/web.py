@@ -197,6 +197,13 @@ class WebPanel:
                                         # file, edits the text, and hands it to save.
         self.saving = threading.Lock()  # one save, and one scratch file, at a time
         self.testing = threading.Lock()  # one test playback at a time
+        # Which output that one test is playing on, or nothing when no test is going.
+        # The page needs this word rather than its own memory of the click: the outputs
+        # table is rebuilt every time anything on it changes, and a row that has to
+        # remember on its own loses its stop button the moment a level is moved. Said
+        # from here, the button is on the row the daemon is actually busy with, in every
+        # window open on this panel and one that has just been reloaded.
+        self.testing_on: str | None = None
         self.scan_lock = threading.Lock()  # one speaker scan at a time
         self._scan = None                 # last scan_speakers() result, and when
         self.scan_at = None
@@ -437,6 +444,11 @@ class WebPanel:
             # profile is a valid profile, and a silent one
             "notices": self.notices(),
             "max_upload": MAX_UPLOAD,
+            # Which speaker a test is playing on right now, or nothing. The row under
+            # test is the row that gets the stop button, and the page redraws that table
+            # whenever anything on it moves - so the word has to come from the daemon,
+            # which is the only thing that knows whether the sound is still going.
+            "testing": self.testing_on,
             "outputs": outputs,
         }
 
@@ -580,6 +592,7 @@ class WebPanel:
         self._inside_media_dir(media)
         if not self.testing.acquire(blocking=False):
             raise RuntimeError("a test is still playing; wait for it to finish")
+        self.testing_on = name
         try:
             # deliberately not self.lock: a Cast file can take minutes, and a
             # toggle or an edit must not queue behind it. Runner serialises the
@@ -591,6 +604,9 @@ class WebPanel:
             # was asked to.
             return {"played": media, "output": name, "stopped": True}
         finally:
+            # Before the lock goes, so a test that starts the moment this one ends can
+            # never have its name reported while this one still looked like it was going.
+            self.testing_on = None
             self.testing.release()
         return {"played": media, "output": name}
 

@@ -566,6 +566,22 @@ PAGE = """<!doctype html>
 <div id="busy" role="status" hidden><span class="spin" aria-hidden="true"></span><span>still working</span></div>
 <script>
 let st=null;
+// Which row of the outputs table is under a test right now, as far as this window knows.
+// Kept out here rather than inside render, and this is the bug that cost it: the table is
+// rebuilt from scratch every time anything on it answers - a level moved, "same as the
+// group" pressed, a rename, the state that comes back after any ask, the minute refresh -
+// and a note kept inside that function went away with the last drawing of it, which took
+// the stop button off a speaker that was still playing a recitation nobody wanted. The
+// daemon names the speaker it is busy with as well (st.testing), so the button is on the
+// right row after a reload, in a second window, and in the moment between pressing test
+// and the daemon getting the file.
+let testing=null;
+// What the outputs table was last drawn from. A refresh that changes nothing on this
+// table now leaves it standing, which is worth the one comparison: replacing the rows
+// throws away whatever the pointer was in the middle of, and a press of stop that lands
+// in the moment the rows are being swapped out never reaches a button at all. A slider
+// being dragged also stops jumping back to where it was drawn.
+let outHTML='';
 const $=s=>document.querySelector(s);
 // The explanations under each card are written open in the markup and fold under one
 // gold line where the window is phone-width: under that width it is the words, not the
@@ -700,8 +716,10 @@ function render(){
  // sent one grows a stop button while it is going: 40 seconds into a recitation
  // nobody wanted should not have to be listened to to the end, and a speaker left
  // holding a stream that will not end should be let go. The daemon takes one test at a
- // time, which is why one name is enough to remember.
- let testing=null;
+ // time, which is why one name is enough to remember, and why that name comes from the
+ // state rather than from a word kept inside this function: the table is redrawn from
+ // scratch by every ask made from it, and a stop button that had to remember being
+ // pressed used to vanish from a speaker that was still playing, the moment a level moved.
  // Under a group's row, one row per room inside it, in the same columns as the group's own
  // row: a room's slider lands under the group's slider, because it is the same kind of
  // number, and the button that takes that room's line out of the profile sits in the last
@@ -712,7 +730,13 @@ function render(){
  // is not shown, and not because it is secret: it is nowhere written, because the daemon
  // reads it off the speaker when the call starts and hands it back when the call ends.
  const roomrow=o=>(o.rooms||[]).map(r=>`<tr class="roomrow"><td class="roomname">${esc(r.name)}</td><td class="why">${r.seen?'':'<span class="unknown">no speaker by that name out there</span>'}</td><td></td><td></td><td><input type="range" min="0" max="1" step="0.05" data-room="${esc(o.name)}" data-room-name="${esc(r.name)}" value="${r.volume==null?(o.volume==null?0.5:o.volume):r.volume}" aria-label="how loud to ask ${esc(r.name)}, inside ${esc(o.name)}, to come out at"> <span class="tag">${r.volume==null?'same as the group':Math.round(r.volume*100)+'%'}</span></td><td>${r.volume==null?'':`<button data-room-clear="${esc(o.name)}" data-room-name="${esc(r.name)}">same as the group</button>`}</td></tr>`).join('');
- $('#outputs').innerHTML=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td>${o.takes_volume?`<input type="range" min="0" max="1" step="0.05" data-level="${esc(o.name)}" value="${o.volume==null?0.5:o.volume}" aria-label="how loud to ask ${esc(o.name)} for"> <span class="tag">${o.volume==null?'not set':Math.round(o.volume*100)+'%'}</span>${o.target_kind=='group'?' <span class="unknown roomnote">every room inside, each back after</span>'+(o.rooms_known?'':' <span class="unknown why">no speaker would say which rooms are inside</span>'):''}`:'<span class="unknown why">not ours to ask</span>'}</td><td><button data-test="${esc(o.name)}">test</button><button data-stop="${esc(o.name)}"${o.name===testing?'':' hidden'}>stop</button></td></tr>${o.target_kind=='group'?roomrow(o):''}`).join('');
+ const rows=st.outputs.map(o=>`<tr><td><input type="text" class="rename" data-was="${esc(o.name)}" value="${esc(o.name)}" aria-label="what this speaker is called by"></td><td>${esc(o.lead?o.kind+' ('+o.lead+'s early)':o.kind)}</td><td>${esc(o.target||o.host||'-')}</td><td><button class="switch" data-name="${esc(o.name)}" aria-checked="${o.enabled}"></button></td><td>${o.takes_volume?`<input type="range" min="0" max="1" step="0.05" data-level="${esc(o.name)}" value="${o.volume==null?0.5:o.volume}" aria-label="how loud to ask ${esc(o.name)} for"> <span class="tag">${o.volume==null?'not set':Math.round(o.volume*100)+'%'}</span>${o.target_kind=='group'?' <span class="unknown roomnote">every room inside, each back after</span>'+(o.rooms_known?'':' <span class="unknown why">no speaker would say which rooms are inside</span>'):''}`:'<span class="unknown why">not ours to ask</span>'}</td><td><button data-test="${esc(o.name)}">test</button><button data-stop="${esc(o.name)}"${(o.name===st.testing||o.name===testing)?'':' hidden'}>stop</button></td></tr>${o.target_kind=='group'?roomrow(o):''}`).join('');
+ // Only redraw the table when there is something new in it. Every ask on this page ends
+ // with a fresh state, and the minute refresh arrives on its own, so most drawings of it
+ // are the same rows again - and each one that is not needed costs the page a table it
+ // was in the middle of: a stop pressed a breath before the swap, a slider part way along
+ // a drag, a name part way typed.
+ if(rows!==outHTML){ outHTML=rows; $('#outputs').innerHTML=rows; }
  // A slider for a level exists only where the daemon said it may: the state's takes_volume
  // comes from the backend class, so a computer - the one running this page, or a box on the
  // LAN - has no level to move, only words saying whose it is. target_kind is what the last
@@ -745,8 +769,11 @@ function render(){
  document.querySelectorAll('.switch[data-name]').forEach(b=>b.onclick=()=>act(()=>api('/api/output',{name:b.dataset.name,enabled:b.getAttribute('aria-checked')!=='true'})));
  document.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>{ const out=b.dataset.test;
   act(async()=>{ testing=out; b.nextElementSibling.hidden=false;
-   // Whatever becomes of the request, this row has nothing to stop afterwards: a test
-   // that failed part way is as finished as one that played all the way through.
+   // The button goes up in the same beat as the click, because the daemon has not had a
+   // turn to say it yet; from the next redraw on, the row takes it from st.testing, which
+   // survives the table being rebuilt underneath it. And whatever becomes of the ask,
+   // this row has nothing left to stop: a test that failed part way is as finished as one
+   // that played all the way through.
    try{ return await api('/api/test',{output:out,media:$('#media').value?[$('#media').value]:[]}); }
    finally{ testing=null; } }); });
  // The ask goes to the output rather than to whatever is busy playing, because the

@@ -1049,6 +1049,72 @@ def test_the_scheduled_call_is_not_cut_short_by_stopping_a_test(panel):
     assert st["upcoming"], "stopping a test emptied the rest of the day"
 
 
+def test_the_page_is_told_which_speaker_a_test_is_playing_on(panel):
+    """The stop button belongs to the row the daemon is busy with, so the daemon has to
+    say which row that is.
+
+    The outputs table is rebuilt from scratch by everything that happens on it - a level
+    moved, a room put back at the group's number, a rename, the minute refresh - and a
+    page that had to remember for itself which row it had pressed test on lost the button
+    off a speaker that was still playing. The ask to stop was there a second before and
+    gone by the time the hand got to it, which is the whole complaint: a recitation
+    nobody wanted had to be listened to to the end because moving a slider took away the
+    only way out. So the word comes from the one thing that knows whether the sound is
+    still going, and the page's own note about the click sits outside the function that
+    draws the table, where a redraw cannot reach it."""
+    web, _, _ = panel
+    out = next(o for o in web.runner.profile.outputs if o.kind == "file")
+    started = threading.Event()
+    released = threading.Event()
+
+    def fake(paths, volume=None):
+        started.set()
+        released.wait(10)
+
+    web.runner.backends[out.name].play = fake
+    thread = threading.Thread(target=lambda: call(web.port, "/api/test",
+                                                  {"output": out.name, "media": ["fajr.mp3"]}))
+    thread.start()
+    assert started.wait(5), "the test never reached the output"
+    _, st = call(web.port, "/api/state")
+    assert st["testing"] == out.name, "the state does not say which speaker is under test"
+
+    _, html = call(web.port, "/", raw=True)
+    script = html.split("<script>", 1)[1]
+    assert "o.name===st.testing" in script, "the row builds its stop button without the daemon's word"
+    assert script.index("let testing=null;") < script.index("function render("), \
+        "the page's note about which row is under test is declared inside render, which throws it away"
+
+    released.set()
+    thread.join(10)
+    assert not thread.is_alive(), "the test never came back"
+    _, st = call(web.port, "/api/state")
+    assert st["testing"] is None, "a test that is over still looks like it is playing"
+
+
+def test_the_page_leaves_the_table_alone_when_nothing_in_it_changed(panel):
+    """A press has to land on the button it was aimed at.
+
+    The other half of the complaint: the button was there, and pressing it did nothing.
+    The outputs table used to be thrown away and rebuilt by every ask on it and by the
+    minute refresh on its own, so a press of stop arriving a breath before one of those
+    landed on a row that was on its way out of the page, and a slider half way along a
+    drag jumped back to wherever it was last drawn. The rows are now built aside and
+    written over the table only when they differ from what is already standing there.
+    There is no browser in this suite, so this pins the shape that fix has to keep: build
+    the rows into a variable, compare them with what was last drawn, write only on a
+    difference - and keep that memory outside render, where the next drawing of the table
+    cannot lose it."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    script = html.split("<script>", 1)[1]
+    assert "let outHTML='';" in script, "nothing remembers what the table was last drawn from"
+    assert script.index("let outHTML=") < script.index("function render("), \
+        "the memory of the last drawing sits inside render, which throws it away"
+    assert "if(rows!==outHTML){ outHTML=rows; $('#outputs').innerHTML=rows; }" in script, \
+        "the table is replaced whether or not anything in it changed"
+
+
 def test_the_page_has_a_transport_and_no_way_to_move_a_computers_level(panel):
     """Three things the page has to get right that no Python assertion about audio can
     catch: the preview is labelled as this computer making the sound, the only levels

@@ -109,6 +109,8 @@ them makes the service look broken when nothing is broken.
 
 | C16 | A daemon nobody can ask politely | The failure this row exists for. With the service running, `sc stop muezzin`, then `Get-Process muezzin*`: if a daemon is still there after the service said it stopped — seventeen minutes later on the first machine this shipped to — run the uninstaller straight away. It ends the orphan (`muezzin: uninstall: ended 1 process(es) named muezzin that were holding C:\Program Files\muezzin`), deletes the whole folder, and closes with the plain message. If the stop does release the process on your machine, stage it by hand: `taskkill /F /IM muezzin-service.exe` leaves the daemon running with nothing left that can stop it, which is the state a half-finished uninstall leaves behind. Either way, `%ProgramFiles%\muezzin` is gone afterwards and running the setup again copies without a "file in use" complaint — on that first machine the leftovers were two exes with no service, no uninstaller and no way to remove them, and the new setup could not start | |
 
+| C17 | A stop button that stays put | Press **test** on a speaker's row and, while the recording is still coming out, move that group's level slider or press **same as the group** under it: the row's **stop** button is still on that row afterwards, and still there after a reload of the page. Forty seconds in, press it — the speaker goes quiet and the page says `asked <name> to stop`. The other half of this row is the half that was unreliable rather than missing: press **stop** about a second after **test**, before any sound has started, and the page still says `asked <name> to stop`, and nothing begins playing a moment later. That ask used to be thrown away while the connection to the speaker was still being made, which is why the button seemed to work only once a file had already begun | |
+
 If the page never answers, two files say why: the setup's own log — written by
 itself into `%TEMP%\Setup Log*.txt`, since the installer asks for it; pass
 `/LOG=setup.log` if you want it somewhere you chose — where
@@ -125,7 +127,9 @@ answer, and they are the rows that failed first, on the author's own machine,
 with the whole install otherwise green. C16 is the row that a leftover file
 answers for you: if `muezzin.exe` is sitting in `%ProgramFiles%\muezzin` after an
 uninstall, that row has failed, and its log line is the thing to paste into a bug
-report.
+report. C17 is the one row with no log line to read at all: it is about the page and
+the speaker at once, and what it failed at was leaving a house with sound coming out
+of it and nothing on the page to ask for quiet.
 
 ## Filing results
 
