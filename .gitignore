@@ -39,6 +39,11 @@ packaging/windows-service/build-log.txt
 # copy of a file already in this repository.
 packaging/windows-service/stage/
 
+# the candidate stamp build.ps1 writes for one build and muezzin.spec swallows into the
+# exe. It belongs to that one build: committed, it would sit inside every build made
+# afterwards and say a number the code was never built as.
+packaging/windows-service/MUEZZIN-RELEASE.txt
+
 # the old name, in case a config file still carries it
 azankit.yaml
 

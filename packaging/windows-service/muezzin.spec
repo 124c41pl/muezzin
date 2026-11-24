@@ -17,6 +17,7 @@
 # imports fail at start, and nothing in the build says so.
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+import os
 
 # zeroconf carries a compiled extension (_dnssd / _Cy) and submodules it picks
 # per platform at import time; listing the lot is cheaper than being sorry.
@@ -26,6 +27,22 @@ hiddenimports = collect_submodules("zeroconf")
 # data files at lookup time — frozen, missing zones fail late (at the first
 # prayer in an odd zone), which is the worst place to find out.
 datas = collect_data_files("tzdata")
+
+# Which try at a release this build is, carried inside the exe.
+#
+# build.ps1 writes a one-line stamp (`0.1.6-r7`) next to this spec right before it
+# compiles, and the stamp travels *inside* the exe rather than beside it: the installed
+# program folder is replaced whole on every upgrade, and a loose file next to the exe is
+# one more thing that can be left behind or overwritten by an older build. Read back out
+# by muezzin.release_version(), which is what the panel's bottom line and the daemon's
+# first log line print - the only two places a machine nobody can walk over to says what
+# it is holding. A build with no stamp here - a checkout, pip install, the container
+# image - carries none and says its plain version.
+#
+# The name is muezzin.RELEASE_FILE; a test keeps this spelling from drifting away from it.
+_stamp = os.path.join(os.path.dirname(os.path.abspath(SPEC)), "MUEZZIN-RELEASE.txt")
+if os.path.exists(_stamp):
+    datas += [(_stamp, ".")]
 
 a = Analysis(
     ["muezzin-service-entry.py"],

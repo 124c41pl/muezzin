@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from . import __version__, calc, geocode, localplay, places, yamledit
+from . import calc, geocode, localplay, places, release_version, yamledit
 from .config import (STARTER_LATITUDE, STARTER_LONGITUDE, STARTER_TIMEZONE, OutputConfig,
                      Profile, load_profile, uses_starter_location, valid_host)
 
@@ -799,7 +799,7 @@ def cmd_daemon(config_path: Path, web_port=None, read_only: bool = False,
             runner.shutdown()
             return _port_busy(exc, "the control panel", web_port, "MUEZZIN_WEB_PORT",
                               "`--web <port>`")
-    print(f"muezzin {__version__}: {profile.location.timezone} / {profile.params.label}; "
+    print(f"muezzin {release_version()}: {profile.location.timezone} / {profile.params.label}; "
           f"outputs: {', '.join(o.name for o in profile.enabled_outputs())}")
     for note in starter_warnings(profile):
         log.warning("%s", note)
@@ -846,7 +846,7 @@ def cmd_web(config_path: Path, port: int, read_only: bool,
         runner.shutdown()
         return _port_busy(exc, "the control panel", port, "MUEZZIN_WEB_PORT", "`--port <port>`")
     host = runner.media.host_ip if runner.media else "127.0.0.1"
-    print(f"muezzin {__version__}: {profile.params.label} at http://{host}:{panel.port}"
+    print(f"muezzin {release_version()}: {profile.params.label} at http://{host}:{panel.port}"
           f"{' (read-only)' if read_only else ''}")
     print("no scheduler here - use `muezzin daemon --web` to also play the adhan")
     try:
@@ -861,7 +861,7 @@ def cmd_web(config_path: Path, port: int, read_only: bool,
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="muezzin", description=__doc__)
-    ap.add_argument("--version", action="version", version=f"muezzin {__version__}")
+    ap.add_argument("--version", action="version", version=f"muezzin {release_version()}")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="debug logging: shows every media URL a speaker fetched, "
                          "which is how you tell a firewall problem from a dead speaker")

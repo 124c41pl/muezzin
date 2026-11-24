@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, urlparse
 
 import yaml
 
-from . import __version__, calc, fileserve, geocode, hijri, localplay, net, yamledit
+from . import calc, fileserve, geocode, hijri, localplay, net, release_version, yamledit
 from .backends import KINDS, call_level, lead_for, scan_speakers
 from .config import (AUDIO_SUFFIXES, MAX_RANDOM_PICKS, STARTER_LATITUDE, STARTER_LONGITUDE,
                      STARTER_TIMEZONE, load_profile, uses_starter_location, valid_host)
@@ -381,7 +381,10 @@ class WebPanel:
         outputs = [self._output_row(o) for o in p.outputs]
         return {
             "now": local_now.strftime("%Y-%m-%d %H:%M %Z"),
-            "version": __version__,
+            # The page's bottom line, and the only place a household running a Windows
+            # service can see which build it is holding: a release build of the frozen
+            # exe says `0.1.6-r7`, everything else says `0.1.6`.
+            "version": release_version(),
             "today": hijri.day_info(local_now.date(), p.hijri_offset),
             "hijri_offset": p.hijri_offset,
             "attribution": p.attribution,

@@ -30,18 +30,35 @@ everything else `build.ps1` needs is the repo's own venv plus PyInstaller.
 
 ```powershell
 pip install -e ..\.. ; pip install pyinstaller   # once; build.ps1 finds ..\..\.venv by itself
-.\build.ps1
+.\build.ps1          # the release itself: muezzin-0.1.6-setup.exe
+.\build.ps1 -RC 7    # the seventh try at it: muezzin-0.1.6-r7-setup.exe
 ```
 
-That prints one line that matters: `dist\muezzin-<version>-setup.exe`, about
-22 MB, which carries the frozen exe, the service wrapper and the service
-definition inside it. The version comes out of `pyproject.toml`, like the image
-pipeline, so a UAT report can name what it tested.
+That prints one line that matters: `dist\muezzin-<version>-setup.exe`, or
+`dist\muezzin-<version>-r<N>-setup.exe` when `-RC` is given — about 22 MB either
+way, carrying the frozen exe, the service wrapper and the service definition
+inside it. The version comes out of `pyproject.toml`, like the image pipeline, so
+a UAT report can name what it tested.
+
+The candidate number is not only a filename. `-RC 7` also writes
+`MUEZZIN-RELEASE.txt` next to this script, which `muezzin.spec` swallows *inside*
+the exe; `muezzin.release_version()` reads it back out, and it is what the panel's
+bottom line prints (`muezzin 0.1.6-r7 · MIT · …`) and what the daemon's first log
+line says. The same string goes to the installer as `/DVersion=`, so the setup
+file's name and the version Programs and Features lists are the same words the
+running machine uses about itself. That is the point: a household in another
+building can be asked one question — *what does the bottom of the page say?* — and
+a report means something. Run without `-RC` and the stamp is deleted instead of
+carried over from the last candidate, so a release build cannot inherit a number
+it was never built as.
 
 ## What has actually been run here (Windows 11, Python 3.15.2, PyInstaller 6.22.3, Inno Setup 6.7.3)
 
 The exe builds — 15 MB, one file — and inside it: `--version` says `muezzin
-0.1.6`; `methods` lists the presets; `where tehran --write` and `times` compute
+0.1.6`, or `muezzin 0.1.6-r8` in the build made with `-RC 8` — which is also what
+that build handed the page: `/api/state` on a scratch port answered
+`"version": "0.1.6-r8"`, from a `dist\muezzin-0.1.6-r8-setup.exe` that Inno named
+for the same string; `methods` lists the presets; `where tehran --write` and `times` compute
 real numbers, so the bundled tzdata answers for a non-local zone; the panel
 served 200 with its full page on a scratch port; `devices` found this LAN's four
 Cast speakers and two groups, so zeroconf works frozen; and `play-now` through a

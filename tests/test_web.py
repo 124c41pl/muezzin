@@ -14,7 +14,8 @@ import urllib.request
 
 import pytest
 
-from muezzin import geocode
+import muezzin
+from muezzin import RELEASE_FILE, geocode
 from muezzin.cli import STARTER
 from muezzin.config import AUDIO_SUFFIXES, load_profile
 from muezzin.scheduler import PRAYER_KEYS, Runner
@@ -177,6 +178,29 @@ def test_state_carries_the_hijri_date_and_the_credit(panel):
     for day in st["days"]:
         assert day["hijri"] and day["hijri_ar"]
         assert all(m["kind"] in ("mourn", "celebrate", "plain") for m in day["marks"])
+
+
+def test_the_page_names_the_build_that_is_serving_it(panel, monkeypatch, tmp_path):
+    """The bottom line is where a household finds out which build it installed.
+
+    A Windows candidate build carries its number inside the exe and reads it back out, so
+    the name of the setup file, the version Programs and Features lists, and the line at
+    the foot of the page all say the same thing about the machine running them. That line
+    is where a report starts: "the speaker test will not stop" arrives with no way to say
+    which build it arrived in, and the machine is in another building."""
+    web, _, _ = panel
+    _, st = call(web.port, "/api/state")
+    assert st["version"] == muezzin.__version__, "a build with no stamp says its plain version"
+
+    bundle = tmp_path / "unpacked"
+    bundle.mkdir()
+    (bundle / RELEASE_FILE).write_text("0.1.6-r7\n", encoding="utf-8")
+    monkeypatch.setattr("sys._MEIPASS", str(bundle), raising=False)
+    _, st = call(web.port, "/api/state")
+    assert st["version"] == "0.1.6-r7", "the page is told a different build than this one is"
+
+    _, html = call(web.port, "/", raw=True)
+    assert "muezzin ${esc(st.version" in html, "the credit line does not print the build's name"
 
 
 def test_the_hijri_offset_in_the_profile_moves_the_date_on_screen(panel):

@@ -9,6 +9,12 @@
 # install.ps1 route testers used before the installer existed) is built
 # alongside it, because that route is still how the mechanism gets poked at.
 
+# Which try at the version this is. `-RC 7` builds muezzin-0.1.6-r7-setup.exe and stamps
+# the exe so the panel's bottom line and the service's log say 0.1.6-r7 as well; run
+# without it, the build is the release itself - named muezzin-0.1.6-setup.exe, saying so -
+# and a stamp left over from an earlier candidate is deleted rather than trusted.
+param([string]$RC = "")
+
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Join-Path $here "..\.."
@@ -17,7 +23,28 @@ $root = Join-Path $here "..\.."
 # name the version it came from, so a UAT report means something afterwards.
 $version = (Select-String -Path (Join-Path $root "pyproject.toml") -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
 
-Write-Host "building muezzin $version" -ForegroundColor Cyan
+if ($RC -and $RC -notmatch '^[0-9]+$') {
+    throw "-RC takes a number: -RC 7 builds $version-r7. '$RC' would name a setup file nobody can sort."
+}
+
+# One string for the name this build carries everywhere: the setup file on disk, the
+# installer's own version in Programs and Features, and the stamp the exe reads back out
+# to the page and to its log. One variable because the failure this prevents is a
+# candidate called one thing on disk and another thing on the screen of the machine that
+# is running it.
+$release = if ($RC) { "$version-r$RC" } else { $version }
+
+# The stamp the spec bundles, if it exists. Written BOM-less because what reads it back
+# is Python: a byte-order mark lands in front of the number on the page's bottom line.
+$stamp = Join-Path $here "MUEZZIN-RELEASE.txt"
+if ($RC) {
+    [System.IO.File]::WriteAllText($stamp, $release, (New-Object System.Text.UTF8Encoding($false)))
+} elseif (Test-Path $stamp) {
+    Remove-Item $stamp -Force
+    Write-Host "no -RC given, so $(Split-Path -Leaf $stamp) from an earlier candidate is gone: this build says $version" -ForegroundColor Yellow
+}
+
+Write-Host "building muezzin $release" -ForegroundColor Cyan
 
 # 1. The frozen app. The spec resolves its own relative paths from the
 #    *current* directory, so pyinstaller has to run from here. Prefer the
@@ -64,7 +91,7 @@ if (-not (Test-Path $winswExe)) {
 
 # 3. The scaffolding folder: the install.ps1 route, still useful for a tester
 #    who wants to see the four moving parts separately.
-$out = Join-Path $here "dist\muezzin-service\muezzin-service-$version"
+$out = Join-Path $here "dist\muezzin-service\muezzin-service-$release"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 Copy-Item $exe (Join-Path $out "muezzin.exe") -Force
 Copy-Item $winswExe (Join-Path $out "muezzin-service.exe") -Force
@@ -92,11 +119,15 @@ if (-not $iscc) { $iscc = "iscc" }
 
 # ISCC, like pyinstaller, writes its progress to stderr: same guard as above.
 $ErrorActionPreference = "Continue"
-& $iscc "/DVersion=$version" "/DStageDir=$stage" (Join-Path $here "muezzin-setup.iss")
+# The version the installer names itself with, candidate suffix and all: it sets the
+# setup file's own name and the version Programs and Features lists, which is the second
+# place a person can see which try they installed. What the code says about itself comes
+# from the stamp above, and both come from this one variable.
+& $iscc "/DVersion=$release" "/DStageDir=$stage" (Join-Path $here "muezzin-setup.iss")
 $code = $LASTEXITCODE
 $ErrorActionPreference = $prevPreference
 if ($code -ne 0) { throw "iscc failed (exit $code)" }
 
 Write-Host ""
-Write-Host "installer: $(Join-Path $here "dist\muezzin-$version-setup.exe")" -ForegroundColor Green
+Write-Host "installer: $(Join-Path $here "dist\muezzin-$release-setup.exe")" -ForegroundColor Green
 Write-Host "scaffolding (the install.ps1 route): $out"

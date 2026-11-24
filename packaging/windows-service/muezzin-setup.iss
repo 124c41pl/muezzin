@@ -51,8 +51,8 @@
 ; sent) and later, where {app} is a real path.
 
 #define MyAppName      "muezzin"
-; build.ps1 passes /DVersion=..., taken from pyproject.toml, so the setup file
-; can never name a version the code does not carry.
+; build.ps1 passes /DVersion=..., version and candidate number both, the same string
+; it stamps into the exe, so the file never names a build the code contradicts.
 #ifndef Version
   #define Version "0.0.0-dev"
 #endif
