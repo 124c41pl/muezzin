@@ -37,7 +37,12 @@
   <!-- Where relative things land if the profile leaves them relative: tiles
        live beside the profile by design, out_dir is the one a kind: file
        output may write. Pinning cwd means a stray relative path goes under
-       ProgramData, not under System32, which is what the service defaults to. -->
+       ProgramData, not under System32, which is what the service defaults to.
+       The %ProgramData% here is expanded by WinSW, not by cmd.exe: the v2.12
+       config docs say a config file may contain environment-variable
+       expansions of the form %Name%, and BASE is one it sets by itself - which
+       is why %BASE% names the exe's folder and nothing else does. An
+       undefined name is left alone rather than replaced by an empty string. -->
   <workingdirectory>%ProgramData%\muezzin</workingdirectory>
 
   <!-- The environment is the second way to name a port, exactly as in the
@@ -56,16 +61,18 @@
 
   <!-- The daemon is meant to be forever: a prayer it misses is a prayer
        nobody hears. Restart it, and if it dies in a loop, back off rather
-       than spam the event log. -->
+       than spam the event log.
+
+       Spelling matters here and it was checked against the version this repo
+       pins: WinSW 2.12 documents the failure actions as repeatable
+       <onfailure action=... delay=.../> elements, and its own binary carries
+       that word (the string was searched for, not assumed). A <failure>
+       element with nested <action>/<delay> belongs to the v3 config format.
+       Beyond the two actions listed, Windows repeats the last one - that is
+       why the 60-second back-off is the one written twice in effect. -->
   <resetfailure>1 hour</resetfailure>
-  <failure>
-    <action>restart</action>
-    <delay>10 seconds</delay>
-  </failure>
-  <failure>
-    <action>restart</action>
-    <delay>60 seconds</delay>
-  </failure>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
 
   <!-- WinSW's own log rotation; stdout/stderr of the daemon land here, which
        is the console output you would have watched by hand. -->
@@ -74,6 +81,14 @@
     <keepFiles>5</keepFiles>
   </log>
 
+  <!-- End the process tree rather than send it a signal it does not read; the
+       daemon has no shutdown handler, which is the whole reason for a wrapper
+       with a Kill model. Kept, but not relied on: in the one sequence where it
+       mattered — an uninstall on the first machine this shipped to — the wrapper
+       logged the stop action and its `WaitForProcessToExit` line, and the
+       process was still there seventeen minutes later. Nothing in any log here
+       confirms that this pair ended anything, so the installer waits for the
+       process and ends it itself instead of assuming this line did the work. -->
   <stopexecutable>taskkill.exe</stopexecutable>
   <stoparguments>/PID {PID} /T /F</stoparguments>
 </service>

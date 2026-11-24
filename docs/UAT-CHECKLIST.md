@@ -98,15 +98,34 @@ them makes the service look broken when nothing is broken.
 | C5 | Migration | A `muezzin.yaml` in the checkout or beside the setup file is offered, copied, and left where it was; when `%ProgramData%\muezzin\muezzin.yaml` already exists, the page is not shown at all | |
 | C6 | Never overwrite | Re-running the setup leaves the existing profile byte-identical (hash it before and after) | |
 | C7 | `devices` as a service | Compare with B1 on the same machine in the same minute. If the console finds speakers and the service finds none, that is the LocalSystem question: retry with the service-account page filled in and record which of the two worked | |
-| C8 | Firewall | `netsh advfirewall firewall show rule name="muezzin panel"` and `...media` exist, `profile=Private`, pointing at the installed exe | |
+| C8 | Firewall | `netsh advfirewall firewall show rule name="muezzin panel"` and `...media` exist, pointing at the installed exe, `Profile=Any` and `RemoteAddress=LocalSubnet`. Not `Profile=Private`: measured on a household machine, both real adapters were filed **Public**, and a Private-only rule left the speakers stranded while a browser on the same machine still reached :8020 over loopback | |
 | C9 | Reboot | The machine comes back, the service comes up by itself, the next event fires unattended, and `muezzin.out.log` in the install folder shows it | |
-| C10 | Upgrade | Run a newer setup over an installed one: old service stopped and unregistered, files replaced, service registered and started, no "file in use" fight, `%ProgramData%` untouched | |
-| C11 | Uninstall | Service gone and both firewall rules gone; `%ProgramData%\muezzin` still there, with the message saying so | |
+| C10 | Upgrade | Run a newer setup over an installed one: old service stopped and unregistered, files replaced, service registered and started, no "file in use" fight, `%ProgramData%` untouched. The setup's log has all three lines — `muezzin: asked the existing service to stop`, `muezzin: unregistered the existing service`, and `muezzin: upgrade: nothing named muezzin was holding C:\Program Files\muezzin` (or `ended N process(es) …`, which means the sweep had to end something the stop did not). `Get-Process muezzin* -ErrorAction SilentlyContinue` afterwards is empty. And `netsh advfirewall firewall show rule name="muezzin panel"` prints **one** rule, not two — the setup deletes both names before adding them | |
+| C11 | Uninstall | Service gone and both firewall rules gone; `%ProgramData%\muezzin` still there, with the message saying so. And `%ProgramFiles%\muezzin` is **gone**, not half-emptied: `Test-Path "$env:ProgramFiles\muezzin"` is `False`, and `Get-Process muezzin*` names nobody. The setup's log ends its uninstall section with `muezzin: uninstall: nothing named muezzin was holding …` or `ended N process(es) …`. If the closing message is the warning naming a count instead, that is the case the sweep could not end: restart, then delete that folder by hand, and file the log | |
+| C12 | Service account | Install with a name typed on the account page: `sc qc muezzin` shows that account as the LogOn and the service starts. Then run a newer setup over it with both fields empty: `sc qc muezzin` **still** shows that account — the `<serviceaccount>` block is carried across the upgrade rather than falling back to LocalSystem | |
+| C13 | Restart on crash | With the service running, `taskkill /F` the `muezzin.exe` process: the service comes back by itself within about ten seconds (`sc query muezzin` twice, a minute apart). This is what the `<onfailure>` lines in the service definition are for | |
+| C14 | A speaker a person actually set up | From the page only: location, **look again**, **use** a Cast speaker, upload a recording, give one prayer that recording or **random**, then press **test** on that speaker's row. Sound comes out of the speaker. If it does not, the daemon's log now says which URL it was handed — that address has to be on the speakers' network, and :8010 has to be open to them (row C8) | |
+| C15 | A machine attached to something else too | On a machine with a mesh VPN (Tailscale, ZeroTier) or a WSL / vEthernet adapter: with a speaker playing, the log line for a silent speaker names an address on the speakers' own network and not the VPN's (`100.64.x`). This is the failure the row exists for — discovery fine, levels fine, app launched, house silent, because the adapter that owns the default route was asked which address to publish | |
+
+| C16 | A daemon nobody can ask politely | The failure this row exists for. With the service running, `sc stop muezzin`, then `Get-Process muezzin*`: if a daemon is still there after the service said it stopped — seventeen minutes later on the first machine this shipped to — run the uninstaller straight away. It ends the orphan (`muezzin: uninstall: ended 1 process(es) named muezzin that were holding C:\Program Files\muezzin`), deletes the whole folder, and closes with the plain message. If the stop does release the process on your machine, stage it by hand: `taskkill /F /IM muezzin-service.exe` leaves the daemon running with nothing left that can stop it, which is the state a half-finished uninstall leaves behind. Either way, `%ProgramFiles%\muezzin` is gone afterwards and running the setup again copies without a "file in use" complaint — on that first machine the leftovers were two exes with no service, no uninstaller and no way to remove them, and the new setup could not start | |
+
+If the page never answers, two files say why: the setup's own log — written by
+itself into `%TEMP%\Setup Log*.txt`, since the installer asks for it; pass
+`/LOG=setup.log` if you want it somewhere you chose — where
+every line the wizard wrote begins `muezzin:`, and
+`%ProgramFiles%\muezzin\muezzin-service.wrapper.log` from the wrapper. `muezzin-
+service.exe status` and `sc query muezzin` are the two commands worth typing, and
+the setup's log names both.
 
 C7 and C10 are the two rows this branch cannot answer on its own: one is a fact
 about your LAN, the other is a fact about upgrading something you already
 trust. C3 is the row that a fresh install either passes or wastes your evening
-on.
+on. C14 and C15 are the two that only a real speaker on a real network can
+answer, and they are the rows that failed first, on the author's own machine,
+with the whole install otherwise green. C16 is the row that a leftover file
+answers for you: if `muezzin.exe` is sitting in `%ProgramFiles%\muezzin` after an
+uninstall, that row has failed, and its log line is the thing to paste into a bug
+report.
 
 ## Filing results
 

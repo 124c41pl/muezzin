@@ -65,18 +65,22 @@ if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) { throw "winsw install failed 
 
 # --- the firewall: two rules, keyed to the app exe's path ----------------------
 # The page and the media server listen on 0.0.0.0 (README, "Ports"), so the
-# rules say which profiles they may answer on — Private only. 8020 is the page,
-# 8010 the clip a Cast device pulls; both are needed from a phone on the wifi,
-# which is the whole point of the setup flow.
+# rules say who may reach them: the local subnet, on any profile. The profile
+# boundary was tried first and failed on a real household machine where Windows
+# had filed both adapters as Public — the speakers were found, added and handed
+# a URL they could not fetch. 8020 is the page, 8010 the clip a Cast device
+# pulls; both are needed from a phone on the wifi, which is the whole point of
+# the setup flow. Delete-and-add rather than "skip if it exists", so an upgrade
+# to different wording is not silently kept on the old rule.
 foreach ($spec in @(
     @{ name = "muezzin panel"; port = 8020 },
     @{ name = "muezzin media"; port = 8010 }
 )) {
-    if (-not (Get-NetFirewallRule -DisplayName $spec.name -ErrorAction SilentlyContinue)) {
-        New-NetFirewallRule -DisplayName $spec.name -Direction Inbound -Action Allow `
-            -Program $appExe -Protocol TCP -LocalPort $spec.port -Profile Private | Out-Null
-        Write-Host "firewall: $($spec.name) on :$($spec.port) (Private profile)"
-    }
+    Remove-NetFirewallRule -DisplayName $spec.name -ErrorAction SilentlyContinue
+    New-NetFirewallRule -DisplayName $spec.name -Direction Inbound -Action Allow `
+        -Program $appExe -Protocol TCP -LocalPort $spec.port `
+        -Profile Any -RemoteAddress LocalSubnet | Out-Null
+    Write-Host "firewall: $($spec.name) on :$($spec.port) (local subnet, any profile)"
 }
 
 # --- tell the tester what to dial, in the same words the container log uses ---
