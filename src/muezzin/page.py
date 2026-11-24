@@ -490,7 +490,7 @@ PAGE = """<!doctype html>
  <section class="wide"><h2>Sound</h2>
   <table id="soundtbl"><thead><tr><th>time</th><th></th><th>every day</th><th>Friday</th></tr></thead><tbody id="sound"></tbody></table>
   <div class="row"><button id="applysound">apply these clips</button><span class="tag" id="soundsay">nothing changed</span></div>
-  <div class="row"><input type="file" id="file" accept=".mp3,.m4a,.wav,.ogg,.oga,.flac,.aac,.opus,audio/*"><button id="upload">add this recording</button><span class="tag" id="uploadsay"></span></div>
+  <div class="row"><input type="file" id="file" multiple accept=".mp3,.m4a,.wav,.ogg,.oga,.flac,.aac,.opus,audio/*"><button id="upload">add this recording</button><span class="tag" id="uploadsay"></span></div>
   <div class="row"><select id="preview"></select><button id="hear">play it here</button><button id="hush" disabled>pause</button><button id="halt" disabled>stop</button><input id="seek" type="range" min="0" max="0" step="1" value="0" disabled aria-label="how far into it you are"><span class="tag" id="hearsay">nothing playing</span></div>
   <details class="finefold" open><summary>more info</summary>
   <div class="fine">That plays in this browser, out of the computer this page is open on, at the level
@@ -501,7 +501,7 @@ PAGE = """<!doctype html>
    <b>test</b> button in the Outputs table is the one that sends a recording to a speaker, and the two are easy to tell apart when
    you are choosing what a prayer should sound like.</div>
   <div class="fine">A clip is picked from what is already in <code>media_dir</code>; the button above
-   puts a new recording there. Nothing overwrites a recording that is playing, so two recordings of
+   puts a new recording there. The box takes several at once, and each one goes in on its own: one that the daemon refuses says which and why, and the rest still arrive. Nothing overwrites a recording that is playing, so two recordings of
    the same adhans need two names. These boxes choose what a prayer starts with; the Recordings card
    below adds a recording to the end of a prayer's list, which is where a dua after the adhan goes.
    One of the choices is <b>(random from the library)</b>: the prayer names nothing and asks the
@@ -768,7 +768,7 @@ function render(){
  const pv=$('#preview'), pvwant=pv.value;
  pv.innerHTML=st.media_files.map(f=>`<option>${esc(f)}</option>`).join('')||'<option value="">(no audio in media_dir)</option>';
  if(pvwant&&[...pv.options].some(o=>o.value===pvwant)) pv.value=pvwant;
- $('#mediaurl').textContent=st.media_url?('speakers fetch audio from '+st.media_url):'no media server needed by this profile';
+ $('#mediaurl').textContent=st.media_url?('speakers fetch audio from '+st.media_url+'; a speaker is given the address of this machine that reaches its own network'):'no media server needed by this profile';
   // A credit has to name a person, because a person is who answers questions about
   // the code. Say who you are with `attribution:` in the profile.
  $('#credit').innerHTML=`muezzin ${esc(st.version||'')} · MIT · `
@@ -1052,12 +1052,29 @@ async function applyMethod(){
  return j;
 }
 async function uploadFile(){
- const f=$('#file').files[0];
- if(!f) throw new Error('choose a recording first');
- // the bytes are the whole request: the panel looks at what they start with
- // before it lets them anywhere near media_dir
- // hand over the bytes, not the File object: a File body may be sent chunked,
- // and this server needs to know the size before it writes anything to disk
+ const list=[...$('#file').files];
+ if(!list.length) throw new Error('choose a recording first');
+ // one request per recording, in the order they were picked: the bytes are the
+ // whole request, the daemon looks at what they start with before it lets them
+ // anywhere near media_dir, and it needs the size before it writes anything to
+ // disk, which a chunked File body does not give it. So the bytes are handed
+ // over per recording rather than as one multipart body this server would only
+ // refuse. A recording that is refused - a suffix that lies about its own
+ // header, a name already in the folder - stands aside and the rest go on
+ // coming, because nothing about one file's name says anything about the next,
+ // and a household building its library out of a folder of recitations should
+ // not lose eleven of them to a twelfth that turned out to be a picture.
+ const added=[], refused=[];
+ for(const [i,f] of list.entries()){
+  // the row says where the batch got to, because a folder of recitations across
+  // the wifi is a wait long enough to wonder whether anything is happening
+  $('#uploadsay').textContent='adding '+(i+1)+' of '+list.length;
+  try{ added.push(await uploadOne(f)); }
+  catch(e){ refused.push({name:f.name, why:e.message||'the daemon said no'}); }
+ }
+ return {added:added, refused:refused};
+}
+async function uploadOne(f){
  const r=await fetch('/api/media/upload?name='+encodeURIComponent(f.name),
   {method:'POST',body:await f.arrayBuffer()});
  const j=await r.json().catch(()=>({error:'bad response'}));
@@ -1324,8 +1341,19 @@ $('#scan').onclick=()=>act(async()=>{ SC=await api('/api/speakers?refresh=1'); }
  ()=>say(((SC.found.speakers||[]).length)+' speakers, '+((SC.found.groups||[]).length)+' groups, '
    +((SC.found.boxes||[]).length)+' boxes','ok'));
 $('#upload').onclick=()=>act(async()=>{ up=await uploadFile(); },
- ()=>{ $('#uploadsay').textContent=up.uploaded+' in media_dir';
-       say('added '+up.uploaded+(up.url?' · a speaker can reach it at '+up.url:''),'ok'); });
+ ()=>{ const a=up.added, bad=up.refused;
+      $('#uploadsay').textContent=a.length?(a.length==1?a[0].uploaded+' in media_dir'
+       :a.length+' recordings in media_dir'):'nothing in media_dir';
+      say((a.length?'added '+a.map(u=>u.uploaded).join(', ')
+        +(a.some(u=>u.url)?' · a speaker can reach them at the media server':''):'')
+       +(bad.length?(a.length?' · not added: ':'not added: ')
+        +bad.map(b=>b.name+': '+b.why).join(' · '):''), bad.length?'err':'ok');
+      // the box lets go of what it was holding, so the number beside the button
+      // counts what is still waiting and a second press cannot quietly offer the
+      // daemon the recordings that are already in the folder
+      $('#file').value=''; $('#upload').textContent='add this recording'; });
+$('#file').onchange=()=>{ const n=$('#file').files.length;
+ $('#upload').textContent=n>1?'add all '+n+' recordings':'add this recording'; };
 let player=null, track='', drag=null;
 // The preview is the browser asking for the bytes and making the sound itself: no
 // speaker on the network is involved, and no level is set anywhere, because the

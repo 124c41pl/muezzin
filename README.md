@@ -554,8 +554,10 @@ the device list, along with the player it picked for itself.
   say when asked. A speaker that will not answer leaves the members *unknown*, and
   a group you rearranged in the phone app shows the truth on the next **look
   again**, not before it.
-* An upload is one request: 64 MB, no resume, no transcoding. The recording has to
-  be something the speaker can decode by itself.
+* An upload is one request per recording: 64 MB, no resume, no transcoding. The
+  page's box takes several recordings at once and sends them one after another, so
+  a recording the daemon refuses names itself and the rest still land. The
+  recording has to be something the speaker can decode by itself.
 * The media server that hands files to a Cast speaker is deliberately boring: it
   serves the one recording a speaker was told the name of, lists no folders, and
   answers a `Range` request only inside that one file. A device asking for bytes that

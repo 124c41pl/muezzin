@@ -844,6 +844,33 @@ def test_a_recording_may_be_large_where_a_json_body_may_not(panel, monkeypatch):
     assert not (tmp_path / "media" / "big.mp3").exists()
 
 
+def test_several_recordings_can_be_picked_in_one_gesture(panel):
+    """A household setting its library up has a folder of recitations, not one file,
+    and a box that takes one of them makes the person open the same file dialog once
+    per recording - a dozen times, with the library list growing between each. So the
+    box takes a row of them, and the page still sends one request per recording, which
+    is the shape this server already answers: it wants a Content-Length before it
+    writes anything to disk, it checks a recording's own header against the name it
+    was given, and it refuses to overwrite by name. The picks keep the order they were
+    chosen in, and a refusal stands aside instead of ending the batch, because the
+    thing wrong with one recording - a suffix lying about its bytes, a name already in
+    the folder - says nothing about the next one, and losing eleven recitations to a
+    twelfth that turned out to be a picture is how a media_dir ends up edited by hand."""
+    web, _, _ = panel
+    _, html = call(web.port, "/", raw=True)
+    assert '<input type="file" id="file" multiple' in html, \
+        "the box has to take more than one, or the operating system will not hand over a row"
+    script = html.split("<script>", 1)[1]
+    body = script.split("async function uploadFile(){")[1].split("\n}")[0]
+    assert "for(const [i,f] of list.entries())" in body, "each chosen recording is sent; the rest are not dropped"
+    assert "adding '+(i+1)+' of '+list.length" in body, \
+        "a batch says where it has got to, rather than sitting out a folder of files in silence"
+    assert "refused.push" in body and "refused:refused" in body, \
+        "what did not get in is kept, so the page can name it instead of a silent short list"
+    assert "add all '+n+' recordings" in script, \
+        "the button says how many it is about to add, rather than promising one"
+
+
 def test_the_page_can_ask_for_a_recording_to_play_itself(panel):
     """The preview: the browser fetches the bytes and makes the sound out of its own
     computer, so someone can hear what an adhan sounds like before assigning it. No
@@ -2539,7 +2566,7 @@ def test_the_page_offers_exactly_the_recordings_the_daemon_accepts(panel):
     web, _, _ = panel
     assert WEB_AUDIO_SUFFIXES is AUDIO_SUFFIXES, "the web module grew its own copy again"
     _, html = call(web.port, "/", raw=True)
-    accept = re.search(r'<input type="file" id="file" accept="([^"]*)"', html).group(1)
+    accept = re.search(r'<input type="file" id="file"[^>]*accept="([^"]*)"', html).group(1)
     offered = {part.strip() for part in accept.split(",") if part.startswith(".")}
     assert offered == set(AUDIO_SUFFIXES), (
         f"the file picker and the daemon disagree about "
