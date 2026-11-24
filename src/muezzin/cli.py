@@ -188,22 +188,25 @@ outputs:
 # households want: add a speaker and it joins the schedule this file already
 # describes. Add `targets:` when one prayer should go somewhere narrower, and
 # `days:` for a reminder that fires once a week.
+#
+# None of these five name a recording, and that is on purpose as well. `muezzin
+# init` makes an empty media_dir, so a starter that said `media: [fajr.mp3]`
+# hands over five appointments that fire on time into silence, with no error
+# anywhere and the only proof a line in a log nobody reads at 5 am. Put a
+# recording in that folder - the page's sound card does it - and then either name
+# it (`media: [name.mp3]`) or let the prayer draw from whatever the folder holds
+# (`random: 1`). The page's prayer rows write both of those for you.
 events:
   - name: fajr-adhan
     at: fajr
-    media: [fajr.mp3]
   - name: dhuhr-adhan
     at: dhuhr
-    media: [dhuhr.mp3]
   - name: asr-adhan
     at: asr
-    media: [asr.mp3]
   - name: maghrib-adhan
     at: maghrib
-    media: [maghrib.mp3]
   - name: isha-adhan
     at: isha
-    media: [isha.mp3]
 """
 
 
@@ -222,8 +225,9 @@ def starter_text(media_dir: str = "") -> str:
 
 
 def starter_warnings(profile: Profile) -> list[str]:
-    """Say once, in plain words, the two things a starter profile makes easy to
-    miss: a city nobody chose, and a schedule with nowhere to play."""
+    """Say once, in plain words, the three things a starter profile makes easy to
+    miss: a city nobody chose, a schedule with nowhere to play, and a schedule with
+    nothing to play."""
     notes = []
     if uses_starter_location(profile.location):
         notes.append(f"location is still the starter's placeholder "
@@ -237,6 +241,11 @@ def starter_warnings(profile: Profile) -> list[str]:
     elif not profile.enabled_outputs():
         notes.append(f"all {len(profile.outputs)} configured outputs are disabled: "
                      f"nothing will play")
+    if profile.nothing_assigned():
+        notes.append("nothing is assigned to play yet: no event names a recording and none "
+                     "draws at random, so every appointment in this schedule fires into "
+                     "silence (put a recording in media_dir, then give an event "
+                     "`media: [name.mp3]` or `random: 1`)")
     return notes
 
 
@@ -983,6 +992,14 @@ def main(argv=None) -> int:
         print("no speakers are configured: run `muezzin where <city> --write` to say where "
               "you are, then `muezzin devices` to see what is on the network and add a "
               "speaker from the panel")
+        # The other half of a first install, said at the moment it is true. The
+        # events in this file name no recording on purpose - the folder just made
+        # beside them is empty - and the version that named five recordings instead
+        # produced a week of silent mornings on a machine where everything else was
+        # configured correctly.
+        print("nothing is assigned to play yet: the adhans in this file name no recording, "
+              "because the media folder is empty. Put a recording in it, then give one "
+              "prayer that name or press random on the page's prayer rows")
         return 0
     if args.cmd == "methods":
         return cmd_methods()

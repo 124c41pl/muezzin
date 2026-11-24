@@ -171,6 +171,14 @@ speaker to a working household needs no edit to the events.
 cp ~/Downloads/fajr.mp3 media/         # your own audio; any file, any qari
 ```
 
+A profile from `muezzin init` names no recording at all, and that is deliberate:
+`init` makes an empty `media/`, so a starter written as `media: [fajr.mp3]` would be
+five appointments firing on time into silence on a machine where everything else was
+set up correctly. The schedule is there from the first minute; what it plays is empty
+until you choose it. Until then the page says so at the top, `muezzin times` and
+`muezzin init` say it on the command line, and the daemon logs it at the minute an
+event would have played, naming the folder it looked in.
+
 The page gives every prayer its own clip, plus a second column for Fridays, and a
 file picker that puts a new recording into `media_dir` (judged by its first bytes,
 and never overwriting a file that already exists). Before you assign one, press

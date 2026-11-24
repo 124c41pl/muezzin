@@ -204,9 +204,21 @@ def test_event_targeting_a_missing_output_is_rejected(tmp_path):
         load_profile(write(tmp_path, BASE.replace("targets: [study]", "targets: [kithcen]")))
 
 
-def test_event_without_media_is_rejected(tmp_path):
-    with pytest.raises(ValueError, match="has nothing to play"):
-        load_profile(write(tmp_path, BASE.replace("media: [fajr.mp3]", "media: []")))
+def test_an_event_with_nothing_assigned_loads_and_is_counted(tmp_path):
+    """A schedule can be written before its audio arrives, and the installer proves
+    it: `muezzin init` makes an empty media folder, so the alternative to allowing
+    this was a starter naming five recordings nobody had put there - which shipped
+    once, and produced five adhans that fired on time into silence on a machine where
+    nothing was wrong. The loader still refuses the things that are typos: an `at:` it
+    does not know, an output that does not exist, a name that climbs out of media_dir."""
+    p = load_profile(write(tmp_path, BASE.replace("media: [fajr.mp3]", "media: []")))
+    assert p.events[0].media == [] and p.events[0].random == 0
+    assert p.nothing_assigned(), "a schedule with nothing to play is the state the notices name"
+    assert not load_profile(write(tmp_path, BASE)).nothing_assigned(), \
+        "one named recording is enough to call a schedule assigned"
+    assert not load_profile(write(tmp_path,
+                                 BASE.replace("media: [fajr.mp3]", "random: 1"))).nothing_assigned(), \
+        "a prayer that draws from the folder is assigned as surely as one that names a file"
 
 
 def test_an_event_can_ask_the_library_instead_of_naming_files(tmp_path):

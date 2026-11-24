@@ -262,13 +262,14 @@ class WebPanel:
     # ---- state -----------------------------------------------------------
 
     def notices(self) -> list[str]:
-        """The two things that make a muezzin play nothing, said where a new
+        """The three things that make a muezzin play nothing, said where a new
         install will actually read them.
 
-        A fresh profile has no speakers in it, and its coordinates are the
-        starter's placeholder for New York. Both are correct YAML and neither
-        produces an error, so the page - which a new user opens before they ever
-        see a log - has to be the one that says so.
+        A fresh profile has no speakers in it, its coordinates are the starter's
+        placeholder for New York, and none of its events names a recording. All
+        three are correct YAML and none of them produces an error, so the page -
+        which a new user opens before they ever see a log - has to be the one that
+        says so.
         """
         p = self.runner.profile
         notes = []
@@ -286,6 +287,12 @@ class WebPanel:
         elif not p.enabled_outputs():
             notes.append(f"All {len(p.outputs)} speakers in the profile are switched off, "
                          f"so nothing can play.")
+        if p.nothing_assigned():
+            notes.append(f"Nothing is assigned to play yet: the schedule holds "
+                         f"{len(p.events)} appointments and none of them names a recording, so "
+                         f"every one of them fires on time into silence. Put a recording in "
+                         f"the sound card below, then give a prayer that recording by name or "
+                         f"let it draw from the folder at random.")
         return notes
 
     def state(self) -> dict:

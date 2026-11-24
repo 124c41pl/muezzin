@@ -171,6 +171,17 @@ class Profile:
     def output(self, name: str) -> Optional[OutputConfig]:
         return next((o for o in self.outputs if o.name == name), None)
 
+    def nothing_assigned(self) -> bool:
+        """True when no event names a recording and none asks the library for one.
+
+        A starter profile sits in this state on purpose: its media_dir is empty, so
+        an event naming `fajr.mp3` would be an appointment that fires on time into
+        silence and produces no error anywhere. Left unassigned, the same morning
+        says so in the log - and the page and the `times` table both ask this one
+        question so that the first answer arrives before 5 am.
+        """
+        return all(not ev.media and not ev.random for ev in self.events)
+
     def media_path(self, rel) -> Path:
         """Resolve one entry of an event's `media:` list.
 
@@ -507,9 +518,20 @@ def load_profile(path) -> Profile:
             raise ValueError(f"{path}: event {ev.name!r} targets output(s) that do not exist: "
                              f"{', '.join(unknown)}. Outputs you defined: "
                              f"{', '.join(sorted(known_outputs)) or 'none'}")
-        if not ev.media and not ev.random:
-            raise ValueError(f"{path}: event {ev.name!r} has nothing to play: name files under "
-                             "media:, or ask the library for some with random: N")
+        # An event with neither `media:` nor `random:` is deliberately not an error,
+        # and this is the record of why not. The check used to raise here, which read
+        # like the right call - a typo in a profile should not surface as a silent
+        # morning at 5 am. But it decided that a schedule cannot be written before
+        # its audio arrives, and that is a lie about how a household gets built:
+        # `muezzin init` makes an empty media folder, so the only starter that passed
+        # this check named five recordings that did not exist. That version shipped,
+        # and it is the worse of the two failures - five appointments firing on time
+        # into silence on a machine where every part of the setup was correct, with
+        # the profile itself claiming each one had something to play.
+        # Unassigned is therefore legal, and what it costs is paid for by being said
+        # out loud in three places: `starter_warnings` when the command line loads a
+        # profile, a notice at the top of the page, and a line in the daemon's log
+        # naming the folder it looked in at the minute it would have played.
         for m in ev.media:
             try:
                 _inside(media_dir, m)

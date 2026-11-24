@@ -57,8 +57,14 @@ def test_the_starter_names_no_speaker_the_reader_does_not_own(tmp_path, capsys):
     live = [ln for ln in path.read_text(encoding="utf-8").splitlines()
             if ln.strip() and not ln.strip().startswith("#")]
     assert not [ln for ln in live if "target:" in ln], "a live target is a stranger's speaker"
+    assert not [ln for ln in live if "media:" in ln or "random:" in ln], \
+        "and the file does not claim to have something to play either"
+    out = capsys.readouterr().out
     assert (path.parent / "media").is_dir()
-    assert "no speakers are configured" in capsys.readouterr().out
+    assert "no speakers are configured" in out
+    assert "nothing is assigned to play yet" in out, \
+        "a first install has to be told, at the moment it happens, that the schedule " \
+        "it was handed has no sound in it"
 
 
 def test_the_starter_can_name_a_media_folder_that_is_not_next_to_it(tmp_path, capsys):
@@ -80,13 +86,17 @@ def test_the_starter_can_name_a_media_folder_that_is_not_next_to_it(tmp_path, ca
 
 
 def test_the_starter_says_out_loud_what_is_still_missing(tmp_path):
-    """The two mistakes a starter makes easy both produce no error at all: a
-    city nobody chose, and a schedule with nowhere to play."""
+    """The three mistakes a starter makes easy all produce no error at all: a city
+    nobody chose, a schedule with nowhere to play, and a schedule with nothing to
+    play. The last one is why the starter names no recording: an appointment pointing
+    at a file that is not in the folder is indistinguishable, at 5 am, from a
+    speaker that simply did not answer."""
     path = tmp_path / "muezzin.yaml"
     main(["init", "-c", str(path)])
     notes = starter_warnings(load_profile(path))
     assert any("New York" in n for n in notes), notes
     assert any("no speakers" in n for n in notes), notes
+    assert any("nothing is assigned to play" in n for n in notes), notes
 
     text = path.read_text(encoding="utf-8")
     text = text.replace("latitude: 40.7128", "latitude: 25.7123")
@@ -99,10 +109,42 @@ def test_the_starter_says_out_loud_what_is_still_missing(tmp_path):
     text = text.replace("  #   kind: google_cast", "    kind: pc_speakers")
     text = text.replace("\n  #   target: Whole-house group", "")
     text = text.replace("  #   volume: 0.5", "    volume: 0.5")
+    # and give one prayer something to play, which is the third thing a starter
+    # leaves undone and the third note above is about
+    text = text.replace("  - name: fajr-adhan\n    at: fajr",
+                        "  - name: fajr-adhan\n    at: fajr\n    random: 1")
     path.write_text(text, encoding="utf-8")
     set_up = load_profile(path)
     assert [o.name for o in set_up.outputs] == ["house-group"], "the shape uncomments cleanly"
     assert starter_warnings(set_up) == [], "a set-up profile gets lectured to nobody"
+
+
+def test_a_starter_names_no_recording_it_did_not_put_there(tmp_path):
+    """`muezzin init` makes an empty media_dir, so a starter whose five adhans said
+    `media: [fajr.mp3]` was five appointments that fired on time into silence, on a
+    machine where every part of the setup was correct. Unassigned is the honest
+    starting state: the schedule exists, nothing pretends to be playing, and the log,
+    the page and `times` all say the same thing about what is missing."""
+    path = tmp_path / "muezzin.yaml"
+    main(["init", "-c", str(path)])
+    profile = load_profile(path)
+    assert len(profile.events) == 5, "the five adhans are still written out"
+    assert all(not ev.media and not ev.random for ev in profile.events), \
+        "no event points at a recording this install did not put in the folder"
+    assert profile.nothing_assigned()
+    # the shape to copy is in the comments, so the state is a beginning and not a dead end
+    text = path.read_text(encoding="utf-8")
+    assert "media: [name.mp3]" in text and "random: 1" in text, \
+        "the starter shows how to leave the state it starts in"
+    # and a profile that did assign something stops saying so
+    assigned_path = tmp_path / "assigned.yaml"
+    assigned_path.write_text(STARTER.replace("  - name: fajr-adhan\n    at: fajr",
+                                             "  - name: fajr-adhan\n    at: fajr\n"
+                                             "    media: [fajr.mp3]"),
+                             encoding="utf-8")
+    assigned = load_profile(assigned_path)
+    assert not [n for n in starter_warnings(assigned) if "nothing is assigned" in n], \
+        "one named recording is enough to stop the note"
 
 
 def test_the_starter_notes_reach_somebody_who_only_ran_the_table(tmp_path, capsys):

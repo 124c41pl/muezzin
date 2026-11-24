@@ -2838,6 +2838,8 @@ def test_the_page_works_on_a_profile_that_has_no_speakers_yet(tmp_path):
         # a brand new install reads this page, not the daemon's log
         assert any("No speakers" in n for n in state["notices"]), state["notices"]
         assert any("New York" in n for n in state["notices"]), state["notices"]
+        assert any("Nothing is assigned" in n for n in state["notices"]), \
+            "a schedule that fires into silence has to say so on the page, not in a log"
         status, page = call(web.port, "/", raw=True)
         assert status == 200 and page.startswith("<!doctype html")
         assert 'id="notices"' in page, "the page has somewhere to put those words"
