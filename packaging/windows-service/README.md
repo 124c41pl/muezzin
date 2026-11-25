@@ -224,6 +224,32 @@ closing message names the same thing. A file in the folder that the installer di
 not put there: logs gone, folder kept, which is what `dirifempty` is there for.
 The household folder was hashed before and after and did not move.
 
+Reading that folder needed a probe of its own, because the folder is not always
+the installer's fault. `FindFirst` in this version's `[Code]` takes two
+arguments, a name and a record: the attributes filter the documentation of my
+memory promises is "Variable Expected" at compile time, which is the other half
+of why there are no `fa*` constants to pass — the parameter they would go in does
+not exist. Directories are therefore recognised by bit 16 of `rec.Attributes`,
+which is how Windows marks one, and `BoolToInt` turned out not to exist either.
+`{app}` does still expand at `usDone`, which is the step where the answer is
+known, and Inno's own log says what `dirifempty` met: `Failed to delete directory
+(145)`, retried twice before it gives up — error 145 being directory-not-empty,
+and the retries the reason the clean cases still ended with the folder gone after
+their first two attempts failed.
+
+That reading exists because the fourth case used to close with the plain note:
+true, and silent about the folder still standing. It does not any more. After the
+two specific branches, `usDone` looks at the folder and names what is in the way —
+`muezzin is removed, but <folder> is still there because it is not empty:
+somebody-else.txt. None of that is muezzin, and none of it is your profile, which
+is in C:\ProgramData\muezzin. Look inside, and delete the folder once you are sure
+nothing in it is yours.` Three names reach the message and the count travels with
+them, because a folder full of somebody's photographs is not something to print
+out in full. Re-measured end to end on 2026-11-25, the four cases again: the first
+three unchanged — the log-file branch still wins over this one when both could
+have fired — and the fourth ending with those words over a folder holding exactly
+`somebody-else.txt`.
+
 That probe also caught a defect of mine. A message box that `[Code]` opens during
 a *silent* uninstall is never answered, because nobody is looking at it, so the
 uninstaller never exits: it sits on its uninstall data, on its log file and on the

@@ -892,7 +892,7 @@ end;
 // built today is the only way to know a thing like that about Inno. So the
 // words go to the log, which costs nothing and helps later when a folder has
 // to be chased down, and reach the screen only when there is a window for
-// them. All three notes say the same kind of thing, so they share one helper
+// them. All four notes say the same kind of thing, so they share one helper
 // and one icon; the scarier icon on the first was only ever a choice.
 procedure ExplainUninstall(const msg: String);
 begin
@@ -900,9 +900,63 @@ begin
   if not WizardSilent then
     MsgBox(msg, mbInformation, MB_OK);
 end;
+
+// The folder can outlive the uninstall for a reason that is nobody's fault,
+// and "muezzin is removed" would then be true but not enough: a person
+// double-clicking an uninstaller is entitled to know that a folder is still
+// standing and what is in it. This is the reading of that folder.
+//
+// Measured on 2026-11-25 against a probe install holding one installed file,
+// two files of mine and a folder of mine: FindFirst here takes two arguments,
+// a name and a record - a third (the attributes filter the documentation of my
+// memory promises) is "Variable Expected" at compile time, which is also why
+// this [Code] has no faFile or faAnyAll to pass: the parameter it would go in
+// does not exist. So the folder is read unfiltered, and a directory is
+// spotted by bit 16 of rec.Attributes, which is the value Windows marks one
+// with. The probe named all three of the things that survived, said which one
+// was the folder, gave the byte counts for the files, and listed no '.' or
+// '..'; the two checks below stay anyway, because they cost nothing and the
+// answer comes from a Windows API rather than from Inno. Only the first three
+// names reach the message: a folder full of somebody's photographs is not
+// something to print out in full, so the count travels with the sample.
+function DescribeLeftovers(const dir: String; var names: String): Integer;
+var
+  found: Integer;
+  rec: TFindRec;
+begin
+  Result := 0;
+  names := '';
+  found := 0;
+  if FindFirst(dir + '\*', rec) then
+  begin
+    try
+      repeat
+        if (rec.Name <> '.') and (rec.Name <> '..') then
+        begin
+          found := found + 1;
+          if found <= 3 then
+          begin
+            if names <> '' then
+              names := names + ', ';
+            if (rec.Attributes and 16) <> 0 then
+              names := names + rec.Name + ' (a folder)'
+            else
+              names := names + rec.Name;
+          end;
+        end;
+      until not FindNext(rec);
+    finally
+      FindClose(rec);
+    end;
+  end;
+  Result := found;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   resultCode: Integer;
+  appDir, leftNames, moreNames: String;
+  leftCount: Integer;
 begin
   if CurUninstallStep = usUninstall then
   begin
@@ -940,6 +994,39 @@ begin
                        ' the folder finishes the job. Your profile, recordings and logs are in ' +
                        ExpandConstant('{commonappdata}\muezzin') + ' either way, and deleting them is' +
                        ' yours to decide.')
+    else if DirExists(RemoveBackslashUnlessRoot(ExpandConstant('{app}'))) then
+    begin
+      // Neither of the two above fired, so the program's own files went and
+      // the service's logs went, and the folder still stands: the dirifempty
+      // line in [UninstallDelete] leaves a folder alone when something is in
+      // it, and Inno's own log records that as "Failed to delete directory
+      // (145)" - 145 is the directory-not-empty error, measured today. The old
+      // closing note was simply the plain one, which was true and said nothing
+      // about the folder, so the honest version names what is in the way
+      // instead of describing it: "delete that folder" is advice a person can
+      // only follow after they have looked.
+      appDir := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
+      leftCount := DescribeLeftovers(appDir, leftNames);
+      if leftCount = 0 then
+        // Either the folder is empty and would not delete, or it could not be
+        // read at all. Not claimed either way.
+        ExplainUninstall('muezzin is removed, but ' + appDir + ' is still there, and it could not be' +
+                         ' listed or deleted while this ran. Nothing in it is needed to run muezzin; a' +
+                         ' restart and deleting it finishes the job. Your profile, recordings and logs' +
+                         ' are in ' + ExpandConstant('{commonappdata}\muezzin') + ' either way, and' +
+                         ' deleting them is yours to decide.')
+      else
+      begin
+        moreNames := '';
+        if leftCount > 3 then
+          moreNames := ' and ' + IntToStr(leftCount - 3) + ' more';
+        ExplainUninstall('muezzin is removed, but ' + appDir + ' is still there because it is not' +
+                         ' empty: ' + leftNames + moreNames + '. None of that is muezzin, and none of it' +
+                         ' is your profile, which is in ' + ExpandConstant('{commonappdata}\muezzin') +
+                         '. Look inside, and delete the folder once you are sure nothing in it is' +
+                         ' yours.');
+      end;
+    end
     else
       ExplainUninstall('muezzin is removed. Your profile, recordings and logs are still in ' +
                        ExpandConstant('{commonappdata}\muezzin') + ' - deleting them is yours to decide.');
@@ -953,7 +1040,9 @@ end;
 ; and it is the net under that list rather than a copy of it: the roll policy in
 ; muezzin-service.xml may number a rolled file .err.1.log or .err.log.1, and the
 ; two stars catch either. Then the folder, but only if nothing is left in it, so
-; that a file somebody else put there keeps the folder the way it should. Once
+; that a file somebody else put there keeps the folder the way it should - and
+; CurUninstallStepChanged closes with the names of whatever it was that kept it,
+; so the folder is never left standing without an explanation. Once
 ; the logs are gone Inno would take the folder anyway - writing the line down is
 ; what turns row C11 of the UAT checklist into something the file can be read
 ; against.
