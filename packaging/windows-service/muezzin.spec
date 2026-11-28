@@ -44,6 +44,22 @@ _stamp = os.path.join(os.path.dirname(os.path.abspath(SPEC)), "MUEZZIN-RELEASE.t
 if os.path.exists(_stamp):
     datas += [(_stamp, ".")]
 
+# The picture the exe wears.
+#
+# With no icon line PyInstaller puts its own Python logo in the exe's resources, which is
+# what every build here did until somebody pointed out that a folder of muezzin was
+# showing a picture of Python. The file is drawn in this folder by make-icon.py - the
+# panel's own palette, one geometry, seven sizes - and the name is spelled as an absolute
+# path for the reason the stamp above is: the build script may be standing anywhere when
+# it hands this spec over, and a bare name would be looked up there instead of here.
+#
+# Unlike the stamp there is no "if it exists" here, and that is deliberate: a missing
+# stamp is honest for a build that was never a candidate, while a missing icon is a build
+# that quietly ships wearing somebody else's face. Better to fail at compile time.
+# The .iss names the same file for the setup program, and the page embeds a second render
+# of the same drawing as its tab icon: one mark, four places it can be seen.
+_icon = os.path.join(os.path.dirname(os.path.abspath(SPEC)), "muezzin.ico")
+
 a = Analysis(
     ["muezzin-service-entry.py"],
     pathex=["..\\..\\src"],
@@ -73,6 +89,7 @@ exe = EXE(
     strip=False,          # Windows: strip is a no-op; left out of the debate by saying so
     upx=False,            # upx gets builds quarantined by exactly the AV that UAT machines run
     console=True,         # WinSW captures stdout as the service log; a windowless build loses that
+    icon=_icon,           # drawn by make-icon.py; without it this is a Python logo on a muezzin exe
     disable_windowed_traceback=False,
     onefile=True,
 )

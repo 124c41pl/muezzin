@@ -68,6 +68,13 @@ AppPublisher=124c41pl
 DefaultDirName={autopf}\muezzin
 DefaultGroupName={#MyAppName}
 UninstallDisplayIcon={app}\muezzin.exe
+; The setup program's own picture. Inno stamps its default installer icon when this line
+; is absent, so a build sitting in somebody's Downloads folder wears a generic box with
+; someone else's arrow on it. The name is relative to this file, the way LicenseFile below
+; is, and it is the same .ico the spec hands PyInstaller. The Start Menu entry and the
+; Programs and Features entry are not covered by it: they ask the installed exe for its
+; picture, and that exe has the same one in its own resources now.
+SetupIconFile=muezzin.ico
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible

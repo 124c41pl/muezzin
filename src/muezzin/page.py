@@ -13,9 +13,23 @@ tests read the served HTML for the ids and rules they depend on instead of
 trusting a second copy of it.
 """
 
-PAGE = """<!doctype html>
+from .favicon import FAVICON_DATA_URL
+
+# The mark the browser tab wears. Same drawing as packaging/windows-service/muezzin.ico,
+# which is what the exe, the installer and the Start Menu entry wear, so the four surfaces
+# a person meets are one mark rather than four - and the reason they had none of it is
+# boring and true: an icon is a file, and until this build there was no file.
+#
+# It rides inside the page as a data: URL instead of arriving from a route, for the same
+# reason the lattice below is inline: the page stays one document that asks its own address
+# for nothing else, and the icon then works in a checkout, in a container and in a frozen
+# exe without anyone having to know where the exe put its temp folder.
+_TAB_ICON = '<link rel="icon" type="image/png" href="' + FAVICON_DATA_URL + '">'
+
+PAGE = ("""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+""" + _TAB_ICON + """
 <title>muezzin</title>
 <style>
  /* Night green and gold, over a khatam (eight-point star) lattice drawn inline as
@@ -1448,4 +1462,4 @@ $('#seek').onchange=()=>{ if(player&&drag!==null){ try{ player.currentTime=drag;
 load().catch(e=>{$('#top').textContent=e.message;});
 setInterval(()=>load().catch(()=>{}),60000);
 </script></body></html>
-"""
+""")
