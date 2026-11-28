@@ -170,11 +170,12 @@ def test_the_mark_the_page_wears_is_the_mark_the_exe_wears():
         "the PNG in the page is not the square it claims to be"
 
 
-def test_the_three_places_that_want_a_picture_want_the_same_one():
-    """The spec hands the .ico to PyInstaller, the setup script names it for Inno, and the
-    build script is what runs both. Nothing in a build fails if one of the three stops
-    naming it: the exe comes out wearing Python's icon and the setup program wears Inno's
-    default, which is exactly how this looked until somebody pointed at it."""
+def test_the_four_places_that_want_a_picture_want_the_same_one():
+    """The spec hands the .ico to PyInstaller, the setup script names it for Inno, the page
+    carries it as bytes, and the Start Menu entry names the exe for its picture. Nothing in
+    a build fails if one of them stops naming it: the exe comes out wearing Python's icon,
+    the setup program wears Inno's default and the menu entry wears the browser's, which is
+    exactly how this looked until somebody pointed at it."""
     spec = (PACKAGING / "muezzin.spec").read_text(encoding="utf-8")
     setup = (PACKAGING / "muezzin-setup.iss").read_text(encoding="utf-8-sig")   # Inno wants a BOM
 
@@ -184,3 +185,28 @@ def test_the_three_places_that_want_a_picture_want_the_same_one():
         "the icon path is relative to wherever the build happened to be standing"
     assert "SetupIconFile=muezzin.ico" in setup, \
         "the setup program does not name the icon, so it wears Inno's default"
+    assert setup.count(r'IconFilename: "{app}\muezzin.exe"') == 2, \
+        "a Start Menu entry is not told which picture to wear, so it borrows one"
+
+
+def test_the_installed_program_leaves_a_way_in_and_a_way_out():
+    """An install whose only trace is a line in add or remove programs is hard to find
+    again: the window the setup opens at the end closes, and the address is the only way
+    back to the page. This shipped as an absence, which only showed up while looking for
+    the icon on a Start Menu entry that was not there. So the entries are named here, and
+    each of them names the exe for its picture - Inno turns an entry that points at an
+    address into an Internet Shortcut file, which would otherwise wear the browser's."""
+    setup = (PACKAGING / "muezzin-setup.iss").read_text(encoding="utf-8-sig")
+    # Anchored to the start of the line: the word [Icons] also appears in the prose
+    # above the section, where it describes what the section is for.
+    found = re.search(r"(?m)^\[Icons\][ \t]*\r?\n(.*?)^\[Code\]", setup, re.S)
+    assert found, "the installer makes no Start Menu entries at all"
+    icons = found.group(1)
+
+    assert r'Name: "{group}\muezzin page"' in icons, \
+        "there is no entry that opens the page the installer just served"
+    assert 'Filename: "http://127.0.0.1:8020/"' in icons, \
+        "the entry does not name the port the page is actually served on"
+    assert r'Filename: "{uninstallexe}"' in icons, \
+        "nothing in the Start Menu takes the program off the machine"
+

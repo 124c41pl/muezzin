@@ -71,9 +71,9 @@ UninstallDisplayIcon={app}\muezzin.exe
 ; The setup program's own picture. Inno stamps its default installer icon when this line
 ; is absent, so a build sitting in somebody's Downloads folder wears a generic box with
 ; someone else's arrow on it. The name is relative to this file, the way LicenseFile below
-; is, and it is the same .ico the spec hands PyInstaller. The Start Menu entry and the
-; Programs and Features entry are not covered by it: they ask the installed exe for its
-; picture, and that exe has the same one in its own resources now.
+; is, and it is the same .ico the spec hands PyInstaller. This line covers only the setup
+; programs: the Programs and Features entry and the Start Menu entry in [Icons] get the
+; mark by pointing at the installed exe, which carries the same one in its own resources.
 SetupIconFile=muezzin.ico
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -129,6 +129,23 @@ Source: "..\..\config\README.md"; DestDir: "{app}\docs\profile"; Flags: ignoreve
 ; Migration is done in [Code], not here: a [Files] entry cannot name a source
 ; chosen at run time ({code:} is for destinations only, and the compiler says
 ; so). What a tick copies is written down in MigrateConfig and MigrateMedia.
+
+[Icons]
+; The entries that make the program findable on a machine it was installed on
+; rather than built on. There was no Icons section before this: the only trace
+; of the install was a line in add or remove programs, so once the window the
+; setup opens at the end is closed there is no way back to the page short of
+; typing an address into a browser, and no way out short of Settings. The
+; address is the one the postinstall line further down already opens.
+Name: "{group}\muezzin page"; Filename: "http://127.0.0.1:8020/"; IconFilename: "{app}\muezzin.exe"; IconIndex: 0
+Name: "{group}\Uninstall muezzin"; Filename: "{uninstallexe}"; IconFilename: "{app}\muezzin.exe"; IconIndex: 0
+; A URL entry is not a shortcut to a program: Inno writes an Internet Shortcut
+; file instead, and that file would wear the browser's picture, putting
+; someone else's art back on the one surface meant to carry ours. IconFilename
+; is not among the parameters Inno says it ignores for a URL entry, so the
+; picture is named on both lines - the exe, which holds the mark at seven
+; sizes. And because a .url file is plain text, what it points at can be read
+; straight off it.
 
 [Code]
 var
